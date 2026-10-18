@@ -1,0 +1,52 @@
+# The generated client reaches a real reconciler, durable store and local
+# executor. Workloads are Go test helper processes; no shell tools are needed.
+taskfile success.json success
+taskfile failure.json failure
+taskfile hold.json hold
+
+skygo plan -f success.json
+stdout '^local\n$'
+skygo --json jobs list
+! stdout '"id"'
+skygo --json run -f success.json --request-id first --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+stderr 'request-id: first'
+job-id FIRST
+skygo --json run -f success.json --request-id first --wait
+stdout '"id": *"'$FIRST'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+skygo jobs logs $FIRST
+stdout '^hello from the workload\n$'
+skygo --json jobs get $FIRST
+stdout '"id": *"'$FIRST'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+skygo --json jobs list
+stdout '"id": *"'$FIRST'"'
+
+# A changed payload cannot reuse the binding, and a failed workload exits 2.
+! skygo run -f failure.json --request-id first
+stderr 'already_exists'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'
+! skygo --json run -f failure.json --request-id failure --wait
+stdout '"state": *"JOB_STATE_FAILED"'
+stdout '"exit_code": *7'
+stderr 'request-id: failure'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=2\n$'
+
+# Wait for the Go process itself before canceling, then retry the submission
+# with --wait to observe terminal cancellation of the same durable job.
+skygo --json run -f hold.json --request-id hold
+job-id HOLD
+ready
+! skygo jobs cancel $HOLD
+stderr 'requires --yes'
+skygo jobs cancel $HOLD --yes
+! skygo --json run -f hold.json --request-id hold --wait
+stdout '"id": *"'$HOLD'"'
+stdout '"state": *"JOB_STATE_CANCELED"'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=2\n$'
+skygo jobs logs $HOLD
+stdout '^workload is running\n$'
