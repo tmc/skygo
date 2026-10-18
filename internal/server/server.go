@@ -104,7 +104,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	select {
 	case <-ctx.Done():
 	case err := <-reconciled:
-		result = err
+		if ctx.Err() == nil || !errors.Is(err, ctx.Err()) {
+			result = err
+		}
 	case err := <-served:
 		if !errors.Is(err, http.ErrServerClosed) {
 			result = err
