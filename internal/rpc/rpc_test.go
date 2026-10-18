@@ -1,6 +1,7 @@
 package rpc_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -238,6 +239,65 @@ func TestOutputCap(t *testing.T) {
 	data, last, err = logs(t, f, j.Id, backend.MaxLogBytes-7)
 	if err != nil || len(data) != 7 || !last.Complete || !last.Truncated {
 		t.Fatalf("resume = %d, %v, %v", len(data), last, err)
+	}
+}
+
+func TestSlowReader(t *testing.T) {
+	f := setup(t, "", true)
+	j := submit(t, f, "slow-reader", workload("output"))
+	if done := await(t, f, j.Id, true); done.State != v1.JobState_JOB_STATE_SUCCEEDED {
+		t.Fatalf("output job = %v", done)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	stream, err := f.client.StreamJobLogs(ctx, connect.NewRequest(&v1.StreamJobLogsRequest{Id: j.Id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+
+	// Pause application-level consumption between chunks while issuing unary
+	// requests on the same client. This checks slow-consumer behavior, not TCP
+	// buffer saturation: the retained prefix may fit in transport buffers.
+	var data bytes.Buffer
+	var last *v1.StreamJobLogsResponse
+	for stream.Receive() {
+		last = stream.Msg()
+		if len(last.Data) > backend.MaxChunkBytes {
+			t.Fatalf("chunk has %d bytes, limit %d", len(last.Data), backend.MaxChunkBytes)
+		}
+		data.Write(last.Data)
+		if last.NextOffset != int64(data.Len()) || data.Len() > backend.MaxLogBytes {
+			t.Fatalf("offset = %d, retained bytes = %d", last.NextOffset, data.Len())
+		}
+		if data.Len() < backend.MaxLogBytes && last.Complete {
+			t.Fatal("stream completed before the retained prefix was read")
+		}
+		rpcctx, done := context.WithTimeout(ctx, time.Second)
+		got, err := f.client.GetJob(rpcctx, connect.NewRequest(&v1.GetJobRequest{Id: j.Id}))
+		done()
+		if err != nil {
+			t.Fatalf("get while log stream is open: %v", err)
+		}
+		if got.Msg.Job.State != v1.JobState_JOB_STATE_SUCCEEDED || got.Msg.Job.CancelRequested {
+			t.Fatalf("slow reader affected job: %v", got.Msg.Job)
+		}
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			t.Fatal(ctx.Err())
+		case <-timer.C:
+		}
+	}
+	if err := stream.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(data.Bytes(), bytes.Repeat([]byte("x"), backend.MaxLogBytes)) {
+		t.Fatalf("retained prefix differs (%d bytes)", data.Len())
+	}
+	if last == nil || !last.Complete || !last.Truncated || last.NextOffset != backend.MaxLogBytes {
+		t.Fatalf("final chunk = %v", last)
 	}
 }
 
