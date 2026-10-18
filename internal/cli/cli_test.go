@@ -191,13 +191,17 @@ func scriptEngine(t *testing.T) *script.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return executableScriptEngine(exe, []string{"-test.run=^TestCLIHelper$", "--"}, []string{"SKYGO_TEST_HELPER=1"})
+}
+
+func executableScriptEngine(exe string, prefix, env []string) *script.Engine {
 	e := script.NewEngine()
 	e.Cmds = scripttest.DefaultCmds()
 	e.Conds = scripttest.DefaultConds()
-	e.Cmds["skygo"] = script.Command(script.CmdUsage{Summary: "run the CLI helper"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
-		cmd := exec.CommandContext(s.Context(), exe, append([]string{"-test.run=^TestCLIHelper$", "--"}, args...)...)
+	e.Cmds["skygo"] = script.Command(script.CmdUsage{Summary: "run the CLI executable"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
+		cmd := exec.CommandContext(s.Context(), exe, append(append([]string(nil), prefix...), args...)...)
 		cmd.Dir = s.Getwd()
-		cmd.Env = append(s.Environ(), "SKYGO_TEST_HELPER=1")
+		cmd.Env = append(s.Environ(), env...)
 		var out, diag bytes.Buffer
 		cmd.Stdout = &out
 		cmd.Stderr = &diag

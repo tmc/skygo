@@ -1,0 +1,37 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# command.py:1257-1264 supports detached submission; 5957 jobs_launch submits,
+# 6345 jobs_queue inspects. Go run is detached by default, with explicit --wait.
+# Durable retry keys are a Go extension, not an upstream compatibility claim.
+taskfile success.json success
+taskfile failure.json failure
+skygo --json run -f success.json --request-id successful --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+stdout '"target": *"local"'
+stderr '^request-id: successful\njob: '
+! stdout 'request-id:'
+job-id SUCCESS
+skygo jobs get $SUCCESS
+stdout '^'$SUCCESS'\tlocal\tsucceeded\n$'
+! stdout '\x1b'
+! stderr .
+skygo --json run -f success.json --request-id successful --wait
+stdout '"id": *"'$SUCCESS'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+
+# Upstream command.py:2824-2837 distinguishes terminal outcomes with nonzero
+# codes. Go uses exit 2 for any unsuccessful waited job, not 100/103.
+! skygo --json run -f failure.json --request-id failed --wait
+stdout '"state": *"JOB_STATE_FAILED"'
+stdout '"exit_code": *7'
+job-id FAILURE
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=2\n$'
+skygo --json jobs get $FAILURE
+stdout '"id": *"'$FAILURE'"'
+stdout '"state": *"JOB_STATE_FAILED"'
+skygo jobs list
+stdout '^ID +TARGET +STATE\n'
+stdout $SUCCESS' +local +succeeded'
+stdout $FAILURE' +local +failed'
+! stdout '\x1b'
+! stderr .
