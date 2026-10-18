@@ -1,0 +1,93 @@
+syntax = "proto3";
+package skygo.v1;
+option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
+import "google/protobuf/timestamp.proto";
+// ControlService manages finite, single-node jobs on configured targets.
+service ControlService {
+  rpc PlanTask(PlanTaskRequest) returns (PlanTaskResponse);
+  rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  rpc GetJob(GetJobRequest) returns (GetJobResponse);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
+  rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
+  rpc StreamJobLogs(StreamJobLogsRequest) returns (stream StreamJobLogsResponse);
+  rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
+}
+// Task is immutable after acceptance. Resource quantities are requests, not capacity promises.
+message Task {
+  repeated string argv = 1;
+  map<string, string> env = 2;
+  string directory = 3;
+  string image = 4;
+  int64 cpu_millis = 5;
+  int64 memory_bytes = 6;
+  string accelerator = 7;
+  int32 accelerator_count = 8;
+  string target = 9;
+  int64 timeout_seconds = 10;
+}
+enum JobState {
+  JOB_STATE_UNSPECIFIED = 0;
+  JOB_STATE_QUEUED = 1;
+  JOB_STATE_STARTING = 2;
+  JOB_STATE_RUNNING = 3;
+  JOB_STATE_SUCCEEDED = 4;
+  JOB_STATE_FAILED = 5;
+  JOB_STATE_CANCELED = 6;
+  JOB_STATE_UNKNOWN = 7;
+}
+message Job {
+  string id = 1;
+  Task task = 2;
+  string target = 3;
+  JobState state = 4;
+  bool cancel_requested = 5;
+  string reason = 6;
+  optional int32 exit_code = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+}
+message Target {
+  string name = 1;
+  string kind = 2;
+}
+message Rejection {
+  string target = 1;
+  string reason = 2;
+}
+message PlanTaskRequest { Task task = 1; }
+message PlanTaskResponse {
+  string target = 1;
+  repeated Rejection rejections = 2;
+}
+message SubmitJobRequest {
+  Task task = 1;
+  // Reuse this identifier on retries. A different task with the same ID is rejected.
+  string request_id = 2;
+}
+message SubmitJobResponse { Job job = 1; }
+message GetJobRequest { string id = 1; }
+message GetJobResponse { Job job = 1; }
+message ListJobsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+message ListJobsResponse {
+  repeated Job jobs = 1;
+  string next_page_token = 2;
+}
+message CancelJobRequest { string id = 1; }
+message CancelJobResponse { Job job = 1; }
+message StreamJobLogsRequest {
+  string id = 1;
+  int64 offset = 2;
+  bool follow = 3;
+}
+// Offsets address the retained byte stream. Truncation is explicit, never silent.
+message StreamJobLogsResponse {
+  bytes data = 1;
+  int64 next_offset = 2;
+  bool complete = 3;
+  bool truncated = 4;
+}
+message ListTargetsRequest {}
+message ListTargetsResponse { repeated Target targets = 1; }
