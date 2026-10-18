@@ -1,0 +1,32 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# sky/client/cli/command.py:1252-1255 defines launch --dryrun as non-executing.
+# skygo plan is its smaller analogue; neither success nor rejection submits.
+taskfile success.json success
+skygo plan -f success.json
+stdout '^local\n$'
+! stderr .
+skygo --json plan -f success.json
+stdout '"target": *"local"'
+! stdout '"id"'
+! stderr .
+skygo jobs list
+stdout '^ID +TARGET +STATE\n$'
+
+! skygo plan -f missing-target.yaml
+stderr 'failed_precondition: no eligible target'
+! stdout .
+! skygo plan -f resources.yaml
+stderr 'failed_precondition: no eligible target'
+! skygo run -f resources.yaml --request-id rejected
+stderr 'retry with --request-id rejected'
+! stdout .
+skygo --json jobs list
+! stdout '"id"'
+! stdout '"next_page_token"'
+
+-- missing-target.yaml --
+argv: [unused]
+target: unavailable
+-- resources.yaml --
+argv: [unused]
+cpu_millis: 1000

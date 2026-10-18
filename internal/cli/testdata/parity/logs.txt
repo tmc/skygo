@@ -1,0 +1,33 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# command.py:6676-6681 supports snapshot/follow; 555-562 preserves full snapshot
+# output. Go defaults to snapshot and retains a bounded byte prefix.
+taskfile success.json success
+skygo --json run -f success.json --request-id log-success --wait
+job-id JOB
+skygo jobs logs $JOB
+stdout '^hello from the workload\n$'
+! stderr .
+skygo jobs logs $JOB --offset 6
+stdout '^from the workload\n$'
+skygo jobs logs $JOB --offset 24
+! stdout .
+skygo jobs logs $JOB --follow
+stdout '^hello from the workload\n$'
+! stderr .
+
+# JSON log chunks are protobuf JSON: bytes are base64, int64 offsets strings.
+skygo --json jobs logs $JOB
+stdout '"data": *"aGVsbG8gZnJvbSB0aGUgd29ya2xvYWQK"'
+stdout '"next_offset": *"24"'
+stdout '"complete": *true'
+! stdout 'hello from'
+! stderr .
+! skygo jobs logs $JOB --offset -1
+stderr 'offset must not be negative'
+! stdout .
+! skygo jobs logs $JOB --offset 999
+stderr 'invalid_argument:.*offset exceeds retained output'
+! stdout .
+! skygo jobs logs 00000000000000000000000000000000
+stderr 'not_found'
+! stdout .

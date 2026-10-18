@@ -1,0 +1,42 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# sky/client/cli/command.py:118 and 1171 define -h/--help and grouped commands.
+# Go preserves offline discoverability while exposing its own smaller vocabulary.
+env SKYGO_ENDPOINT=http://127.0.0.1:1
+skygo --help
+stdout 'Usage:'
+stdout 'jobs'
+stdout 'plan'
+stdout 'run'
+stdout 'targets'
+! stdout '\x1b'
+! stderr .
+skygo -h
+stdout 'Usage:'
+! stderr .
+skygo jobs --help
+stdout 'cancel'
+stdout 'get'
+stdout 'list'
+stdout 'logs'
+! stderr .
+skygo help jobs logs
+stdout 'jobs logs ID'
+stdout '--follow'
+stdout '--offset'
+stdout 'interrupting does not cancel the job'
+! stderr .
+skygo run --help
+stdout '--file'
+stdout '--request-id'
+stdout '--wait'
+stdout 'unsuccessful jobs exit 2'
+! stderr .
+skygo plan --help
+stdout '--file'
+! stdout '--wait'
+! stderr .
+! skygo unknown-command
+stderr 'unknown command'
+! stdout .
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'

@@ -1,0 +1,45 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# command.py:6500-6533 keeps queue JSON on stdout, and exposes finished jobs.
+# Go wraps jobs in protobuf JSON and adds explicit snapshot pagination.
+taskfile success.json success
+skygo --json run -f success.json --request-id one --wait
+job-id FIRST
+skygo --json run -f success.json --request-id two --wait
+job-id SECOND
+skygo --json jobs list --page-size 1
+stdout '"id": *"'$FIRST'"'
+! stdout '"id": *"'$SECOND'"'
+! stderr .
+page-token NEXT
+skygo --json run -f success.json --request-id later --wait
+job-id LATER
+skygo --json jobs list --page-size 1 --page-token $NEXT
+stdout '"id": *"'$SECOND'"'
+! stdout '"id": *"'$FIRST'"'
+! stdout '"id": *"'$LATER'"'
+! stdout '"next_page_token"'
+skygo --json jobs list
+stdout '"id": *"'$LATER'"'
+! stderr .
+! skygo jobs list --page-size 201
+stderr 'invalid_argument'
+! stdout .
+! skygo jobs list --page-token malformed
+stderr 'invalid_argument'
+! stdout .
+
+# Authentication is a Go transport contract. A rejected request must never
+# produce success-shaped JSON or cancel an existing job.
+! skygo --token wrong --json jobs list
+stderr 'unauthenticated'
+! stdout .
+! skygo --token wrong --json jobs get $FIRST
+stderr 'unauthenticated'
+! stdout .
+! skygo --token wrong jobs cancel $FIRST --yes
+stderr 'unauthenticated'
+! stdout .
+skygo --json jobs get $FIRST
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+! stdout '"cancel_requested": *true'
+! stderr .

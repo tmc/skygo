@@ -17,6 +17,17 @@ The suite includes real local subprocesses and generated Connect clients over
 HTTP test servers. Fake Kubernetes clients do not qualify a live cluster.
 Keep command output and the tested source commit outside the module.
 
+## CLI workflow contracts
+
+Run `GOWORK=off go test ./internal/cli -run '^TestCLIParity$' -count=1`
+for the source-derived upstream workflow checks in `internal/cli/testdata/parity`.
+They build the production CLI and use a fresh real local control plane per script
+for planning, job lifecycle, logs, cancellation, JSON, offline help and input
+validation.
+Comments pin the upstream source used for each analogue and identify Go-specific
+contracts. These tests do not execute upstream SkyPilot or establish drop-in CLI
+compatibility; command names, task YAML, defaults and exit codes differ.
+
 ## Local lifecycle
 
 Use a new private task directory. In terminal A:

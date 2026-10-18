@@ -1,0 +1,75 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# sky/task.py:715 validates task schemas; command.py:834-873 diagnoses YAML and
+# path errors. Go makes --file explicit, rejects unknown/duplicate fields and
+# multiple documents, and never falls back to treating an invalid file as shell.
+# The endpoint is unreachable: parsing/usage failures must happen before RPCs.
+env REAL_ENDPOINT=$SKYGO_ENDPOINT
+env SKYGO_ENDPOINT=http://127.0.0.1:1
+! skygo run
+stderr 'task requires --file'
+! stdout .
+! skygo plan -f missing.yaml
+stderr 'open missing.yaml:'
+! stdout .
+! skygo run -f unknown.yaml
+stderr 'field unsupported not found'
+! stderr 'request-id:'
+! stdout .
+! skygo plan -f duplicate.yaml
+stderr 'already defined'
+! stdout .
+! skygo plan -f documents.yaml
+stderr 'exactly one YAML document'
+! stdout .
+! skygo run -f empty.yaml
+stderr 'argv must not be empty'
+! stderr 'request-id:'
+! stdout .
+! skygo run -f syntax.yaml
+stderr 'decode task:'
+! stdout .
+! skygo jobs get
+stderr 'accepts 1 arg'
+! stdout .
+! skygo jobs get first second
+stderr 'accepts 1 arg'
+! stdout .
+! skygo jobs cancel
+stderr 'accepts 1 arg'
+! stdout .
+! skygo jobs list extra
+stderr 'unknown command'
+! stdout .
+! skygo jobs logs id --offset -1
+stderr 'offset must not be negative'
+! stdout .
+! skygo --timeout 0s targets list
+stderr 'timeout must be positive'
+! stdout .
+! skygo run --unknown-flag
+stderr 'unknown flag'
+! stdout .
+
+# The live control plane is still reachable and all failed operations were inert.
+env SKYGO_ENDPOINT=$REAL_ENDPOINT
+skygo targets list
+stdout 'local +local'
+! stderr .
+skygo jobs list
+stdout '^ID +TARGET +STATE\n$'
+! stderr .
+
+-- unknown.yaml --
+argv: [unused]
+unsupported: true
+-- duplicate.yaml --
+argv: [unused]
+argv: [other]
+-- documents.yaml --
+argv: [unused]
+---
+argv: [other]
+-- empty.yaml --
+{}
+-- syntax.yaml --
+argv: [

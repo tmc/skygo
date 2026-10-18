@@ -1,0 +1,34 @@
+# Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
+# command.py:6641-6656 requires confirmation before managed job cancellation.
+# Go is noninteractive and requires --yes/-y; no prompt or implied consent.
+taskfile hold.json hold
+skygo --json run -f hold.json --request-id running
+job-id JOB
+ready
+! skygo jobs cancel $JOB
+stderr 'cancellation requires --yes'
+! stdout .
+skygo jobs logs $JOB
+stdout '^workload is running\n$'
+skygo --json jobs get $JOB
+! stdout '"cancel_requested": *true'
+! stdout 'JOB_STATE_CANCELED'
+
+skygo --json jobs cancel $JOB -y
+stdout '"id": *"'$JOB'"'
+stdout '"cancel_requested": *true'
+! stderr .
+! skygo --json run -f hold.json --request-id running --wait
+stdout '"state": *"JOB_STATE_CANCELED"'
+job-id CANCELED
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=2\n$'
+skygo --json jobs cancel $JOB --yes
+stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_CANCELED"'
+! stderr .
+skygo jobs logs $JOB
+stdout '^workload is running\n$'
+! skygo jobs cancel 00000000000000000000000000000000 --yes
+stderr 'not_found'
+! stdout .
