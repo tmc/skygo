@@ -182,7 +182,8 @@ func (b *Backend) stop(e *execution, state backend.State, reason string) error {
 }
 
 // Observe reports only executions owned by this backend instance.
-func (b *Backend) Observe(ctx context.Context, id string) (backend.Status, error) {
+func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	id := ref.ID
 	if err := ctx.Err(); err != nil {
 		return backend.Status{}, err
 	}
@@ -209,7 +210,8 @@ func (b *Backend) Observe(ctx context.Context, id string) (backend.Status, error
 }
 
 // Cancel requests termination of the owned process group.
-func (b *Backend) Cancel(ctx context.Context, id string) error {
+func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
+	id := ref.ID
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -274,7 +276,8 @@ func (o *output) Write(p []byte) (int, error) {
 }
 
 // Logs reads the retained combined output prefix without blocking execution.
-func (b *Backend) Logs(ctx context.Context, id string, offset int64, limit int) (backend.LogChunk, error) {
+func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64, limit int) (backend.LogChunk, error) {
+	id := ref.ID
 	if err := ctx.Err(); err != nil {
 		return backend.LogChunk{}, err
 	}
@@ -284,7 +287,7 @@ func (b *Backend) Logs(ctx context.Context, id string, offset int64, limit int) 
 	if offset < 0 || limit < 1 || limit > backend.MaxChunkBytes {
 		return backend.LogChunk{}, fmt.Errorf("%w: invalid log range", fs.ErrInvalid)
 	}
-	s, err := b.Observe(ctx, id)
+	s, err := b.Observe(ctx, ref)
 	if err != nil {
 		return backend.LogChunk{}, err
 	}

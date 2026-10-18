@@ -115,7 +115,7 @@ func jobName(id string) (string, error) {
 
 func (b *Backend) owned(j *batchv1.Job, id string) error {
 	if j.Labels[ownerLabel] != b.owner || j.Labels[idLabel] != id {
-		return errors.New("kubernetes job ownership mismatch")
+		return fmt.Errorf("%w: kubernetes job ownership differs", backend.ErrIdentityMismatch)
 	}
 	return nil
 }
@@ -194,14 +194,15 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 			return err
 		}
 		if existing.Annotations[taskAnnotation] != hash {
-			return errors.New("existing kubernetes job has a different task")
+			return fmt.Errorf("%w: kubernetes task differs", backend.ErrIdentityMismatch)
 		}
 		return nil
 	}
 	return err
 }
 
-func (b *Backend) get(ctx context.Context, id string) (*batchv1.Job, error) {
+func (b *Backend) get(ctx context.Context, ref backend.Reference) (*batchv1.Job, error) {
+	id := ref.ID
 	name, err := jobName(id)
 	if err != nil {
 		return nil, err
@@ -210,7 +211,18 @@ func (b *Backend) get(ctx context.Context, id string) (*batchv1.Job, error) {
 	if err != nil {
 		return nil, err
 	}
-	return j, b.owned(j, id)
+	if err := b.owned(j, id); err != nil {
+		return nil, err
+	}
+	raw, err := json.Marshal(ref.Task)
+	if err != nil {
+		return nil, err
+	}
+	hash := fmt.Sprintf("%x", sha256.Sum256(raw))
+	if j.Annotations[taskAnnotation] != hash {
+		return nil, fmt.Errorf("%w: kubernetes task differs", backend.ErrIdentityMismatch)
+	}
+	return j, nil
 }
 
 func (b *Backend) pods(ctx context.Context, j *batchv1.Job, id string) ([]corev1.Pod, error) {
@@ -232,8 +244,9 @@ func (b *Backend) pods(ctx context.Context, j *batchv1.Job, id string) ([]corev1
 
 // Observe reports controller state; a missing Job is Unknown unless cancellation
 // was requested through this Backend instance. It never recreates missing Jobs.
-func (b *Backend) Observe(ctx context.Context, id string) (backend.Status, error) {
-	j, err := b.get(ctx, id)
+func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	id := ref.ID
+	j, err := b.get(ctx, ref)
 	if apierrors.IsNotFound(err) {
 		b.mu.Lock()
 		canceled := b.canceled[id]
@@ -277,8 +290,9 @@ func int32ptr(v int32) *int32 { return &v }
 
 // Cancel requests foreground deletion, using UID preconditions to avoid deleting
 // a replacement Job. Observe confirms cancellation only after disappearance.
-func (b *Backend) Cancel(ctx context.Context, id string) error {
-	j, err := b.get(ctx, id)
+func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
+	id := ref.ID
+	j, err := b.get(ctx, ref)
 	if apierrors.IsNotFound(err) {
 		b.mu.Lock()
 		b.canceled[id] = true
@@ -307,11 +321,15 @@ func (b *Backend) Cancel(ctx context.Context, id string) error {
 
 // Logs reads the bounded output prefix of the sole owned Pod. Multiple Pods are
 // explicitly ambiguous, since native Job execution is not exactly once.
-func (b *Backend) Logs(ctx context.Context, id string, offset int64, limit int) (backend.LogChunk, error) {
+func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64, limit int) (backend.LogChunk, error) {
+	id := ref.ID
 	if offset < 0 || limit <= 0 || limit > backend.MaxChunkBytes {
 		return backend.LogChunk{}, fmt.Errorf("invalid log offset or limit: %w", fs.ErrInvalid)
 	}
-	j, err := b.get(ctx, id)
+	j, err := b.get(ctx, ref)
+	if apierrors.IsNotFound(err) {
+		return backend.LogChunk{}, fmt.Errorf("job logs are no longer retained: %w", fs.ErrNotExist)
+	}
 	if err != nil {
 		return backend.LogChunk{}, err
 	}
@@ -322,15 +340,18 @@ func (b *Backend) Logs(ctx context.Context, id string, offset int64, limit int) 
 	if len(pods) > 1 {
 		return backend.LogChunk{}, errors.New("logs ambiguous: multiple owned pods")
 	}
-	status, err := b.Observe(ctx, id)
+	status, err := b.Observe(ctx, ref)
 	if err != nil {
 		return backend.LogChunk{}, err
 	}
 	if len(pods) == 0 {
+		if status.State.Terminal() {
+			return backend.LogChunk{}, fmt.Errorf("pod logs are no longer retained: %w", fs.ErrNotExist)
+		}
 		if offset != 0 {
 			return backend.LogChunk{}, fmt.Errorf("log offset exceeds retained prefix: %w", fs.ErrInvalid)
 		}
-		return backend.LogChunk{Complete: status.State.Terminal()}, nil
+		return backend.LogChunk{}, nil
 	}
 	stream, err := b.client.CoreV1().Pods(b.namespace).GetLogs(pods[0].Name, &corev1.PodLogOptions{Container: "task"}).Stream(ctx)
 	if err != nil {

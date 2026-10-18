@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/tmc/skygo/internal/backend"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 // TestLive requires an explicitly selected disposable context and namespace.
@@ -38,14 +40,24 @@ func TestLive(t *testing.T) {
 				t.Fatal(err)
 			}
 			id := hex.EncodeToString(raw[:])
+			task := backend.Task{Argv: []string{"/bin/sh", "-c", test.script}, Image: image, TimeoutSeconds: 150}
+			ref := backend.Reference{ID: id, Task: task}
 			t.Cleanup(func() {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
-				if err := b.Cancel(cleanupCtx, id); err != nil {
+				j, err := b.get(cleanupCtx, ref)
+				if apierrors.IsNotFound(err) {
+					return
+				}
+				if err != nil {
+					t.Errorf("cleanup %s: %v", id, err)
+					return
+				}
+				policy := metav1.DeletePropagationForeground
+				if err := b.client.BatchV1().Jobs(namespace).Delete(cleanupCtx, j.Name, metav1.DeleteOptions{PropagationPolicy: &policy, Preconditions: &metav1.Preconditions{UID: &j.UID}}); err != nil && !apierrors.IsNotFound(err) {
 					t.Errorf("cleanup %s: %v", id, err)
 				}
 			})
-			task := backend.Task{Argv: []string{"/bin/sh", "-c", test.script}, Image: image, TimeoutSeconds: 150}
 			if err := b.Start(ctx, id, task); err != nil {
 				t.Fatal(err)
 			}
@@ -58,7 +70,7 @@ func TestLive(t *testing.T) {
 			}
 			if test.want == backend.Canceled {
 				for {
-					status, err := recovered.Observe(ctx, id)
+					status, err := recovered.Observe(ctx, ref)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -74,12 +86,12 @@ func TestLive(t *testing.T) {
 					case <-time.After(250 * time.Millisecond):
 					}
 				}
-				if err = recovered.Cancel(ctx, id); err != nil {
+				if err = recovered.Cancel(ctx, ref); err != nil {
 					t.Fatal(err)
 				}
 			}
 			for {
-				status, err := recovered.Observe(ctx, id)
+				status, err := recovered.Observe(ctx, ref)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -96,7 +108,7 @@ func TestLive(t *testing.T) {
 				}
 			}
 			if test.want == backend.Succeeded {
-				chunk, err := recovered.Logs(ctx, id, 0, 1024)
+				chunk, err := recovered.Logs(ctx, ref, 0, 1024)
 				if err != nil {
 					t.Fatal(err)
 				}

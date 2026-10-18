@@ -3,6 +3,7 @@ package backend
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -67,6 +68,17 @@ type LogChunk struct {
 const MaxLogBytes = 1 << 20
 const MaxChunkBytes = 64 << 10
 
+// Reference binds execution identity to the immutable accepted task.
+// Task lets recovering backends verify execution against durable state.
+type Reference struct {
+	ID   string
+	Task Task
+}
+
+// ErrIdentityMismatch means an execution does not match its durable reference.
+// Retrying must not adopt or modify the conflicting execution.
+var ErrIdentityMismatch = errors.New("execution identity mismatch")
+
 // Backend executes jobs under stable coordinator-generated IDs. Start is called
 // at most once by a coordinator, after durable Starting intent. Its context only
 // bounds startup, not workload lifetime. Observe must report Unknown for missing
@@ -76,9 +88,9 @@ const MaxChunkBytes = 64 << 10
 type Backend interface {
 	Check(Task) error
 	Start(context.Context, string, Task) error
-	Observe(context.Context, string) (Status, error)
-	Cancel(context.Context, string) error
-	Logs(context.Context, string, int64, int) (LogChunk, error)
+	Observe(context.Context, Reference) (Status, error)
+	Cancel(context.Context, Reference) error
+	Logs(context.Context, Reference, int64, int) (LogChunk, error)
 }
 
 // Target binds a configured name and kind to an executor.

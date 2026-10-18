@@ -2,6 +2,7 @@ package kube
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -19,7 +20,9 @@ import (
 
 func TestLogPrefix(t *testing.T) {
 	controller := true
-	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "skygo-" + testID, UID: "uid", Labels: map[string]string{ownerLabel: "test", idLabel: testID}}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
+	ref := backend.Reference{ID: testID, Task: backend.Task{Argv: []string{"work"}, Image: "image"}}
+	raw, _ := json.Marshal(ref.Task)
+	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "skygo-" + testID, UID: "uid", Annotations: map[string]string{taskAnnotation: fmt.Sprintf("%x", sha256.Sum256(raw))}, Labels: map[string]string{ownerLabel: "test", idLabel: testID}}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Labels: job.Labels, OwnerReferences: []metav1.OwnerReference{{Name: job.Name, UID: job.UID, Kind: "Job", Controller: &controller}}}}
 	output := strings.Repeat("x", backend.MaxLogBytes+10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -45,14 +48,14 @@ func TestLogPrefix(t *testing.T) {
 		t.Fatal(err)
 	}
 	b, _ := New(client, "workloads", "test")
-	chunk, err := b.Logs(context.Background(), testID, backend.MaxLogBytes-3, 10)
+	chunk, err := b.Logs(context.Background(), ref, backend.MaxLogBytes-3, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(chunk.Data) != "xxx" || !chunk.Truncated || !chunk.Complete || chunk.NextOffset != backend.MaxLogBytes {
 		t.Fatalf("chunk: %+v", chunk)
 	}
-	if _, err = b.Logs(context.Background(), testID, backend.MaxLogBytes+1, 10); err == nil {
+	if _, err = b.Logs(context.Background(), ref, backend.MaxLogBytes+1, 10); err == nil {
 		t.Fatal("accepted offset beyond prefix")
 	}
 }
