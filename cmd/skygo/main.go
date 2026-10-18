@@ -1,4 +1,3 @@
-// Command skygo runs and inspects finite local and Kubernetes jobs.
 package main
 
 import (

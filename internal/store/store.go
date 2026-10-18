@@ -1,6 +1,3 @@
-// Package store persists accepted jobs and submission identities in a single
-// exclusively locked database. Records are retained until the data directory is
-// removed; a full store refuses new submissions rather than forgetting retries.
 package store
 
 import (

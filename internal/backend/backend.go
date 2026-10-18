@@ -1,4 +1,3 @@
-// Package backend defines the portable execution boundary for finite jobs.
 package backend
 
 import (
