@@ -3,11 +3,15 @@
 Run the default suite without cluster credentials:
 
 ```sh
-go test ./...
-go test -race ./...
-go vet ./...
-CGO_ENABLED=0 go build -o bin/skygo ./cmd/skygo
+make test
+make race
+make check
+make build
 ```
+
+These targets test both modules with `GOWORK=off`; root `go test ./...` alone
+does not visit the nested integration module. `make check` also needs Buf
+(install the pinned tools with `make tools`).
 
 The suite includes real local subprocesses and generated Connect clients over
 HTTP test servers. Fake Kubernetes clients do not qualify a live cluster.
@@ -70,11 +74,12 @@ application dependencies. Pin a kind node image supported by your local setup.
 ```sh
 kind create cluster --name skygo-test --image YOUR_PINNED_KIND_NODE_IMAGE
 kubectl --context kind-skygo-test create namespace skygo-backend-test
+(cd integrations/kubernetes && GOWORK=off \
 SKYGO_KUBE_TEST=1 \
 SKYGO_KUBE_CONTEXT=kind-skygo-test \
 SKYGO_KUBE_NAMESPACE=skygo-backend-test \
 SKYGO_KUBE_IMAGE=YOUR_APPROVED_BUSYBOX_IMAGE \
-go test -count=1 -v ./internal/kube -run '^TestLive$'
+go test -count=1 -v ./internal/kube -run '^TestLive$')
 ```
 
 Expect success/log read, failed workload, cancellation, and stable-identity

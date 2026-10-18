@@ -13,12 +13,14 @@ commands below mutate that cluster. They are an installation recipe, not a
 statement that a deployment has been tested there.
 
 Build an image from the reviewed checkout, load it into a disposable cluster or
-publish it to your own registry, and record its digest. The Dockerfile accepts
+publish it to your own registry, and record its digest. Build with the integration
+Dockerfile and repository root as the context; the root Dockerfile builds the
+local-only server. The integration Dockerfile accepts
 `--build-arg GO_IMAGE=golang@sha256:...` for a pinned builder. Release deployments
 must replace the illustrative image tag with a tested digest.
 
 ```sh
-docker build -t skygo:local .
+docker build -f integrations/kubernetes/Dockerfile -t skygo:local .
 # For a disposable kind cluster only:
 kind load docker-image skygo:local --name skygo-test
 ```

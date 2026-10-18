@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/tmc/skygo/integrations/kubernetes/internal/kube"
 	"github.com/tmc/skygo/internal/backend"
-	"github.com/tmc/skygo/internal/kube"
 	"k8s.io/client-go/kubernetes/fake"
 )
 

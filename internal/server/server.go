@@ -12,16 +12,20 @@ import (
 
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
-	"github.com/tmc/skygo/internal/kube"
 	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/rpc"
 	"github.com/tmc/skygo/internal/store"
 )
 
-// Config selects durable storage, HTTP exposure and an optional Kubernetes target.
+// Config selects durable storage, HTTP exposure, and execution targets.
 type Config struct {
-	DisableLocal                                           bool
-	DataDir, Listen, Kubeconfig, Context, Namespace, Token string
+	DisableLocal           bool
+	DataDir, Listen, Token string
+
+	// Targets constructs additional targets using the persistent installation ID.
+	// It is called once, after the store opens and before the server listens.
+	// A nil function adds no targets. Targets must not require a Close call.
+	Targets func(owner string) ([]backend.Target, error)
 }
 
 // Run serves until cancellation, rejects new work before draining, and closes
@@ -49,14 +53,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		defer func() { result = errors.Join(result, localBackend.Close()) }()
 		targets = append(targets, backend.Target{Name: "local", Kind: "local", Backend: localBackend})
 	}
-	if cfg.Namespace != "" {
-		k, err := kube.FromConfig(cfg.Kubeconfig, cfg.Context, cfg.Namespace, s.Owner())
+	if cfg.Targets != nil {
+		extra, err := cfg.Targets(s.Owner())
 		if err != nil {
-			return err
+			return fmt.Errorf("configure targets: %w", err)
 		}
-		targets = append(targets, backend.Target{Name: "kubernetes", Kind: "kubernetes", Backend: k})
-	} else if cfg.Kubeconfig != "" || cfg.Context != "" {
-		return errors.New("namespace is required for a Kubernetes target")
+		targets = append(targets, extra...)
 	}
 	c, err := control.New(s, targets)
 	if err != nil {

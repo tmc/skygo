@@ -96,11 +96,11 @@ func TestTree(t *testing.T) {
 func TestServerOptions(t *testing.T) {
 	var got ServerOptions
 	c := New(func(_ context.Context, opts ServerOptions) error { got = opts; return nil })
-	c.SetArgs([]string{"server", "--disable-local", "--namespace", "tasks", "--token", "secret"})
+	c.SetArgs([]string{"server", "--disable-local", "--data-dir", "tasks", "--listen", "127.0.0.1:9090", "--token", "secret"})
 	if err := c.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !got.DisableLocal || got.Namespace != "tasks" || got.Token != "secret" {
+	if !got.DisableLocal || got.DataDir != "tasks" || got.Listen != "127.0.0.1:9090" || got.Token != "secret" {
 		t.Fatalf("options: %+v", got)
 	}
 }

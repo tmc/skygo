@@ -25,7 +25,9 @@ runs during planning. A shell is used only when explicitly present in argv.
 The public protocol is `skygo.v1.ControlService` in
 [`control.proto`](../proto/skygo/v1/control.proto). The seven methods are
 PlanTask, SubmitJob, GetJob, ListJobs, CancelJob, StreamJobLogs, and ListTargets.
-Generated clients live in `gen/skygo/v1/skyv1connect`.
+Generated clients live in `gen/skygo/v1/skyv1connect`. Both executable
+entrypoints use this protocol; a client does not need Kubernetes dependencies
+to submit tasks to a server configured with the Kubernetes integration.
 
 A submission requires a request ID. The server persists the ID, normalized task,
 and resulting job atomically before acknowledging acceptance. Identical retries
