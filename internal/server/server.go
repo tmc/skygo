@@ -1,4 +1,3 @@
-// Package server assembles the singleton control plane and its HTTP lifecycle.
 package server
 
 import (

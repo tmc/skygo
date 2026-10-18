@@ -1,4 +1,3 @@
-// Package control plans and reconciles durable jobs independently of transport.
 package control
 
 import (

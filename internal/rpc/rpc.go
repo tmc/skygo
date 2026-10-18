@@ -1,4 +1,3 @@
-// Package rpc exposes the control plane through generated Connect handlers.
 package rpc
 
 import (
