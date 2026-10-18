@@ -1,0 +1,38 @@
+skygo --help
+stdout 'targets'
+stdout 'jobs'
+stdout 'server'
+! stdout '\x1b'
+! skygo not-a-command
+stderr 'unknown command'
+
+# Generated Connect client against a real HTTP handler. No ANSI in pipe output.
+skygo targets list
+stdout 'NAME +KIND'
+stdout 'local +local'
+! stdout '\x1b'
+skygo --json targets list
+stdout '"targets":'
+stdout '"name": *"local"'
+! stderr .
+
+! skygo --token wrong targets list
+stderr 'unauthenticated'
+! skygo jobs get missing
+stderr 'not_found'
+! skygo jobs cancel j1
+stderr 'requires --yes'
+skygo jobs logs j1
+stdout '^hello\n$'
+
+! skygo plan -f invalid.yaml
+stderr 'field unsupported not found'
+! skygo run -f task.yaml --wait --request-id retry-me
+stdout 'j1.*failed'
+stderr 'request-id: retry-me'
+
+-- invalid.yaml --
+argv: [echo, hello]
+unsupported: true
+-- task.yaml --
+argv: [false]
