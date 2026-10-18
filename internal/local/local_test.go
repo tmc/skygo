@@ -74,7 +74,7 @@ func completed(t *testing.T, b *Backend, id string) backend.Status {
 	tick := time.NewTicker(10 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		s, err := b.Observe(context.Background(), id)
+		s, err := b.Observe(context.Background(), backend.Reference{ID: id})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -109,7 +109,7 @@ func TestLifecycle(t *testing.T) {
 			var offset int64
 			var truncated bool
 			for {
-				chunk, err := b.Logs(context.Background(), id, offset, backend.MaxChunkBytes)
+				chunk, err := b.Logs(context.Background(), backend.Reference{ID: id}, offset, backend.MaxChunkBytes)
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -129,7 +129,7 @@ func TestLifecycle(t *testing.T) {
 			if err := b.Start(context.Background(), id, task(tt.name)); err == nil {
 				t.Fatal("repeated start succeeded")
 			}
-			if _, err := b.Logs(context.Background(), id, offset+1, 1); !errors.Is(err, fs.ErrInvalid) {
+			if _, err := b.Logs(context.Background(), backend.Reference{ID: id}, offset+1, 1); !errors.Is(err, fs.ErrInvalid) {
 				t.Fatalf("out-of-range read error = %v", err)
 			}
 		})
@@ -150,13 +150,13 @@ func TestCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			cancel()
-			s, err := b.Observe(context.Background(), id)
+			s, err := b.Observe(context.Background(), backend.Reference{ID: id})
 			if err != nil || s.State != backend.Running {
 				t.Fatalf("startup context canceled workload: %+v %v", s, err)
 			}
 			switch mode {
 			case "cancel":
-				if err := b.Cancel(context.Background(), id); err != nil {
+				if err := b.Cancel(context.Background(), backend.Reference{ID: id}); err != nil {
 					t.Fatal(err)
 				}
 			case "close":
@@ -191,14 +191,14 @@ func TestRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer restarted.Close()
-	s, err := restarted.Observe(context.Background(), id)
+	s, err := restarted.Observe(context.Background(), backend.Reference{ID: id})
 	if err != nil || s.State != backend.Unknown {
 		t.Fatalf("restart status %+v, %v", s, err)
 	}
 	if err := restarted.Start(context.Background(), id, task("success")); err == nil {
 		t.Fatal("restart respawned job")
 	}
-	chunk, err := restarted.Logs(context.Background(), id, backend.MaxLogBytes-1, 1)
+	chunk, err := restarted.Logs(context.Background(), backend.Reference{ID: id}, backend.MaxLogBytes-1, 1)
 	if err != nil || !chunk.Truncated || !chunk.Complete {
 		t.Fatalf("restart logs %+v, %v", chunk, err)
 	}
@@ -237,7 +237,7 @@ func TestProcessGroup(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if err := b.Cancel(context.Background(), id); err != nil {
+	if err := b.Cancel(context.Background(), backend.Reference{ID: id}); err != nil {
 		t.Fatal(err)
 	}
 	completed(t, b, id)
@@ -266,13 +266,13 @@ func TestConcurrentCancelAndLogs(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := b.Cancel(context.Background(), id); err != nil {
+			if err := b.Cancel(context.Background(), backend.Reference{ID: id}); err != nil {
 				t.Error(err)
 			}
-			if _, err := b.Observe(context.Background(), id); err != nil {
+			if _, err := b.Observe(context.Background(), backend.Reference{ID: id}); err != nil {
 				t.Error(err)
 			}
-			if _, err := b.Logs(context.Background(), id, 0, 1); err != nil {
+			if _, err := b.Logs(context.Background(), backend.Reference{ID: id}, 0, 1); err != nil {
 				t.Error(err)
 			}
 		}()
@@ -294,11 +294,11 @@ func TestLogRanges(t *testing.T) {
 		offset int64
 		limit  int
 	}{{-1, 1}, {0, 0}, {0, backend.MaxChunkBytes + 1}, {12, 1}} {
-		if _, err := b.Logs(context.Background(), id, tt.offset, tt.limit); !errors.Is(err, fs.ErrInvalid) {
+		if _, err := b.Logs(context.Background(), backend.Reference{ID: id}, tt.offset, tt.limit); !errors.Is(err, fs.ErrInvalid) {
 			t.Errorf("Logs(%d,%d) error = %v; want fs.ErrInvalid", tt.offset, tt.limit, err)
 		}
 	}
-	chunk, err := b.Logs(context.Background(), id, 11, 1)
+	chunk, err := b.Logs(context.Background(), backend.Reference{ID: id}, 11, 1)
 	if err != nil || !chunk.Complete || len(chunk.Data) != 0 {
 		t.Fatalf("read at end = %+v, %v", chunk, err)
 	}

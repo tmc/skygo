@@ -40,9 +40,9 @@ func (e *executor) Start(context.Context, string, backend.Task) error {
 	e.starts.Add(1)
 	return e.startErr
 }
-func (e *executor) Cancel(context.Context, string) error { e.cancels.Add(1); return nil }
-func (e *executor) Observe(ctx context.Context, id string) (backend.Status, error) {
-	call := observation{id: id, reply: make(chan observationResult, 1)}
+func (e *executor) Cancel(context.Context, backend.Reference) error { e.cancels.Add(1); return nil }
+func (e *executor) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	call := observation{id: ref.ID, reply: make(chan observationResult, 1)}
 	select {
 	case e.observed <- call:
 	case <-ctx.Done():
@@ -55,7 +55,7 @@ func (e *executor) Observe(ctx context.Context, id string) (backend.Status, erro
 		return backend.Status{}, ctx.Err()
 	}
 }
-func (e *executor) Logs(context.Context, string, int64, int) (backend.LogChunk, error) {
+func (e *executor) Logs(context.Context, backend.Reference, int64, int) (backend.LogChunk, error) {
 	return backend.LogChunk{}, e.logsErr
 }
 func nextObservation(t *testing.T, e *executor) observation {
@@ -90,7 +90,7 @@ func openStore(t *testing.T) *store.Store {
 }
 func run(t *testing.T, c *control.Control) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- c.Run(ctx) }()
 	t.Cleanup(func() {
@@ -457,5 +457,15 @@ func TestLogErrorClassification(t *testing.T) {
 				t.Fatalf("private backend detail leaked: %v", err)
 			}
 		})
+	}
+}
+
+func TestPlanIncludesRejections(t *testing.T) {
+	e := newExecutor()
+	e.checkErr = errors.New("images unsupported")
+	c := newControl(t, openStore(t), e)
+	_, _, err := c.Plan(backend.Task{Argv: []string{"work"}, Image: "image"})
+	if !errors.Is(err, control.ErrUnsupported) || !strings.Contains(err.Error(), "local: images unsupported") {
+		t.Fatalf("plan rejection: %v", err)
 	}
 }

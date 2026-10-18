@@ -111,7 +111,11 @@ func (c *Control) Plan(t backend.Task) (string, []Rejection, error) {
 		}
 	}
 	if selected == "" {
-		return "", rejected, ErrUnsupported
+		reasons := make([]string, 0, len(rejected))
+		for _, r := range rejected {
+			reasons = append(reasons, r.Target+": "+r.Reason)
+		}
+		return "", rejected, fmt.Errorf("%w: %s", ErrUnsupported, strings.Join(reasons, "; "))
 	}
 	return selected, rejected, nil
 }
@@ -249,14 +253,14 @@ func (c *Control) Logs(ctx context.Context, id string, offset int64) (backend.Lo
 	if b == nil {
 		return backend.LogChunk{}, ErrUnavailable
 	}
-	chunk, err := b.Logs(ctx, id, offset, backend.MaxChunkBytes)
+	chunk, err := b.Logs(ctx, backend.Reference{ID: j.ID, Task: j.Task}, offset, backend.MaxChunkBytes)
 	if err == nil {
 		return chunk, nil
 	}
 	if errors.Is(err, fs.ErrInvalid) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return chunk, err
 	}
-	if errors.Is(err, fs.ErrNotExist) {
+	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, backend.ErrIdentityMismatch) {
 		return chunk, ErrLogsUnavailable
 	}
 	return chunk, fmt.Errorf("%w: backend log read failed", ErrUnavailable)
@@ -313,6 +317,15 @@ func (c *Control) reconcile(ctx context.Context) error {
 		}
 		b := c.target(j.Target)
 		if b == nil {
+			if j.Status.Reason != "target is not configured" {
+				_, err = c.store.Update(j.ID, func(current *backend.Job) error {
+					current.Status.Reason = "target is not configured"
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+			}
 			continue
 		}
 		if j.Status.State == backend.Queued {
@@ -324,7 +337,7 @@ func (c *Control) reconcile(ctx context.Context) error {
 				if current.CancelRequested {
 					current.Status = backend.Status{State: backend.Canceled, Reason: "canceled before execution"}
 				} else {
-					current.Status.State = backend.Starting
+					current.Status = backend.Status{State: backend.Starting}
 				}
 				return nil
 			})
@@ -341,11 +354,13 @@ func (c *Control) reconcile(ctx context.Context) error {
 		}
 		call, cancel := context.WithTimeout(ctx, 10*time.Second)
 		if j.CancelRequested {
-			_ = b.Cancel(call, j.ID)
+			_ = b.Cancel(call, backend.Reference{ID: j.ID, Task: j.Task})
 		}
-		status, observeErr := b.Observe(call, j.ID)
+		status, observeErr := b.Observe(call, backend.Reference{ID: j.ID, Task: j.Task})
 		cancel()
-		if observeErr != nil {
+		if errors.Is(observeErr, backend.ErrIdentityMismatch) {
+			status = backend.Status{State: backend.Unknown, Reason: "execution identity mismatch; conflicting workload left untouched"}
+		} else if observeErr != nil {
 			continue
 		}
 		if status.State == "" {

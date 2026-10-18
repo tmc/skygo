@@ -3,13 +3,14 @@ package kube
 import (
 	"context"
 	"errors"
-	"github.com/tmc/skygo/internal/control"
-	"github.com/tmc/skygo/internal/store"
+	"io/fs"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/internal/control"
+	"github.com/tmc/skygo/internal/store"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -50,11 +51,13 @@ func TestJobLifecycle(t *testing.T) {
 	if err = b.Start(ctx, testID, task); err != nil {
 		t.Fatalf("adopt: %v", err)
 	}
+	originalTask := task
 	task.Image = "other"
 	if err = b.Start(ctx, testID, task); err == nil {
 		t.Fatal("adopted different task")
 	}
-	status, err := b.Observe(ctx, testID)
+	task = originalTask
+	status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Starting {
 		t.Fatalf("observe: %+v %v", status, err)
 	}
@@ -62,19 +65,19 @@ func TestJobLifecycle(t *testing.T) {
 	if _, err = client.BatchV1().Jobs("workloads").UpdateStatus(ctx, j, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = b.Observe(ctx, testID)
+	status, err = b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Succeeded || status.ExitCode == nil || *status.ExitCode != 0 {
 		t.Fatalf("complete: %+v %v", status, err)
 	}
-	if err = b.Cancel(ctx, testID); err != nil {
+	if err = b.Cancel(ctx, backend.Reference{ID: testID, Task: task}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = b.Observe(ctx, testID)
+	status, err = b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Succeeded {
 		t.Fatalf("cancel completed: %+v %v", status, err)
 	}
 	restarted, _ := New(client, "workloads", "test")
-	status, err = restarted.Observe(ctx, testID)
+	status, err = restarted.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Succeeded {
 		t.Fatalf("restart completed: %+v %v", status, err)
 	}
@@ -83,23 +86,23 @@ func TestJobLifecycle(t *testing.T) {
 	if err = b.Start(ctx, activeID, task); err != nil {
 		t.Fatal(err)
 	}
-	if err = b.Cancel(ctx, activeID); err != nil {
+	if err = b.Cancel(ctx, backend.Reference{ID: activeID, Task: task}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		status, err = b.Observe(ctx, activeID)
+		status, err = b.Observe(ctx, backend.Reference{ID: activeID, Task: task})
 		if err != nil || status.State != backend.Canceled {
 			t.Fatalf("cancel: %+v %v", status, err)
 		}
 	}
-	status, err = restarted.Observe(ctx, activeID)
+	status, err = restarted.Observe(ctx, backend.Reference{ID: activeID, Task: task})
 	if err != nil || status.State != backend.Unknown {
 		t.Fatalf("restart missing: %+v %v", status, err)
 	}
-	if err = restarted.Cancel(ctx, activeID); err != nil {
+	if err = restarted.Cancel(ctx, backend.Reference{ID: activeID, Task: task}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = restarted.Observe(ctx, activeID)
+	status, err = restarted.Observe(ctx, backend.Reference{ID: activeID, Task: task})
 	if err != nil || status.State != backend.Canceled {
 		t.Fatalf("replay cancel: %+v %v", status, err)
 	}
@@ -117,9 +120,9 @@ func TestOwnershipAndFailures(t *testing.T) {
 	other, _ := New(client, "workloads", "other")
 	for name, run := range map[string]func() error{
 		"start":   func() error { return other.Start(ctx, testID, task) },
-		"observe": func() error { _, err := other.Observe(ctx, testID); return err },
-		"cancel":  func() error { return other.Cancel(ctx, testID) },
-		"logs":    func() error { _, err := other.Logs(ctx, testID, 0, 10); return err },
+		"observe": func() error { _, err := other.Observe(ctx, backend.Reference{ID: testID, Task: task}); return err },
+		"cancel":  func() error { return other.Cancel(ctx, backend.Reference{ID: testID, Task: task}) },
+		"logs":    func() error { _, err := other.Logs(ctx, backend.Reference{ID: testID, Task: task}, 0, 10); return err },
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := run(); err == nil || !strings.Contains(err.Error(), "ownership") {
@@ -134,11 +137,11 @@ func TestOwnershipAndFailures(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	if _, err := b.Observe(ctx, testID); err == nil {
+	if _, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task}); err == nil {
 		t.Fatal("outage was treated as terminal state")
 	}
 	interrupted = false
-	status, err := b.Observe(ctx, testID)
+	status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Starting {
 		t.Fatalf("observe after API recovery: %+v %v", status, err)
 	}
@@ -175,7 +178,8 @@ func TestPodObservation(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	b, _ := New(client, "workloads", "test")
-	if err := b.Start(ctx, testID, backend.Task{Argv: []string{"true"}, Image: "busybox"}); err != nil {
+	task := backend.Task{Argv: []string{"true"}, Image: "busybox"}
+	if err := b.Start(ctx, testID, task); err != nil {
 		t.Fatal(err)
 	}
 	j, _ := client.BatchV1().Jobs("workloads").Get(ctx, "skygo-"+testID, metav1.GetOptions{})
@@ -184,19 +188,19 @@ func TestPodObservation(t *testing.T) {
 	controller := true
 	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Labels: j.Labels, OwnerReferences: []metav1.OwnerReference{{UID: j.UID, Name: j.Name, Kind: "Job", Controller: &controller}}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable"}}}}
 	client.CoreV1().Pods("workloads").Create(ctx, p, metav1.CreateOptions{})
-	status, err := b.Observe(ctx, testID)
+	status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Starting || !strings.Contains(status.Reason, "Unschedulable") {
 		t.Fatalf("pending: %+v %v", status, err)
 	}
 	p.Status.Phase = corev1.PodRunning
 	client.CoreV1().Pods("workloads").UpdateStatus(ctx, p, metav1.UpdateOptions{})
-	status, err = b.Observe(ctx, testID)
+	status, err = b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 	if err != nil || status.State != backend.Running {
 		t.Fatalf("running: %+v %v", status, err)
 	}
 	p.Name = "second"
 	client.CoreV1().Pods("workloads").Create(ctx, p, metav1.CreateOptions{})
-	if _, err = b.Logs(ctx, testID, 0, 10); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+	if _, err = b.Logs(ctx, backend.Reference{ID: testID, Task: task}, 0, 10); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("multiple pods: %v", err)
 	}
 }
@@ -205,7 +209,8 @@ func TestDeletedJobIsNotRecreated(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
 	b, _ := New(client, "workloads", "test")
-	if err := b.Start(ctx, testID, backend.Task{Argv: []string{"true"}, Image: "busybox"}); err != nil {
+	task := backend.Task{Argv: []string{"true"}, Image: "busybox"}
+	if err := b.Start(ctx, testID, task); err != nil {
 		t.Fatal(err)
 	}
 	if err := client.BatchV1().Jobs("workloads").Delete(ctx, "skygo-"+testID, metav1.DeleteOptions{}); err != nil {
@@ -213,7 +218,7 @@ func TestDeletedJobIsNotRecreated(t *testing.T) {
 	}
 	client.ClearActions()
 	for i := 0; i < 2; i++ {
-		status, err := b.Observe(ctx, testID)
+		status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
 		if err != nil || status.State != backend.Unknown {
 			t.Fatalf("observe: %+v %v", status, err)
 		}
@@ -293,5 +298,128 @@ func TestCompletedBeforeObservedCancellation(t *testing.T) {
 				t.Fatalf("log owner not retained: %v", err)
 			}
 		})
+	}
+}
+
+// A conflicting Create response must not be bypassed by the next observation.
+func TestConflictingCreateIsNotAdopted(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	client := fake.NewSimpleClientset()
+	b, err := New(client, "workloads", s.Owner())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := control.New(s, []backend.Target{{Name: "kube", Backend: b}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	task := backend.Task{Argv: []string{"work"}, Image: "wanted"}
+	j, err := c.Submit("conflict", task)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherTask := task
+	otherTask.Image = "different"
+	if err := b.Start(ctx, j.ID, otherTask); err != nil {
+		t.Fatal(err)
+	}
+	remote, err := client.BatchV1().Jobs("workloads").Get(ctx, "skygo-"+j.ID, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	if _, err := client.BatchV1().Jobs("workloads").UpdateStatus(ctx, remote, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	runCtx, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
+	defer cancel()
+	if err := c.Run(runCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	got, err := c.Get(j.ID)
+	if err != nil || got.Status.State != backend.Unknown || !strings.Contains(got.Status.Reason, "identity mismatch") {
+		t.Fatalf("conflict outcome: %+v %v", got, err)
+	}
+}
+
+func TestRestartRejectsMismatchedTask(t *testing.T) {
+	ctx := context.Background()
+	task := backend.Task{Argv: []string{"work"}, Image: "wanted"}
+	ref := backend.Reference{ID: testID, Task: task}
+	for _, annotation := range []string{"", "different"} {
+		t.Run(annotation, func(t *testing.T) {
+			client := fake.NewSimpleClientset()
+			b, _ := New(client, "workloads", "test")
+			if err := b.Start(ctx, testID, task); err != nil {
+				t.Fatal(err)
+			}
+			remote, err := client.BatchV1().Jobs("workloads").Get(ctx, "skygo-"+testID, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			remote.Annotations[taskAnnotation] = annotation
+			if _, err := client.BatchV1().Jobs("workloads").Update(ctx, remote, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			recovered, _ := New(client, "workloads", "test")
+			client.ClearActions()
+			for name, run := range map[string]func() error{
+				"observe": func() error { _, err := recovered.Observe(ctx, ref); return err },
+				"cancel":  func() error { return recovered.Cancel(ctx, ref) },
+				"logs":    func() error { _, err := recovered.Logs(ctx, ref, 0, 10); return err },
+			} {
+				t.Run(name, func(t *testing.T) {
+					if err := run(); !errors.Is(err, backend.ErrIdentityMismatch) {
+						t.Fatalf("want identity mismatch, got %v", err)
+					}
+				})
+			}
+			for _, action := range client.Actions() {
+				if action.GetVerb() != "get" {
+					t.Fatalf("conflicting workload modified or accessed: %+v", action)
+				}
+			}
+		})
+	}
+}
+
+func TestMissingPodLogs(t *testing.T) {
+	ctx := context.Background()
+	client := fake.NewSimpleClientset()
+	b, _ := New(client, "workloads", "test")
+	ref := backend.Reference{ID: testID, Task: backend.Task{Argv: []string{"work"}, Image: "image"}}
+	if err := b.Start(ctx, ref.ID, ref.Task); err != nil {
+		t.Fatal(err)
+	}
+	chunk, err := b.Logs(ctx, ref, 0, 10)
+	if err != nil || chunk.Complete {
+		t.Fatalf("pending logs: %+v %v", chunk, err)
+	}
+	j, err := client.BatchV1().Jobs("workloads").Get(ctx, "skygo-"+ref.ID, metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}
+	if _, err := client.BatchV1().Jobs("workloads").UpdateStatus(ctx, j, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.Logs(ctx, ref, 0, 10); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("lost logs: %v", err)
+	}
+}
+
+func TestMissingJobLogs(t *testing.T) {
+	b, err := New(fake.NewSimpleClientset(), "workloads", "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = b.Logs(context.Background(), backend.Reference{ID: testID}, 0, 10)
+	if !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("missing job logs: %v", err)
 	}
 }
