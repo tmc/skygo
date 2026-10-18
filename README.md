@@ -2,8 +2,10 @@
 
 skygo runs finite, single-node jobs on local Linux/macOS processes or Kubernetes
 Jobs. One Go server owns durable job records; the CLI uses its generated Connect
-API. Kubernetes is optional. No Python, Ray, external database, or `kubectl` is
-required by the application.
+API. The root Go module and `skygo` binary have no Kubernetes dependencies.
+The separate `integrations/kubernetes` module builds `skygo-kubernetes`, which
+adds the Kubernetes backend. No Python, Ray, external database, or `kubectl` is
+required by either application.
 
 This is an independent, small implementation of selected SkyPilot concerns:
 task validation, target selection, submission, status, logs, and cancellation.
@@ -14,7 +16,7 @@ It does not implement SkyPilot's API or YAML format.
 Build from this checkout with Go 1.24.1 or newer:
 
 ```sh
-CGO_ENABLED=0 go build -o bin/skygo ./cmd/skygo
+GOWORK=off CGO_ENABLED=0 go build -o bin/skygo ./cmd/skygo
 ./bin/skygo server --data-dir ./state
 ```
 
@@ -40,7 +42,8 @@ with a different task fails. Request bindings survive server restart.
 ## Commands
 
 ```text
-skygo server --data-dir DIR [--namespace NS] [--disable-local]
+skygo server --data-dir DIR
+skygo-kubernetes server --data-dir DIR --namespace NS [--disable-local]
 skygo targets list
 skygo plan -f task.yaml
 skygo run -f task.yaml [--request-id ID] [--wait]
@@ -61,17 +64,22 @@ offsets. Diagnostics and retry IDs go to stderr. Use `-f -` to read YAML on stdi
 
 ## Kubernetes
 
-To run the server outside a cluster, provide an explicit context and namespace:
+Build the integration from this checkout, then provide an explicit context and
+namespace to run its server outside a cluster:
 
 ```sh
-./bin/skygo server --data-dir ./state-kube --disable-local \
+(cd integrations/kubernetes && GOWORK=off CGO_ENABLED=0 go build \
+  -o ../../bin/skygo-kubernetes ./cmd/skygo-kubernetes)
+./bin/skygo-kubernetes server --data-dir ./state-kube --disable-local \
   --kubeconfig "$HOME/.kube/config" --context YOUR_CONTEXT --namespace YOUR_NAMESPACE
 ./bin/skygo run -f examples/kubernetes.yaml --wait
 ```
 
-With `--namespace` and no kubeconfig/context, the server uses in-cluster
-credentials. [Deployment instructions](docs/kubernetes.md) describe the
-singleton PVC-backed installation, authentication, and rollback.
+The integration requires `--namespace`; with no kubeconfig/context, it uses
+in-cluster credentials. Both binaries provide the same client commands and can
+connect to either server. The root binary has no Kubernetes server flags.
+[Deployment instructions](docs/kubernetes.md) describe the singleton PVC-backed
+installation, authentication, and rollback.
 
 ## Boundaries
 
@@ -107,11 +115,20 @@ See [task and API contracts](docs/contracts.md) and the
 ## Development
 
 ```sh
-go test ./...
-go test -race ./...
-go vet ./...
-CGO_ENABLED=0 go build ./cmd/skygo
+make test
+make race
+make check
+make build
 ```
+
+These targets cover both Go modules with `GOWORK=off`. `make check` also needs
+Buf; `make tools` installs the pinned development tools. Running `go test ./...`
+from the root alone skips the integration module.
+
+The integration uses a local `replace` directive for the unpublished root module.
+It builds from this checkout; independent module releases need a published root
+version and removal of that local replacement. See the
+[integration README](integrations/kubernetes/README.md).
 
 Default tests use local fixtures and HTTP test servers; no cloud or Kubernetes
 credentials are needed. Live Kubernetes tests are explicitly gated. Protobuf

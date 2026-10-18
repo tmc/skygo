@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/server"
 	"github.com/tmc/skygo/internal/store"
 )
@@ -146,7 +148,6 @@ func TestConfigurationErrors(t *testing.T) {
 		{"public without token", server.Config{Listen: "0.0.0.0:0"}, "requires a bearer token"},
 		{"hostname without token", server.Config{Listen: "localhost:0"}, "requires a bearer token"},
 		{"invalid listen", server.Config{Listen: "invalid"}, "listen address"},
-		{"context without namespace", server.Config{Listen: "127.0.0.1:0", Context: "unused"}, "namespace is required"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.cfg.DataDir = t.TempDir()
@@ -304,4 +305,39 @@ func TestCanceledStartup(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+}
+
+func TestTargetInitialization(t *testing.T) {
+	dir := t.TempDir()
+	var owner string
+	sentinel := errors.New("target initialization failed")
+	for i := 0; i < 2; i++ {
+		calls := 0
+		err := server.Run(context.Background(), server.Config{
+			DataDir: dir, Listen: "127.0.0.1:0", DisableLocal: true,
+			Targets: func(id string) ([]backend.Target, error) {
+				calls++
+				if id == "" {
+					t.Fatal("empty installation identity")
+				}
+				if owner != "" && id != owner {
+					t.Fatalf("installation identity changed: %q != %q", id, owner)
+				}
+				owner = id
+				return nil, sentinel
+			},
+		})
+		if !errors.Is(err, sentinel) || calls != 1 {
+			t.Fatalf("Run = %v, calls = %d", err, calls)
+		}
+	}
+	// Both failed starts released the store, preserving its identity.
+	s, err := store.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	if s.Owner() != owner {
+		t.Fatal("factory did not receive durable identity")
+	}
 }

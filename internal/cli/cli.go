@@ -22,11 +22,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ServerOptions configures the server callback. Empty Kubernetes settings use
-// in-cluster credentials when the server enables that target.
+// ServerOptions configures the server callback.
 type ServerOptions struct {
-	DataDir, Listen, Kubeconfig, Context, Namespace, Token string
-	DisableLocal                                           bool
+	DataDir, Listen, Token string
+	DisableLocal           bool
 }
 
 type options struct {
@@ -82,9 +81,6 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 	}}
 	srv.Flags().StringVar(&s.DataDir, "data-dir", "skygo-data", "Durable state directory")
 	srv.Flags().StringVar(&s.Listen, "listen", "127.0.0.1:8080", "HTTP listen address")
-	srv.Flags().StringVar(&s.Kubeconfig, "kubeconfig", "", "Kubernetes configuration file")
-	srv.Flags().StringVar(&s.Context, "context", "", "Kubernetes context")
-	srv.Flags().StringVar(&s.Namespace, "namespace", "", "Enable Kubernetes target in this namespace")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
 	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs())
 	targets := &cobra.Command{Use: "targets", Short: "Inspect configured execution targets"}

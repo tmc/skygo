@@ -1,6 +1,8 @@
+# Local server and portable client. For Kubernetes, use integrations/kubernetes/Dockerfile.
 # Supply a digest-pinned Go builder for release builds.
 ARG GO_IMAGE=golang:1.24.1
 FROM ${GO_IMAGE} AS build
+ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
