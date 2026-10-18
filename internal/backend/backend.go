@@ -1,0 +1,89 @@
+// Package backend defines the portable execution boundary for finite jobs.
+package backend
+
+import (
+	"context"
+	"time"
+)
+
+// Task describes one program. Zero resource quantities mean unspecified.
+type Task struct {
+	Argv             []string          `json:"argv" yaml:"argv"`
+	Env              map[string]string `json:"env,omitempty" yaml:"env,omitempty"`
+	Directory        string            `json:"directory,omitempty" yaml:"directory,omitempty"`
+	Image            string            `json:"image,omitempty" yaml:"image,omitempty"`
+	CPUMillis        int64             `json:"cpu_millis,omitempty" yaml:"cpu_millis,omitempty"`
+	MemoryBytes      int64             `json:"memory_bytes,omitempty" yaml:"memory_bytes,omitempty"`
+	Accelerator      string            `json:"accelerator,omitempty" yaml:"accelerator,omitempty"`
+	AcceleratorCount int32             `json:"accelerator_count,omitempty" yaml:"accelerator_count,omitempty"`
+	Target           string            `json:"target,omitempty" yaml:"target,omitempty"`
+	TimeoutSeconds   int64             `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
+}
+
+// State records an observed execution state. Unknown does not imply termination.
+type State string
+
+const (
+	Queued    State = "queued"
+	Starting  State = "starting"
+	Running   State = "running"
+	Succeeded State = "succeeded"
+	Failed    State = "failed"
+	Canceled  State = "canceled"
+	Unknown   State = "unknown"
+)
+
+// Terminal reports whether the control plane will stop reconciling this state.
+func (s State) Terminal() bool { return s == Succeeded || s == Failed || s == Canceled || s == Unknown }
+
+// Status describes the last observed state; ExitCode is nil unless observed.
+type Status struct {
+	State    State  `json:"state"`
+	Reason   string `json:"reason,omitempty"`
+	ExitCode *int32 `json:"exit_code,omitempty"`
+}
+
+// Job is a durable accepted task. Task and Target never change.
+type Job struct {
+	ID              string    `json:"id"`
+	Task            Task      `json:"task"`
+	Target          string    `json:"target"`
+	Status          Status    `json:"status"`
+	CancelRequested bool      `json:"cancel_requested"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
+	Sequence        uint64    `json:"sequence"`
+}
+
+// LogChunk is a bounded segment of the retained combined output prefix.
+type LogChunk struct {
+	Data       []byte
+	NextOffset int64
+	Complete   bool
+	Truncated  bool
+}
+
+// MaxLogBytes caps retained output per job; MaxChunkBytes bounds one log read.
+const MaxLogBytes = 1 << 20
+const MaxChunkBytes = 64 << 10
+
+// Backend executes jobs under stable coordinator-generated IDs. Start is called
+// at most once by a coordinator, after durable Starting intent. Its context only
+// bounds startup, not workload lifetime. Observe must report Unknown for missing
+// execution and return an error for temporary uncertainty. Cancel nil confirms
+// delivery of the request, not termination. Methods are safe for concurrent use.
+// Logs addresses the retained byte prefix; it rejects offsets past that prefix.
+type Backend interface {
+	Check(Task) error
+	Start(context.Context, string, Task) error
+	Observe(context.Context, string) (Status, error)
+	Cancel(context.Context, string) error
+	Logs(context.Context, string, int64, int) (LogChunk, error)
+}
+
+// Target binds a configured name and kind to an executor.
+type Target struct {
+	Name    string
+	Kind    string
+	Backend Backend
+}

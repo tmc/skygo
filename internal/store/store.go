@@ -1,0 +1,303 @@
+// Package store persists accepted jobs and submission identities in a single
+// exclusively locked database. Records are retained until the data directory is
+// removed; a full store refuses new submissions rather than forgetting retries.
+package store
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"time"
+
+	"github.com/tmc/skygo/internal/backend"
+	bolt "go.etcd.io/bbolt"
+)
+
+var (
+	ErrNotFound = errors.New("job not found")
+	ErrConflict = errors.New("request ID belongs to a different task")
+	ErrFull     = errors.New("job retention limit reached")
+)
+
+const maxJobs = 10000
+const maxTaskBytes = 16 << 20
+
+var taskBytesKey = []byte("task_bytes")
+
+var jobsBucket = []byte("jobs")
+var requestsBucket = []byte("requests")
+var sequenceBucket = []byte("sequence")
+var metadataBucket = []byte("metadata")
+
+// Store owns the data directory's exclusive database lock.
+type Store struct {
+	db    *bolt.DB
+	owner string
+}
+
+// Open opens or initializes a database in dir. Another writer is refused after
+// one second. The persistent owner identifies this installation to backends.
+func Open(dir string) (*Store, error) {
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, fmt.Errorf("create data directory: %w", err)
+	}
+	db, err := bolt.Open(filepath.Join(dir, "jobs.db"), 0600, &bolt.Options{Timeout: time.Second})
+	if err != nil {
+		return nil, fmt.Errorf("open job database: %w", err)
+	}
+	s := &Store{db: db}
+	err = db.Update(func(tx *bolt.Tx) error {
+		for _, name := range [][]byte{jobsBucket, requestsBucket, sequenceBucket, metadataBucket} {
+			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
+				return err
+			}
+		}
+		m := tx.Bucket(metadataBucket)
+		// Older stores have no aggregate counter. Derive it once before admitting
+		// new tasks; existing bindings remain valid even above the current cap.
+		if m.Get(taskBytesKey) == nil {
+			var total uint64
+			if err := tx.Bucket(jobsBucket).ForEach(func(_, data []byte) error {
+				var j backend.Job
+				if err := json.Unmarshal(data, &j); err != nil {
+					return err
+				}
+				task, err := json.Marshal(j.Task)
+				if err != nil {
+					return err
+				}
+				total += uint64(len(task))
+				return nil
+			}); err != nil {
+				return err
+			}
+			if err := m.Put(taskBytesKey, sequenceKey(total)); err != nil {
+				return err
+			}
+		}
+		s.owner = string(m.Get([]byte("owner")))
+		if s.owner == "" {
+			id, err := newID()
+			if err != nil {
+				return err
+			}
+			s.owner = id
+			return m.Put([]byte("owner"), []byte(id))
+		}
+		return nil
+	})
+	if err != nil {
+		db.Close()
+		return nil, fmt.Errorf("initialize job database: %w", err)
+	}
+	return s, nil
+}
+
+// Close releases the database and writer lock.
+func (s *Store) Close() error { return s.db.Close() }
+
+// Owner returns the persistent installation identity.
+func (s *Store) Owner() string { return s.owner }
+
+func newID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+func sequenceKey(n uint64) []byte { var b [8]byte; binary.BigEndian.PutUint64(b[:], n); return b[:] }
+func get(tx *bolt.Tx, id string) (backend.Job, error) {
+	var j backend.Job
+	v := tx.Bucket(jobsBucket).Get([]byte(id))
+	if v == nil {
+		return j, ErrNotFound
+	}
+	if err := json.Unmarshal(v, &j); err != nil {
+		return j, fmt.Errorf("decode job %s: %w", id, err)
+	}
+	return j, nil
+}
+func lookup(tx *bolt.Tx, requestID string, task backend.Task) (backend.Job, bool, error) {
+	id := tx.Bucket(requestsBucket).Get([]byte(requestID))
+	if id == nil {
+		return backend.Job{}, false, nil
+	}
+	j, err := get(tx, string(id))
+	if err != nil {
+		return j, true, err
+	}
+	want, err := json.Marshal(task)
+	if err != nil {
+		return j, true, err
+	}
+	have, err := json.Marshal(j.Task)
+	if err != nil {
+		return j, true, err
+	}
+	if !bytes.Equal(have, want) {
+		return backend.Job{}, true, ErrConflict
+	}
+	return j, true, nil
+}
+
+// Lookup returns an existing request binding. Task equality uses its canonical
+// JSON representation, treating nil and empty environment maps equally.
+func (s *Store) Lookup(requestID string, task backend.Task) (j backend.Job, found bool, err error) {
+	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, found, e = lookup(tx, requestID, task); return e })
+	return
+}
+
+// Submit atomically binds requestID to a newly accepted job. Repeating an
+// identical request returns the original job, including its original target.
+func (s *Store) Submit(requestID string, task backend.Task, target string) (j backend.Job, err error) {
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		existing, found, e := lookup(tx, requestID, task)
+		if e != nil {
+			return e
+		}
+		if found {
+			j = existing
+			return nil
+		}
+		encodedTask, e := json.Marshal(task)
+		if e != nil {
+			return e
+		}
+		metadata := tx.Bucket(metadataBucket)
+		taskBytes := binary.BigEndian.Uint64(metadata.Get(taskBytesKey))
+		if taskBytes >= maxTaskBytes || uint64(len(encodedTask)) > maxTaskBytes-taskBytes {
+			return ErrFull
+		}
+		jobs := tx.Bucket(jobsBucket)
+		seq := tx.Bucket(sequenceBucket)
+		if seq.Sequence() >= maxJobs {
+			return ErrFull
+		}
+		id, e := newID()
+		if e != nil {
+			return e
+		}
+		if jobs.Get([]byte(id)) != nil {
+			return errors.New("random job identity collision")
+		}
+		n, e := seq.NextSequence()
+		if e != nil {
+			return e
+		}
+		now := time.Now().UTC()
+		accepted := backend.Job{ID: id, Task: task, Target: target, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
+		data, e := json.Marshal(accepted)
+		if e != nil {
+			return e
+		}
+		if e = jobs.Put([]byte(id), data); e != nil {
+			return e
+		}
+		if e = seq.Put(sequenceKey(n), []byte(id)); e != nil {
+			return e
+		}
+		if e = tx.Bucket(requestsBucket).Put([]byte(requestID), []byte(id)); e != nil {
+			return e
+		}
+		if e = metadata.Put(taskBytesKey, sequenceKey(taskBytes+uint64(len(encodedTask)))); e != nil {
+			return e
+		}
+		// Decode a fresh value so callers cannot mutate task maps owned by others.
+		return json.Unmarshal(data, &j)
+	})
+	return
+}
+
+// Get reads one accepted job.
+func (s *Store) Get(id string) (j backend.Job, err error) {
+	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, e = get(tx, id); return e })
+	return
+}
+
+// LastSequence returns the last accepted sequence for snapshot pagination.
+func (s *Store) LastSequence() (n uint64, err error) {
+	err = s.db.View(func(tx *bolt.Tx) error { n = tx.Bucket(sequenceBucket).Sequence(); return nil })
+	return
+}
+
+// List returns jobs with after < Sequence <= max, in acceptance order.
+func (s *Store) List(after, max uint64, limit int) (out []backend.Job, err error) {
+	if limit <= 0 {
+		return nil, errors.New("list limit must be positive")
+	}
+	err = s.db.View(func(tx *bolt.Tx) error {
+		if after >= max {
+			return nil
+		}
+		c := tx.Bucket(sequenceBucket).Cursor()
+		for k, v := c.Seek(sequenceKey(after + 1)); k != nil && len(out) < limit; k, v = c.Next() {
+			if binary.BigEndian.Uint64(k) > max {
+				break
+			}
+			j, e := get(tx, string(v))
+			if e != nil {
+				return e
+			}
+			out = append(out, j)
+		}
+		return nil
+	})
+	return
+}
+
+// Update changes mutable job state atomically. The callback must not perform
+// external I/O or call Store methods. Identity, task and target cannot change.
+func (s *Store) Update(id string, fn func(*backend.Job) error) (j backend.Job, err error) {
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		before, e := get(tx, id)
+		if e != nil {
+			return e
+		}
+		originalTask, e := json.Marshal(before.Task)
+		if e != nil {
+			return e
+		}
+		j = before
+		if e = fn(&j); e != nil {
+			return e
+		}
+		changedTask, e := json.Marshal(j.Task)
+		if e != nil {
+			return e
+		}
+		if j.ID != before.ID || j.Target != before.Target || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
+			return errors.New("cannot change immutable job fields")
+		}
+		j.UpdatedAt = time.Now().UTC()
+		data, e := json.Marshal(j)
+		if e != nil {
+			return e
+		}
+		return tx.Bucket(jobsBucket).Put([]byte(id), data)
+	})
+	return
+}
+
+// Active reads all nonterminal jobs in acceptance order.
+func (s *Store) Active() (out []backend.Job, err error) {
+	err = s.db.View(func(tx *bolt.Tx) error {
+		return tx.Bucket(sequenceBucket).ForEach(func(_, id []byte) error {
+			j, e := get(tx, string(id))
+			if e != nil {
+				return e
+			}
+			if !j.Status.State.Terminal() {
+				out = append(out, j)
+			}
+			return nil
+		})
+	})
+	return
+}
