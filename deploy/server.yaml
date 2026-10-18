@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skygo
+  namespace: skygo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: skygo
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: skygo
+    spec:
+      serviceAccountName: skygo
+      automountServiceAccountToken: true
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: skygo
+          # Replace through Kustomize with your tested immutable image digest.
+          image: skygo:local
+          imagePullPolicy: IfNotPresent
+          args:
+            - server
+            - --data-dir=/data/state
+            - --listen=0.0.0.0:8080
+            - --namespace=skygo
+            - --disable-local
+          env:
+            - name: SKYGO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: skygo-auth
+                  key: token
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: state
+              mountPath: /data
+          # Unmeasured example values; size under representative load.
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          # Example timing budgets, not latency measurements.
+          startupProbe:
+            httpGet:
+              path: /startup
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            periodSeconds: 2
+            timeoutSeconds: 1
+          livenessProbe:
+            httpGet:
+              path: /live
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 1
+            failureThreshold: 3
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: skygo-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: skygo
+  namespace: skygo
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: skygo
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http

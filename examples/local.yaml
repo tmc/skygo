@@ -1,0 +1,3 @@
+argv: [/bin/echo, hello from skygo]
+target: local
+timeout_seconds: 30

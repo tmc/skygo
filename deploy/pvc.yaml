@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: skygo-state
+  namespace: skygo
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      # Example allocation for metadata with local execution disabled.
+      # Measure and choose capacity/storageClass for the target installation.
+      storage: 1Gi

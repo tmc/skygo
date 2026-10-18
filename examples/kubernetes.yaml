@@ -1,0 +1,8 @@
+# Convenience example; pin an approved image digest for deployment.
+argv: [/bin/sh, -c, 'echo hello from skygo']
+image: busybox:1.37.0
+target: kubernetes
+# Illustrative requests, not measured requirements.
+cpu_millis: 100
+memory_bytes: 16777216
+timeout_seconds: 60

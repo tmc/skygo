@@ -1,0 +1,122 @@
+# Manual verification
+
+Run the default suite without cluster credentials:
+
+```sh
+go test ./...
+go test -race ./...
+go vet ./...
+CGO_ENABLED=0 go build -o bin/skygo ./cmd/skygo
+```
+
+The suite includes real local subprocesses and generated Connect clients over
+HTTP test servers. Fake Kubernetes clients do not qualify a live cluster.
+Keep command output and the tested source commit outside the module.
+
+## Local lifecycle
+
+Use a new private task directory. In terminal A:
+
+```sh
+mkdir -p "$HOME/tmp/skygo/manual-test"
+./bin/skygo server --data-dir "$HOME/tmp/skygo/manual-test/state"
+```
+
+In terminal B:
+
+```sh
+./bin/skygo plan -f examples/local.yaml
+./bin/skygo run -f examples/local.yaml --wait --request-id manual-hello
+./bin/skygo run -f examples/local.yaml --wait --request-id manual-hello
+./bin/skygo --json jobs list
+```
+
+Expect `local`, then the same successful job ID on both submissions. Copy that
+ID and check `jobs logs ID` prints `hello from skygo`. Restart terminal A using
+the same data directory and repeat the submission: expect the same ID and logs.
+Starting another server with that directory must fail the writer lock.
+
+```sh
+./bin/skygo run -f examples/local-sleep.yaml --request-id manual-sleep
+./bin/skygo jobs logs SLEEP_JOB_ID --follow
+```
+
+Interrupt log follow with Ctrl-C. `jobs get SLEEP_JOB_ID` must still show a live
+job. `jobs cancel SLEEP_JOB_ID` must reject the missing `--yes`; retry with
+`--yes` and poll get until canceled. Use a new request ID for each new execution.
+
+```sh
+printf 'argv: [/bin/sh, -c, "exit 7"]\ntarget: local\n' | \
+  ./bin/skygo run -f - --wait --request-id manual-failure
+printf 'exit=%s\n' "$?"
+```
+
+Expect failed state and CLI exit 2. `jobs get missing` should fail with exit 1.
+An unknown YAML key must fail before an RPC. Set `image: busybox:1.37.0` and
+`target: local` in a task: planning must reject that combination.
+
+For crash recovery, submit a short-lived sleep, SIGKILL only the known test
+server PID, and restart it with the same directory. The unfinished job must
+become unknown, never succeeded or relaunched. Wait for the short workload to
+exit; do not signal a PID recovered from durable records. After normal shutdown,
+remove only the disposable directory when its evidence is no longer needed.
+
+## Disposable Kubernetes backend
+
+These commands create and delete resources. Use a disposable cluster that you
+explicitly own. A container runtime and `kind` are developer tools here, not
+application dependencies. Pin a kind node image supported by your local setup.
+
+```sh
+kind create cluster --name skygo-test --image YOUR_PINNED_KIND_NODE_IMAGE
+kubectl --context kind-skygo-test create namespace skygo-backend-test
+SKYGO_KUBE_TEST=1 \
+SKYGO_KUBE_CONTEXT=kind-skygo-test \
+SKYGO_KUBE_NAMESPACE=skygo-backend-test \
+SKYGO_KUBE_IMAGE=YOUR_APPROVED_BUSYBOX_IMAGE \
+go test -count=1 -v ./internal/kube -run '^TestLive$'
+```
+
+Expect success/log read, failed workload, cancellation, and stable-identity
+adoption checks to pass. Tests clean their own Jobs. These checks do not prove
+server Pod lifecycle, Service routing, RBAC, storage mounts, or rollout behavior.
+
+## In-cluster server
+
+Follow [the deployment instructions](kubernetes.md) in the disposable cluster.
+Use the exact tested image digest and rendered manifest. Then verify:
+
+1. The Pod runs non-root, mounts state read/write and rootfs read-only, and the
+   Service has type ClusterIP. `targets list` reports Kubernetes only.
+2. Without `SKYGO_TOKEN`, `targets list` fails authentication; with the chosen
+   token it succeeds through port-forward. `/startup`, `/live`, and `/ready`
+   return 200 once initialized.
+3. `run -f examples/kubernetes.yaml --wait` succeeds and its logs contain the
+   expected text. Repeat with the same request ID: no second native Job appears.
+4. Run a sleeping task. Restart the Deployment while following logs. The stream
+   disconnects, the task Job remains, and the restarted server observes that
+   same task without creating another Job. Check state and retry identity after
+   the PVC remounts.
+5. Cancel a sleeping task and confirm both observed cancellation and foreground
+   deletion of its native Job/Pod. Delete an uncanceled test Job externally:
+   its control-plane state must become unknown.
+6. Request an unavailable resource in a disposable task. It remains starting
+   with a scheduling reason rather than reporting success. Remove it afterward.
+7. Inspect `kubectl --context kind-skygo-test -n skygo get events` and server
+   logs for mount, scheduling, probe, RBAC, and termination failures. Test
+   direct ingress denial from another Pod when NetworkPolicy is enforced.
+8. Exercise SIGTERM during active streams and submissions. Check readiness
+   withdrawal and bounded termination; measure peak CPU/memory and startup/drain
+   time under representative load before replacing illustrative YAML budgets.
+9. Practice backup, upgrade, and rollback from the deployment guide. Confirm
+   restored metadata, identity, and workload ownership before accepting traffic.
+
+Do not claim production readiness from rendering manifests or passing unit
+fixtures. A live run must record context, Kubernetes version, source commit,
+image digest, rendered configuration, observed outcomes, and cleanup.
+
+Remove the disposable cluster when finished:
+
+```sh
+kind delete cluster --name skygo-test
+```
