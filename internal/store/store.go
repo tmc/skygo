@@ -61,7 +61,7 @@ func Open(dir string) (*Store, error) {
 		m := tx.Bucket(metadataBucket)
 		// Older stores have no aggregate counter. Derive it once before admitting
 		// new tasks; existing bindings remain valid even above the current cap.
-		if m.Get(taskBytesKey) == nil {
+		if data := m.Get(taskBytesKey); data == nil {
 			var total uint64
 			if err := tx.Bucket(jobsBucket).ForEach(func(_, data []byte) error {
 				var j backend.Job
@@ -80,6 +80,8 @@ func Open(dir string) (*Store, error) {
 			if err := m.Put(taskBytesKey, sequenceKey(total)); err != nil {
 				return err
 			}
+		} else if len(data) != 8 {
+			return errors.New("invalid task byte counter")
 		}
 		s.owner = string(m.Get([]byte("owner")))
 		if s.owner == "" {
@@ -171,7 +173,11 @@ func (s *Store) Submit(requestID string, task backend.Task, target string) (j ba
 			return e
 		}
 		metadata := tx.Bucket(metadataBucket)
-		taskBytes := binary.BigEndian.Uint64(metadata.Get(taskBytesKey))
+		data := metadata.Get(taskBytesKey)
+		if len(data) != 8 {
+			return errors.New("invalid task byte counter")
+		}
+		taskBytes := binary.BigEndian.Uint64(data)
 		if taskBytes >= maxTaskBytes || uint64(len(encodedTask)) > maxTaskBytes-taskBytes {
 			return ErrFull
 		}
@@ -193,7 +199,7 @@ func (s *Store) Submit(requestID string, task backend.Task, target string) (j ba
 		}
 		now := time.Now().UTC()
 		accepted := backend.Job{ID: id, Task: task, Target: target, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
-		data, e := json.Marshal(accepted)
+		data, e = json.Marshal(accepted)
 		if e != nil {
 			return e
 		}
@@ -238,6 +244,9 @@ func (s *Store) List(after, max uint64, limit int) (out []backend.Job, err error
 		}
 		c := tx.Bucket(sequenceBucket).Cursor()
 		for k, v := c.Seek(sequenceKey(after + 1)); k != nil && len(out) < limit; k, v = c.Next() {
+			if len(k) != 8 {
+				return errors.New("invalid job sequence key")
+			}
 			if binary.BigEndian.Uint64(k) > max {
 				break
 			}
