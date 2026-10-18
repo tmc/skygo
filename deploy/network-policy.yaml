@@ -1,0 +1,13 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: skygo-private
+  namespace: skygo
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: skygo
+  policyTypes: [Ingress]
+  # Default access is kubectl port-forward, not direct pod/service ingress.
+  # Requires a CNI enforcing NetworkPolicy. Configure TLS before adding access.
+  ingress: []
