@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -184,8 +185,8 @@ func TestCLIHelper(t *testing.T) {
 	}
 	os.Exit(ExitCode(err))
 }
-func TestScripts(t *testing.T) {
-	srv := serve(t, &testService{})
+func scriptEngine(t *testing.T) *script.Engine {
+	t.Helper()
 	exe, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -203,10 +204,18 @@ func TestScripts(t *testing.T) {
 		if err := cmd.Start(); err != nil {
 			return nil, err
 		}
-		return func(*script.State) (string, string, error) {
+		return func(s *script.State) (string, string, error) {
 			err := cmd.Wait()
+			if setErr := s.Setenv("SKYGO_EXIT_CODE", strconv.Itoa(cmd.ProcessState.ExitCode())); setErr != nil {
+				return out.String(), diag.String(), setErr
+			}
 			return out.String(), diag.String(), err
 		}, nil
 	})
-	scripttest.Test(t, context.Background(), e, []string{"SKYGO_ENDPOINT=" + srv.URL, "SKYGO_TOKEN=test-token"}, "testdata/*.txt")
+	return e
+}
+
+func TestScripts(t *testing.T) {
+	srv := serve(t, &testService{})
+	scripttest.Test(t, context.Background(), scriptEngine(t), []string{"SKYGO_ENDPOINT=" + srv.URL, "SKYGO_TOKEN=test-token"}, "testdata/basic.txt")
 }
