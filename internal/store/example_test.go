@@ -3,6 +3,7 @@ package store_test
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/store"
@@ -86,4 +87,55 @@ func ExampleStore_Active() {
 	// Output:
 	// 0 <nil>
 	// true
+}
+
+func ExampleBackup() {
+	dir, err := os.MkdirTemp("", "skygo-backup-example-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	source := filepath.Join(dir, "source")
+	s, err := store.Open(source)
+	if err != nil {
+		panic(err)
+	}
+	if err := s.Close(); err != nil {
+		panic(err)
+	}
+	err = store.Backup(source, filepath.Join(dir, "snapshot.db"))
+	fmt.Println(err)
+	// Output: <nil>
+}
+
+func ExampleRestore() {
+	dir, err := os.MkdirTemp("", "skygo-restore-example-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	source := filepath.Join(dir, "source")
+	s, err := store.Open(source)
+	if err != nil {
+		panic(err)
+	}
+	owner := s.Owner()
+	if err := s.Close(); err != nil {
+		panic(err)
+	}
+	snapshot := filepath.Join(dir, "snapshot.db")
+	if err := store.Backup(source, snapshot); err != nil {
+		panic(err)
+	}
+	restored := filepath.Join(dir, "restored")
+	if err := store.Restore(snapshot, restored); err != nil {
+		panic(err)
+	}
+	s, err = store.Open(restored)
+	if err != nil {
+		panic(err)
+	}
+	defer s.Close()
+	fmt.Println(s.Owner() == owner)
+	// Output: true
 }
