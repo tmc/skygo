@@ -407,27 +407,87 @@ func TestTokenPropertiesLimitsAndConcurrentMutation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	type result struct {
+		index int
+		info  TokenInfo
+		err   error
+	}
 	var wg sync.WaitGroup
-	errs := make(chan error, 8)
+	results := make(chan result, 8)
+	start := make(chan struct{})
+	output := func(i int) string {
+		return filepath.Join(filepath.Dir(f.path), fmt.Sprintf("token-%d", i))
+	}
 	for i := 0; i < 8; i++ {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			_, err := Issue(f.path, "alice", filepath.Join(filepath.Dir(f.path), fmt.Sprintf("token-%d", i)), time.Hour)
-			errs <- err
+			<-start
+			info, err := Issue(f.path, "alice", output(i), time.Hour)
+			results <- result{i, info, err}
 		}(i)
 	}
+	close(start)
 	wg.Wait()
-	close(errs)
-	for err := range errs {
+	close(results)
+	issued := make(map[int]TokenInfo)
+	var conflicts []int
+	for r := range results {
+		switch {
+		case r.err == nil:
+			issued[r.index] = r.info
+		case errors.Is(r.err, ErrConflict):
+			if _, err := os.Lstat(output(r.index)); !errors.Is(err, fs.ErrNotExist) {
+				t.Fatalf("conflicting issue %d published output: %v", r.index, err)
+			}
+			conflicts = append(conflicts, r.index)
+		default:
+			t.Fatalf("issue %d: %v", r.index, r.err)
+		}
+	}
+	if len(issued) == 0 {
+		t.Fatal("no concurrent issue succeeded")
+	}
+	checkIssued := func() {
+		t.Helper()
+		list, err := Tokens(f.path)
+		if err != nil || len(list) != len(issued)+1 {
+			t.Fatalf("lost update: got %d tokens, want %d: %v", len(list), len(issued)+1, err)
+		}
+		ids := make(map[string]bool)
+		for _, info := range list {
+			if ids[info.ID] {
+				t.Fatal("duplicate token ID")
+			}
+			ids[info.ID] = true
+		}
+		e, err := NewFile(f.path, installation)
 		if err != nil {
 			t.Fatal(err)
 		}
+		for i, info := range issued {
+			if !ids[info.ID] {
+				t.Fatalf("issue %d missing or duplicate token ID", i)
+			}
+			delete(ids, info.ID)
+			a := requireActor(t, e, readToken(t, output(i)))
+			if a.Principal() != "alice" || a.TokenID() != info.ID {
+				t.Fatalf("issue %d authority does not match returned metadata", i)
+			}
+		}
 	}
-	list, err := Tokens(f.path)
-	if err != nil || len(list) != 9 {
-		t.Fatalf("lost update: %d %v", len(list), err)
+	checkIssued()
+	// File mutations wait at most one second for the lock. Retry conflicts
+	// once, serially, after checking that contention lost no successful issue.
+	for _, i := range conflicts {
+		info, err := Issue(f.path, "alice", output(i), time.Hour)
+		if err != nil {
+			t.Fatalf("serial issue %d: %v", i, err)
+		}
+		issued[i] = info
 	}
+	checkIssued()
+	var err error
 	for i := 8; i < 16; i++ {
 		if _, err = Issue(f.path, "alice", filepath.Join(filepath.Dir(f.path), fmt.Sprintf("token-%d", i)), time.Hour); err != nil {
 			t.Fatal(err)
