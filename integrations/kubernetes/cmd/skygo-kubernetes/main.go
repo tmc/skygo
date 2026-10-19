@@ -24,7 +24,7 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			return errors.New("namespace is required for a Kubernetes target")
 		}
 		return run(ctx, server.Config{
-			DataDir: o.DataDir, Listen: o.Listen, Token: o.Token, DisableLocal: o.DisableLocal,
+			DataDir: o.DataDir, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, DisableLocal: o.DisableLocal,
 			Targets: func(owner string) ([]backend.Target, error) {
 				k, err := kube.FromConfig(kubeconfig, contextName, namespace, owner)
 				if err != nil {

@@ -105,7 +105,7 @@ func TestLegacyMigrationPreservesRecordsAndIdentity(t *testing.T) {
 		if len(task.Env) == 0 {
 			task.Env = map[string]string{}
 		}
-		got, err := s.Submit(binding.request, task, "replacement")
+		got, err := s.Submit(testActor(), binding.request, task, "replacement")
 		if err != nil || got.ID != binding.job.ID || got.Target != binding.job.Target || got.Sequence != binding.job.Sequence {
 			t.Fatalf("retry: %+v %v", got, err)
 		}
@@ -146,7 +146,7 @@ func TestSchemaRefusedWithoutWrites(t *testing.T) {
 			name   string
 			value  []byte
 			future bool
-		}{{"future", sequenceKey(2), true}, {"malformed", []byte{1}, false}} {
+		}{{"future", sequenceKey(3), true}, {"malformed", []byte{1}, false}} {
 			t.Run(marker.name+map[bool]string{false: "/synced", true: "/unsynced"}[unsynced], func(t *testing.T) {
 				dir := t.TempDir()
 				legacyFixture(t, dir, unsynced)

@@ -107,6 +107,34 @@ become unknown, never succeeded or relaunched. Wait for the short workload to
 exit; do not signal a PID recovered from durable records. After normal shutdown,
 remove only the disposable directory when its evidence is no longer needed.
 
+## Scoped authentication
+
+Follow [the scoped setup](authentication.md#activate) in a fresh private task
+directory. Use two operator principals and one reader; never print their token
+files. With each operator's `--token-file`, submit the same request ID and expect
+different jobs. A retry using a second token for the same principal must return
+the original job. Foreign and valid-but-missing IDs must have identical errors.
+The reader must be unable to submit or cancel; the admin must see both operators.
+
+Start an authenticated log follow, then revoke its public token ID using the
+local auth command. The follow must end while the workload remains running.
+Demote an admin following another principal's job; that follow must also end.
+New reads of the demoted principal's own work remain allowed. Invalid auth
+configuration must withdraw readiness and refuse authentication without stopping
+durable reconciliation. Restore a valid newer configuration before continuing.
+
+Restart the scoped server with the same state/auth file, then retry a completed
+request. Take an offline database snapshot and restore to a fresh directory with
+the latest matching auth file. Scope and request identity must survive; local
+logs remain excluded. Starting protected state without its auth file must fail.
+
+`GOWORK=off go test ./internal/cli -run '^TestAuthScripts$' -count=1` runs the
+actual daemon workflows. The optional historical-binary fixture lane additionally
+checks that the exact pre-auth binary refuses protected state byte-identically;
+provide its verified executable with `SKYGO_S01_BINARY` and expected digest with
+`SKYGO_S01_SHA256`. An ordinary skipped
+historical fixture is not that acceptance receipt.
+
 ## Disposable Kubernetes backend
 
 These commands create and delete resources. Use a disposable cluster that you

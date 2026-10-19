@@ -25,7 +25,8 @@ runs during planning. A shell is used only when explicitly present in argv.
 The public protocol is `skygo.v1.ControlService` in
 [`control.proto`](../proto/skygo/v1/control.proto). The methods are
 PlanTask, SubmitJob, GetJob, ListJobs, CancelJob, StreamJobLogs, ListTargets, and
-GetServerInfo. Discovery reports typed capabilities for each configured target. The current
+GetServerInfo. Discovery reports typed capabilities for each configured target.
+The current
 capability is `FINITE_JOBS_V1`; it describes finite-job semantics, not available
 capacity. A client requiring a capability must check the actual selected target
 before performing the associated operation. Missing discovery is unsupported,
@@ -35,7 +36,9 @@ Generated clients live in `gen/skygo/v1/skyv1connect`. Both executable
 entrypoints use this protocol; a client does not need Kubernetes dependencies
 to submit tasks to a server configured with the Kubernetes integration.
 
-A submission requires a request ID. The server persists the ID, normalized task,
+A submission requires a request ID. Scoped mode namespaces IDs by the
+authenticated principal; legacy mode has one global namespace. The server
+persists the ID, normalized task,
 and resulting job atomically before acknowledging acceptance. Identical retries
 return the same job; different tasks with the same ID return `already_exists`.
 Acceptance does not guarantee execution. There is no automatic workload retry.
@@ -47,7 +50,9 @@ mean the backend has stopped. Inspect observed state afterward. Completion can
 win a race with cancellation.
 
 ListJobs returns a bounded page and an opaque continuation token. Pass that token
-unchanged. Records and request bindings persist until the operator removes the
+unchanged under the same principal/read scope. Foreign and missing records are
+indistinguishable in scoped mode. Records and request bindings persist until the
+operator removes the
 store; removing it destroys retry protection and ownership identity.
 
 Log offsets count bytes in a bounded combined output prefix. The JSON stream
@@ -87,6 +92,9 @@ neither overwrites an existing destination.
 
 Snapshots contain only the database. Copy local retained logs separately if
 needed; workload files, programs and images also need independent preservation.
+Scoped authentication also requires its latest matching private auth file and
+client credential files; snapshots do not contain them. See
+[authentication recovery](authentication.md#recovery).
 Restoring job metadata alone does not restore their output. Active job intent
 is preserved: queued jobs may start when the restored server runs, local work
 from another server lifetime becomes unknown, and Kubernetes work is checked

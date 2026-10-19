@@ -31,7 +31,7 @@ func TestSubmitConcurrent(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < count; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); j, e := s.Submit("same", task, "local"); jobs <- j; errs <- e }()
+		go func() { defer wg.Done(); j, e := s.Submit(testActor(), "same", task, "local"); jobs <- j; errs <- e }()
 	}
 	wg.Wait()
 	close(jobs)
@@ -55,7 +55,7 @@ func TestSubmitConcurrent(t *testing.T) {
 		t.Fatalf("last sequence %d, %v", n, err)
 	}
 	task.Argv[0] = "changed"
-	if _, err := s.Submit("same", task, "local"); !errors.Is(err, ErrConflict) {
+	if _, err := s.Submit(testActor(), "same", task, "local"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict: %v", err)
 	}
 	j, err := s.Get(id)
@@ -71,7 +71,7 @@ func TestReopenAndWriterLock(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := backend.Task{Argv: []string{"work"}}
-	j, err := s.Submit("request", task, "original")
+	j, err := s.Submit(testActor(), "request", task, "original")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,11 +92,11 @@ func TestReopenAndWriterLock(t *testing.T) {
 		t.Fatalf("owner changed: %q", s.Owner())
 	}
 	task.Env = map[string]string{}
-	again, found, err := s.Lookup("request", task)
+	again, found, err := s.Lookup(testActor(), "request", task)
 	if err != nil || !found || again.ID != j.ID {
 		t.Fatalf("lookup after reopen: %+v %v %v", again, found, err)
 	}
-	again, err = s.Submit("request", task, "new-target")
+	again, err = s.Submit(testActor(), "request", task, "new-target")
 	if err != nil || again.Target != "original" {
 		t.Fatalf("retry changed target: %+v %v", again, err)
 	}
@@ -107,7 +107,7 @@ func TestSnapshotAndUpdate(t *testing.T) {
 	task := backend.Task{Argv: []string{"work"}, Env: map[string]string{"K": "V"}}
 	var ids []string
 	for i := 0; i < 3; i++ {
-		j, e := s.Submit(fmt.Sprint(i), task, "local")
+		j, e := s.Submit(testActor(), fmt.Sprint(i), task, "local")
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -151,17 +151,17 @@ func TestSnapshotAndUpdate(t *testing.T) {
 func TestFullRetainsDedup(t *testing.T) {
 	s := openTest(t)
 	task := backend.Task{Argv: []string{"work"}}
-	first, err := s.Submit("first", task, "local")
+	first, err := s.Submit(testActor(), "first", task, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.db.Update(func(tx *bolt.Tx) error { return tx.Bucket(sequenceBucket).SetSequence(maxJobs) }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Submit("new", task, "local"); !errors.Is(err, ErrFull) {
+	if _, err := s.Submit(testActor(), "new", task, "local"); !errors.Is(err, ErrFull) {
 		t.Fatalf("full: %v", err)
 	}
-	again, err := s.Submit("first", task, "local")
+	again, err := s.Submit(testActor(), "first", task, "local")
 	if err != nil || again.ID != first.ID {
 		t.Fatalf("retry at limit: %+v %v", again, err)
 	}
@@ -174,17 +174,17 @@ func TestTaskPayloadLimitAndMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := backend.Task{Argv: []string{"work"}}
-	first, err := s.Submit("first", task, "local")
+	first, err := s.Submit(testActor(), "first", task, "local")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := s.db.Update(func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(taskBytesKey, sequenceKey(maxTaskBytes)) }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Submit("new", task, "local"); !errors.Is(err, ErrFull) {
+	if _, err := s.Submit(testActor(), "new", task, "local"); !errors.Is(err, ErrFull) {
 		t.Fatalf("payload cap: %v", err)
 	}
-	again, err := s.Submit("first", task, "local")
+	again, err := s.Submit(testActor(), "first", task, "local")
 	if err != nil || again.ID != first.ID {
 		t.Fatalf("retry at byte cap: %+v %v", again, err)
 	}
@@ -213,7 +213,7 @@ func TestTaskPayloadLimitAndMigration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Submit("new", task, "local"); err != nil {
+	if _, err := s.Submit(testActor(), "new", task, "local"); err != nil {
 		t.Fatalf("admission after migration: %v", err)
 	}
 }

@@ -39,7 +39,7 @@ func TestGetServerInfo(t *testing.T) {
 	if len(targets.Msg.Targets) != 1 || !proto.Equal(targets.Msg.Targets[0], want.Targets[0]) {
 		t.Fatalf("target advertisements disagree: %v", targets.Msg)
 	}
-	jobs, _, err := f.control.List(100, "")
+	jobs, _, err := f.control.List(f.actor, 100, "")
 	if err != nil || len(jobs) != 0 {
 		t.Fatalf("discovery changed jobs: %v, %v", jobs, err)
 	}

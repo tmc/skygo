@@ -2,8 +2,10 @@ package store_test
 
 import (
 	"fmt"
+	"github.com/tmc/skygo/internal/auth"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/store"
@@ -32,8 +34,8 @@ func Example() {
 	s, close := exampleStore()
 	defer close()
 	task := backend.Task{Argv: []string{"trainer"}}
-	job, err := s.Submit("training-1", task, "local")
-	same, found, lookupErr := s.Lookup("training-1", task)
+	job, err := s.Submit(testActor(), "training-1", task, "local")
+	same, found, lookupErr := s.Lookup(testActor(), "training-1", task)
 	fmt.Println(job.Status.State, err, found, lookupErr, same.ID == job.ID)
 	// Output: queued <nil> true <nil> true
 }
@@ -41,7 +43,7 @@ func Example() {
 func ExampleStore_Get() {
 	s, close := exampleStore()
 	defer close()
-	accepted, err := s.Submit("training-1", backend.Task{Argv: []string{"trainer"}}, "local")
+	accepted, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local")
 	if err != nil {
 		panic(err)
 	}
@@ -53,7 +55,7 @@ func ExampleStore_Get() {
 func ExampleStore_List() {
 	s, close := exampleStore()
 	defer close()
-	if _, err := s.Submit("training-1", backend.Task{Argv: []string{"trainer"}}, "local"); err != nil {
+	if _, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local"); err != nil {
 		panic(err)
 	}
 	last, err := s.LastSequence()
@@ -68,7 +70,7 @@ func ExampleStore_List() {
 func ExampleStore_Update() {
 	s, close := exampleStore()
 	defer close()
-	job, err := s.Submit("training-1", backend.Task{Argv: []string{"trainer"}}, "local")
+	job, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local")
 	if err != nil {
 		panic(err)
 	}
@@ -138,4 +140,100 @@ func ExampleRestore() {
 	defer s.Close()
 	fmt.Println(s.Owner() == owner)
 	// Output: true
+}
+
+func exampleScopedStore() (*store.Store, auth.Actor, func()) {
+	s, closeStore := exampleStore()
+	dir, err := os.MkdirTemp("", "skygo-auth-example-")
+	if err != nil {
+		panic(err)
+	}
+	config, token := filepath.Join(dir, "auth.json"), filepath.Join(dir, "legacy.token")
+	if _, err := auth.Initialize(config, token, s.Owner()); err != nil {
+		panic(err)
+	}
+	if err := s.ActivateScoped(); err != nil {
+		panic(err)
+	}
+	e, err := auth.NewFile(config, s.Owner())
+	if err != nil {
+		panic(err)
+	}
+	raw, err := os.ReadFile(token)
+	if err != nil {
+		panic(err)
+	}
+	actor, err := e.Authenticate("Bearer " + strings.TrimSpace(string(raw)))
+	if err != nil {
+		panic(err)
+	}
+	return s, actor, func() { closeStore(); os.RemoveAll(dir) }
+}
+
+func ExampleStore_ActivateScoped() {
+	s, _, close := exampleScopedStore()
+	defer close()
+	fmt.Println(s.Scoped())
+	// Output: true
+}
+
+func ExampleStore_GetFor() {
+	s, actor, close := exampleScopedStore()
+	defer close()
+	accepted, err := s.Submit(actor, "training", backend.Task{Argv: []string{"trainer"}}, "local")
+	if err != nil {
+		panic(err)
+	}
+	job, err := s.GetFor(actor, accepted.ID)
+	fmt.Println(job.Task.Argv[0], err)
+	// Output: trainer <nil>
+}
+
+func ExampleStore_LastSequenceFor() {
+	s, actor, close := exampleScopedStore()
+	defer close()
+	n, err := s.LastSequenceFor(actor)
+	fmt.Println(n, err)
+	// Output: 0 <nil>
+}
+
+func ExampleStore_ListFor() {
+	s, actor, close := exampleScopedStore()
+	defer close()
+	jobs, err := s.ListFor(actor, 0, 10, 10)
+	fmt.Println(len(jobs), err)
+	// Output: 0 <nil>
+}
+
+func ExampleStore_UpdateFor() {
+	s, actor, close := exampleScopedStore()
+	defer close()
+	accepted, err := s.Submit(actor, "training", backend.Task{Argv: []string{"trainer"}}, "local")
+	if err != nil {
+		panic(err)
+	}
+	job, err := s.UpdateFor(actor, accepted.ID, func(j *backend.Job) error { j.CancelRequested = true; return nil })
+	fmt.Println(job.CancelRequested, err)
+	// Output: true <nil>
+}
+
+func ExampleStore_RecordAccess() {
+	s, actor, close := exampleScopedStore()
+	defer close()
+	fmt.Println(s.RecordAccess(actor, "list", "", "allowed"))
+	// Output: <nil>
+}
+
+func ExampleStore_Scoped() {
+	s, close := exampleStore()
+	defer close()
+	fmt.Println(s.Scoped())
+	// Output: false
+}
+
+func ExampleStore_ValidateAccess() {
+	s, close := exampleStore()
+	defer close()
+	fmt.Println(s.ValidateAccess(testActor(), "list", "", "allowed"))
+	// Output: <nil>
 }

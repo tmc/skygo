@@ -13,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/store"
 )
@@ -32,15 +33,19 @@ type Rejection struct{ Target, Reason string }
 
 // Control owns one reconciliation loop. New must precede use.
 type Control struct {
-	store   *store.Store
-	targets []backend.Target
-	failed  atomic.Bool
+	store       *store.Store
+	engine      *auth.Engine
+	targets     []backend.Target
+	failed      atomic.Bool
+	auditFailed atomic.Bool
+	auditLost   atomic.Bool
+	access      chan pendingAccess
 }
 
 // New validates targets and orders selection by name.
-func New(s *store.Store, targets []backend.Target) (*Control, error) {
-	if s == nil || len(targets) == 0 {
-		return nil, fmt.Errorf("store and targets required")
+func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Control, error) {
+	if s == nil || len(targets) == 0 || engine == nil {
+		return nil, fmt.Errorf("store, targets and authentication required")
 	}
 	targets = append([]backend.Target(nil), targets...)
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
@@ -49,7 +54,7 @@ func New(s *store.Store, targets []backend.Target) (*Control, error) {
 			return nil, fmt.Errorf("invalid target %q", t.Name)
 		}
 	}
-	return &Control{store: s, targets: targets}, nil
+	return &Control{store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess)}, nil
 }
 
 // Validate rejects malformed tasks before capability checks or side effects.
@@ -87,10 +92,21 @@ func Validate(t backend.Task) error {
 }
 
 // Targets returns configuration metadata; callers must not invoke its backends.
-func (c *Control) Targets() []backend.Target { return append([]backend.Target(nil), c.targets...) }
+func (c *Control) Targets(actor auth.Actor) ([]backend.Target, error) {
+	if _, err := c.engine.Check(actor, auth.Read); err != nil {
+		return nil, err
+	}
+	return append([]backend.Target(nil), c.targets...), nil
+}
 
 // Plan selects the first eligible target without promising available capacity.
-func (c *Control) Plan(t backend.Task) (string, []Rejection, error) {
+func (c *Control) Plan(actor auth.Actor, t backend.Task) (string, []Rejection, error) {
+	if _, err := c.engine.Check(actor, auth.Read); err != nil {
+		return "", nil, err
+	}
+	return c.plan(t)
+}
+func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 	if err := Validate(t); err != nil {
 		return "", nil, err
 	}
@@ -120,7 +136,11 @@ func (c *Control) Plan(t backend.Task) (string, []Rejection, error) {
 }
 
 // Submit durably accepts a task or returns the job already bound to requestID.
-func (c *Control) Submit(requestID string, t backend.Task) (backend.Job, error) {
+func (c *Control) Submit(actor auth.Actor, requestID string, t backend.Task) (backend.Job, error) {
+	actor, err := c.engine.Check(actor, auth.Mutate)
+	if err != nil {
+		return backend.Job{}, err
+	}
 	if !requestName.MatchString(requestID) {
 		return backend.Job{}, fmt.Errorf("%w: request_id must contain 1..128 letters, digits, underscores or hyphens", ErrInvalid)
 	}
@@ -130,35 +150,45 @@ func (c *Control) Submit(requestID string, t backend.Task) (backend.Job, error) 
 	if len(t.Env) == 0 {
 		t.Env = nil
 	}
-	job, found, err := c.store.Lookup(requestID, t)
+	job, found, err := c.store.Lookup(actor, requestID, t)
 	if err != nil || found {
 		return job, err
 	}
 	if c.failed.Load() {
 		return backend.Job{}, ErrUnavailable
 	}
-	target, _, err := c.Plan(t)
+	target, _, err := c.plan(t)
 	if err != nil {
 		return backend.Job{}, err
 	}
-	return c.store.Submit(requestID, t, target)
+	return c.store.Submit(actor, requestID, t, target)
 }
 
 // Get returns one accepted job.
-func (c *Control) Get(id string) (backend.Job, error) {
+func (c *Control) Get(actor auth.Actor, id string) (backend.Job, error) {
+	actor, err := c.engine.Check(actor, auth.Read)
+	if err != nil {
+		return backend.Job{}, err
+	}
 	if !jobName.MatchString(id) {
 		return backend.Job{}, fmt.Errorf("%w: invalid job id", ErrInvalid)
 	}
-	return c.store.Get(id)
+	return c.store.GetFor(actor, id)
 }
 
 type cursor struct {
-	After uint64 `json:"a"`
-	Max   uint64 `json:"m"`
+	After     uint64 `json:"a"`
+	Max       uint64 `json:"m"`
+	Principal string `json:"p,omitempty"`
+	Global    bool   `json:"g,omitempty"`
 }
 
 // List uses a snapshot high-water mark; later inserts do not shift pages.
-func (c *Control) List(size int, token string) ([]backend.Job, string, error) {
+func (c *Control) List(actor auth.Actor, size int, token string) ([]backend.Job, string, error) {
+	actor, err := c.engine.Check(actor, auth.Read)
+	if err != nil {
+		return nil, "", err
+	}
 	if size < 0 || size > 200 {
 		return nil, "", fmt.Errorf("%w: page size outside 0..200", ErrInvalid)
 	}
@@ -166,25 +196,34 @@ func (c *Control) List(size int, token string) ([]backend.Job, string, error) {
 		size = 50
 	}
 	var cur cursor
+	if c.store.Scoped() {
+		cur.Principal = actor.Principal()
+		cur.Global = actor.Role() == auth.Admin
+	}
+	expectedPrincipal, expectedGlobal := cur.Principal, cur.Global
 	if token == "" {
 		var err error
-		cur.Max, err = c.store.LastSequence()
+		cur.Max, err = c.store.LastSequenceFor(actor)
 		if err != nil {
 			return nil, "", err
 		}
 	} else {
 		raw, err := base64.RawURLEncoding.DecodeString(token)
-		if err != nil || len(raw) > 100 {
+		if err != nil || len(raw) > 256 {
 			return nil, "", fmt.Errorf("%w: invalid page token", ErrInvalid)
 		}
+		cur = cursor{}
 		if err = json.Unmarshal(raw, &cur); err != nil || cur.After == 0 || cur.After >= cur.Max {
 			return nil, "", fmt.Errorf("%w: invalid page token", ErrInvalid)
+		}
+		if cur.Principal != expectedPrincipal || cur.Global != expectedGlobal {
+			return nil, "", fmt.Errorf("%w: page token scope changed or expired during activation", ErrInvalid)
 		}
 		canonical, _ := json.Marshal(cur)
 		if string(canonical) != string(raw) {
 			return nil, "", fmt.Errorf("%w: invalid page token", ErrInvalid)
 		}
-		max, err := c.store.LastSequence()
+		max, err := c.store.LastSequenceFor(actor)
 		if err != nil {
 			return nil, "", err
 		}
@@ -192,25 +231,35 @@ func (c *Control) List(size int, token string) ([]backend.Job, string, error) {
 			return nil, "", fmt.Errorf("%w: page token exceeds snapshot", ErrInvalid)
 		}
 	}
-	jobs, err := c.store.List(cur.After, cur.Max, size)
+	jobs, err := c.store.ListFor(actor, cur.After, cur.Max, size)
 	if err != nil {
 		return nil, "", err
 	}
 	next := ""
-	if len(jobs) > 0 && jobs[len(jobs)-1].Sequence < cur.Max {
-		cur.After = jobs[len(jobs)-1].Sequence
-		raw, _ := json.Marshal(cur)
-		next = base64.RawURLEncoding.EncodeToString(raw)
+	if len(jobs) > 0 {
+		if c.store.Scoped() && actor.Role() != auth.Admin {
+			cur.After += uint64(len(jobs))
+		} else {
+			cur.After = jobs[len(jobs)-1].Sequence
+		}
+		if cur.After < cur.Max {
+			raw, _ := json.Marshal(cur)
+			next = base64.RawURLEncoding.EncodeToString(raw)
+		}
 	}
 	return jobs, next, nil
 }
 
 // Cancel persists cancellation intent. Terminal outcomes never change.
-func (c *Control) Cancel(id string) (backend.Job, error) {
-	if _, err := c.Get(id); err != nil {
+func (c *Control) Cancel(actor auth.Actor, id string) (backend.Job, error) {
+	actor, err := c.engine.Check(actor, auth.Mutate)
+	if err != nil {
 		return backend.Job{}, err
 	}
-	return c.store.Update(id, func(j *backend.Job) error {
+	if !jobName.MatchString(id) {
+		return backend.Job{}, fmt.Errorf("%w: invalid job id", ErrInvalid)
+	}
+	return c.store.UpdateFor(actor, id, func(j *backend.Job) error {
 		if !j.Status.State.Terminal() {
 			j.CancelRequested = true
 		}
@@ -228,11 +277,15 @@ func (c *Control) target(name string) backend.Backend {
 }
 
 // Logs reads a bounded segment; loss and truncation are explicit.
-func (c *Control) Logs(ctx context.Context, id string, offset int64) (backend.LogChunk, error) {
+func (c *Control) Logs(ctx context.Context, actor auth.Actor, id string, offset int64) (backend.LogChunk, error) {
+	actor, err := c.engine.Check(actor, auth.Read)
+	if err != nil {
+		return backend.LogChunk{}, err
+	}
 	if offset < 0 || offset > backend.MaxLogBytes {
 		return backend.LogChunk{}, fmt.Errorf("%w: invalid log offset", ErrInvalid)
 	}
-	j, err := c.Get(id)
+	j, err := c.Get(actor, id)
 	if err != nil {
 		return backend.LogChunk{}, err
 	}
@@ -281,6 +334,7 @@ func (c *Control) Run(ctx context.Context) error {
 			c.failed.Store(true)
 			return err
 		}
+		c.drainAccess(ctx)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

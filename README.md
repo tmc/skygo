@@ -9,7 +9,10 @@ required by either application.
 
 This is an independent, small implementation of selected SkyPilot concerns:
 task validation, target selection, submission, status, logs, and cancellation.
-It does not implement SkyPilot's API or YAML format.
+The CLI uses its own task format. The optional `integrations/skycompat` module
+parses selected upstream task YAML and provides selected API wire codecs. It
+does not yet serve upstream HTTP endpoints or execute imported tasks. See its
+[supported subset](integrations/skycompat/README.md).
 
 ## Run locally
 
@@ -43,6 +46,7 @@ with a different task fails. Request bindings survive server restart.
 
 ```text
 skygo server --data-dir DIR
+skygo server --data-dir DIR --auth-file FILE
 skygo-kubernetes server --data-dir DIR --namespace NS [--disable-local]
 skygo targets list
 skygo info [--target NAME --require finite-jobs-v1]
@@ -57,12 +61,14 @@ skygo jobs cancel ID --yes
 ```
 
 `--endpoint` defaults to `http://127.0.0.1:8080`; `SKYGO_ENDPOINT` changes that
-default. `--token` overrides `SKYGO_TOKEN`. `--timeout` bounds individual RPCs
+default. Choose one credential source: `--token-file`, deprecated `--token`, or
+`SKYGO_TOKEN`. Conflicting sources fail. `--timeout` bounds individual RPCs
 (default 30 seconds), not the lifetime of `--wait` or log follow. Interrupting a
 client command does not cancel its job. Cancellation requires `jobs cancel`.
 
 Output is plain text without color, prompts, or pagers. `--json` writes protobuf
-JSON for API commands and a path object for local state commands. Log streams
+JSON for API commands, a path object for local state commands, and public
+metadata for local auth commands. Log streams
 write one JSON object per chunk, with base64 data and byte
 offsets. Diagnostics and retry IDs go to stderr. Use `-f -` to read YAML on stdin.
 
@@ -77,6 +83,11 @@ They exclude local logs, workload files and images. Restore requires a new data
 directory; neither command overwrites existing output. Keep the original
 installation stopped before starting a restored copy. See the
 [backup and rollback contract](docs/contracts.md#state-backup-and-rollback).
+
+For small-team use, [activate scoped authentication](docs/authentication.md).
+Readers and operators see their own work; admins have global read/cancel access.
+Legacy single-operator mode remains explicit. Local execution still trusts
+workloads as the server's OS identity.
 
 ## Kubernetes
 
@@ -122,8 +133,8 @@ installation, authentication, and rollback.
   queued. Unknown executions may still exist outside that accounting. Log
   streaming permits 32 concurrent streams, each lasting at most five minutes.
 - No VM provisioning, uploads, SSH, interactive clusters, DAGs, distributed
-  training, automatic rescheduling, model serving, multi-user authorization,
-  HA, or rolling overlap. The single bearer token authorizes all operations.
+  training, automatic rescheduling, model serving, HA, or rolling overlap.
+  Scoped control-plane access does not isolate workloads from one another.
 
 See [task and API contracts](docs/contracts.md) and the
 [manual verification plan](docs/testing.md).
@@ -137,9 +148,9 @@ make check
 make build
 ```
 
-These targets cover both Go modules with `GOWORK=off`. `make check` also needs
+These targets cover all three Go modules with `GOWORK=off`. `make check` also needs
 Buf; `make tools` installs the pinned development tools. Running `go test ./...`
-from the root alone skips the integration module.
+from the root alone skips both integration modules.
 
 The integration uses a local `replace` directive for the unpublished root module.
 It builds from this checkout; independent module releases need a published root

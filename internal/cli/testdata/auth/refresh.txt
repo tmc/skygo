@@ -1,0 +1,77 @@
+# Supported file changes affect new requests and an already attached stream.
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth principal add auditor --role admin --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+skygo auth token issue auditor --auth-file $AUTH --output auditor.token --expires-in 24h
+server start
+taskfile hold.json hold
+taskfile success.json success
+skygo --token-file bob.token --json run -f hold.json --request-id bob-live
+job-id BOB
+await-file ready
+skygo --token-file auditor.token --json run -f success.json --request-id auditor-own --wait
+skygo --token-file auditor.token --json jobs list --page-size 1
+page-token AUDITOR_PAGE
+
+# A demoted admin cannot retain an active foreign log stream. Its credential
+# remains valid for shared reads, but foreign access disappears within budget.
+! skygo --token-file auditor.token jobs logs $BOB --follow &
+await-stdout '^holding\n$'
+skygo auth principal set-role auditor --role reader --auth-file $AUTH
+auth-window
+wait
+stderr '^(permission_denied|not_found): '
+! stderr 'auth stream timeout'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'
+await-auth allowed auditor.token targets list
+! skygo --token-file auditor.token jobs get $BOB
+stderr '^not_found: '
+! skygo --token-file auditor.token jobs list --page-token $AUDITOR_PAGE
+stderr '^invalid_argument: '
+
+# A reader keeps its own previously accepted work and logs, but loses mutation.
+skygo --token-file alice.token --json run -f hold.json --request-id alice-live
+job-id ALICE
+! skygo --token-file alice.token jobs logs $ALICE --follow &
+await-stdout '^holding\n$'
+skygo auth principal set-role alice --role reader --auth-file $AUTH
+auth-window
+wait
+stderr '^permission_denied: '
+! stderr 'auth stream timeout'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'
+await-auth permission_denied alice.token jobs cancel 00000000000000000000000000000000 --yes
+! skygo --token-file alice.token jobs cancel $ALICE --yes
+stderr '^permission_denied: '
+skygo --token-file alice.token jobs get $ALICE
+skygo --token-file alice.token jobs logs $ALICE
+stdout '^holding\n$'
+
+# Revoking a live follower's credential closes the stream and new requests;
+# neither revocation nor the disconnect cancels the accepted workload.
+token-id alice.token ALICE_TOKEN
+! skygo --token-file alice.token jobs logs $ALICE --follow &
+await-stdout '^holding\n$'
+skygo auth token revoke $ALICE_TOKEN --auth-file $AUTH
+auth-window
+wait
+stderr '^unauthenticated: '
+! stderr 'auth stream timeout'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'
+await-auth unauthenticated alice.token jobs get $ALICE
+skygo --token-file admin.token --json jobs get $ALICE
+stdout '"state": *"JOB_STATE_RUNNING"'
+! stdout 'cancel_requested'
+skygo --token-file admin.token --json jobs get $BOB
+stdout '"state": *"JOB_STATE_RUNNING"'
+! stdout 'cancel_requested'
+skygo --token-file admin.token jobs cancel $ALICE --yes
+skygo --token-file admin.token jobs cancel $BOB --yes
+server stop
+! stderr .

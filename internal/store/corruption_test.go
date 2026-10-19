@@ -29,7 +29,7 @@ func TestMalformedTaskByteCounter(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := s.Submit("new", backend.Task{Argv: []string{"work"}}, "local"); err == nil || !strings.Contains(err.Error(), "invalid task byte counter") {
+			if _, err := s.Submit(testActor(), "new", backend.Task{Argv: []string{"work"}}, "local"); err == nil || !strings.Contains(err.Error(), "invalid task byte counter") {
 				t.Fatalf("Submit with corrupt counter: %v", err)
 			}
 			if n, err := s.LastSequence(); err != nil || n != 0 {
@@ -60,7 +60,7 @@ func TestMalformedSequenceKey(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := openTest(t)
-			j, err := s.Submit("one", backend.Task{Argv: []string{"work"}}, "local")
+			j, err := s.Submit(testActor(), "one", backend.Task{Argv: []string{"work"}}, "local")
 			if err != nil {
 				t.Fatal(err)
 			}

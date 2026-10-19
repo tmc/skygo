@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/local"
@@ -33,11 +34,12 @@ func Example() {
 		panic(err)
 	}
 	defer b.Close()
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}})
+	engine := auth.NewLegacy("")
+	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}}, engine)
 	if err != nil {
 		panic(err)
 	}
-	server := httptest.NewServer(rpc.NewHandler(c, ""))
+	server := httptest.NewServer(rpc.NewHandler(c, engine))
 	defer server.Close()
 	client := skyv1connect.NewControlServiceClient(server.Client(), server.URL)
 	response, err := client.ListTargets(context.Background(), connect.NewRequest(&v1.ListTargetsRequest{}))

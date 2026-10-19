@@ -30,6 +30,7 @@ stderr 'invalid_argument'
 
 # Authentication is a Go transport contract. A rejected request must never
 # produce success-shaped JSON or cancel an existing job.
+env SKYGO_TOKEN=
 ! skygo --token wrong --json jobs list
 stderr 'unauthenticated'
 ! stdout .
@@ -39,6 +40,7 @@ stderr 'unauthenticated'
 ! skygo --token wrong jobs cancel $FIRST --yes
 stderr 'unauthenticated'
 ! stdout .
+env SKYGO_TOKEN=workflow-token
 skygo --json jobs get $FIRST
 stdout '"state": *"JOB_STATE_SUCCEEDED"'
 ! stdout '"cancel_requested": *true'

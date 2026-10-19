@@ -73,7 +73,7 @@ func answer(call observation, state backend.State, err error) {
 }
 func newControl(t *testing.T, s *store.Store, e *executor) *control.Control {
 	t.Helper()
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: e}})
+	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: e}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +107,7 @@ func run(t *testing.T, c *control.Control) {
 }
 func submit(t *testing.T, c *control.Control, id string) backend.Job {
 	t.Helper()
-	j, err := c.Submit(id, backend.Task{Argv: []string{"work"}})
+	j, err := c.Submit(testActor(), id, backend.Task{Argv: []string{"work"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestConcurrentDedupAndChangedConfiguration(t *testing.T) {
 	var wg sync.WaitGroup
 	for i := 0; i < n; i++ {
 		wg.Add(1)
-		go func() { defer wg.Done(); j, err := c.Submit("same", task); jobs <- j; errs <- err }()
+		go func() { defer wg.Done(); j, err := c.Submit(testActor(), "same", task); jobs <- j; errs <- err }()
 	}
 	wg.Wait()
 	close(jobs)
@@ -148,7 +148,7 @@ func TestConcurrentDedupAndChangedConfiguration(t *testing.T) {
 			t.Fatal("same submission produced different jobs")
 		}
 	}
-	if _, err := c.Submit("same", backend.Task{Argv: []string{"different"}}); !errors.Is(err, store.ErrConflict) {
+	if _, err := c.Submit(testActor(), "same", backend.Task{Argv: []string{"different"}}); !errors.Is(err, store.ErrConflict) {
 		t.Fatalf("conflicting submission: %v", err)
 	}
 	if err := s.Close(); err != nil {
@@ -161,16 +161,16 @@ func TestConcurrentDedupAndChangedConfiguration(t *testing.T) {
 	defer s.Close()
 	unavailable := newExecutor()
 	unavailable.checkErr = errors.New("capability removed")
-	c, err = control.New(s, []backend.Target{{Name: "replacement", Kind: "local", Backend: unavailable}})
+	c, err = control.New(s, []backend.Target{{Name: "replacement", Kind: "local", Backend: unavailable}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
 	task.Env = map[string]string{}
-	j, err := c.Submit("same", task)
+	j, err := c.Submit(testActor(), "same", task)
 	if err != nil || j.ID != id || j.Target != "local" {
 		t.Fatalf("durable retry after target removal: %+v %v", j, err)
 	}
-	if _, err := c.Submit("new", task); !errors.Is(err, control.ErrUnsupported) {
+	if _, err := c.Submit(testActor(), "new", task); !errors.Is(err, control.ErrUnsupported) {
 		t.Fatalf("new unsupported submission: %v", err)
 	}
 }
@@ -180,7 +180,7 @@ func TestCancelQueuedNeverStarts(t *testing.T) {
 	e := newExecutor()
 	c := newControl(t, s, e)
 	j := submit(t, c, "canceled")
-	if _, err := c.Cancel(j.ID); err != nil {
+	if _, err := c.Cancel(testActor(), j.ID); err != nil {
 		t.Fatal(err)
 	}
 	next := submit(t, c, "next")
@@ -189,7 +189,7 @@ func TestCancelQueuedNeverStarts(t *testing.T) {
 	if call.id != next.ID {
 		t.Fatalf("observed canceled job %s", call.id)
 	}
-	got, err := c.Get(j.ID)
+	got, err := c.Get(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Canceled {
 		t.Fatalf("canceled job: %+v %v", got, err)
 	}
@@ -209,13 +209,13 @@ func TestUncertainStartNotRetriedAndOutagePreservesState(t *testing.T) {
 	first := nextObservation(t, e)
 	answer(first, backend.Running, nil)
 	second := nextObservation(t, e)
-	got, err := c.Get(j.ID)
+	got, err := c.Get(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Running {
 		t.Fatalf("after uncertain start: %+v %v", got, err)
 	}
 	answer(second, "", errors.New("API outage"))
 	third := nextObservation(t, e)
-	got, err = c.Get(j.ID)
+	got, err = c.Get(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Running {
 		t.Fatalf("outage replaced observed state: %+v %v", got, err)
 	}
@@ -261,7 +261,7 @@ func TestRecoveredStartingNeverStarts(t *testing.T) {
 	if call.id != sentinel.ID {
 		t.Fatalf("unexpected sentinel %s", call.id)
 	}
-	got, err := c.Get(j.ID)
+	got, err := c.Get(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Unknown {
 		t.Fatalf("unknown recovery: %+v %v", got, err)
 	}
@@ -276,7 +276,7 @@ func TestCancellationPreservesObservedCompletion(t *testing.T) {
 	sentinel := submit(t, c, "sentinel")
 	run(t, c)
 	call := nextObservation(t, e)
-	if _, err := c.Cancel(j.ID); err != nil {
+	if _, err := c.Cancel(testActor(), j.ID); err != nil {
 		t.Fatal(err)
 	}
 	answer(call, backend.Succeeded, nil)
@@ -284,7 +284,7 @@ func TestCancellationPreservesObservedCompletion(t *testing.T) {
 	if call.id != sentinel.ID {
 		t.Fatalf("unexpected next observation %s", call.id)
 	}
-	got, err := c.Cancel(j.ID)
+	got, err := c.Cancel(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Succeeded {
 		t.Fatalf("late cancellation changed completion: %+v %v", got, err)
 	}
@@ -297,23 +297,23 @@ func TestPaginationSnapshotAndMalformedTokens(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		submit(t, c, fmt.Sprint(i))
 	}
-	jobs, token, err := c.List(1, "")
+	jobs, token, err := c.List(testActor(), 1, "")
 	if err != nil || len(jobs) != 1 || token == "" {
 		t.Fatalf("first page: %+v %q %v", jobs, token, err)
 	}
 	submit(t, c, "later")
-	jobs, next, err := c.List(2, token)
+	jobs, next, err := c.List(testActor(), 2, token)
 	if err != nil || len(jobs) != 2 || next != "" || jobs[1].Sequence != 3 {
 		t.Fatalf("snapshot: %+v %q %v", jobs, next, err)
 	}
 	tokens := []string{"!", base64.RawURLEncoding.EncodeToString([]byte(`{}`)), base64.RawURLEncoding.EncodeToString([]byte(`{"a":1,"m":100}`)), base64.RawURLEncoding.EncodeToString([]byte(`{"a":2,"m":2}`)), base64.RawURLEncoding.EncodeToString([]byte(`{"a":1,"m":3,"extra":true}`))}
 	for _, token := range tokens {
-		if _, _, err := c.List(1, token); !errors.Is(err, control.ErrInvalid) {
+		if _, _, err := c.List(testActor(), 1, token); !errors.Is(err, control.ErrInvalid) {
 			t.Errorf("token %q: %v", token, err)
 		}
 	}
 	for _, size := range []int{-1, 201} {
-		if _, _, err := c.List(size, ""); !errors.Is(err, control.ErrInvalid) {
+		if _, _, err := c.List(testActor(), size, ""); !errors.Is(err, control.ErrInvalid) {
 			t.Errorf("size %d: %v", size, err)
 		}
 	}
@@ -351,11 +351,11 @@ func TestPlanDeterministic(t *testing.T) {
 	s := openStore(t)
 	bad := newExecutor()
 	bad.checkErr = errors.New("unsupported image")
-	c, err := control.New(s, []backend.Target{{Name: "z", Backend: newExecutor()}, {Name: "b", Backend: bad}, {Name: "a", Backend: newExecutor()}})
+	c, err := control.New(s, []backend.Target{{Name: "z", Backend: newExecutor()}, {Name: "b", Backend: bad}, {Name: "a", Backend: newExecutor()}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	target, rejected, err := c.Plan(backend.Task{Argv: []string{"work"}})
+	target, rejected, err := c.Plan(testActor(), backend.Task{Argv: []string{"work"}})
 	if err != nil || target != "a" || len(rejected) != 1 || rejected[0].Target != "b" {
 		t.Fatalf("plan: %q %+v %v", target, rejected, err)
 	}
@@ -366,11 +366,11 @@ func TestCancelQueuedAfterTargetRemoved(t *testing.T) {
 	c := newControl(t, s, newExecutor())
 	j := submit(t, c, "removed-target")
 	replacement := newExecutor()
-	c, err := control.New(s, []backend.Target{{Name: "replacement", Kind: "local", Backend: replacement}})
+	c, err := control.New(s, []backend.Target{{Name: "replacement", Kind: "local", Backend: replacement}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Cancel(j.ID); err != nil {
+	if _, err := c.Cancel(testActor(), j.ID); err != nil {
 		t.Fatal(err)
 	}
 	// No backend event should occur: a queued cancellation needs no executor.
@@ -379,7 +379,7 @@ func TestCancelQueuedAfterTargetRemoved(t *testing.T) {
 	if err := c.Run(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("Run: %v", err)
 	}
-	got, err := c.Get(j.ID)
+	got, err := c.Get(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Canceled {
 		t.Fatalf("queued cancellation after target removal: %+v %v", got, err)
 	}
@@ -410,7 +410,7 @@ func TestActiveExecutionLimit(t *testing.T) {
 		t.Fatalf("admission exceeded: next=%s starts=%d", call.id, e.starts.Load())
 	}
 	for _, j := range jobs[32:] {
-		got, err := c.Get(j.ID)
+		got, err := c.Get(testActor(), j.ID)
 		if err != nil || got.Status.State != backend.Queued {
 			t.Fatalf("overflow job: %+v %v", got, err)
 		}
@@ -449,7 +449,7 @@ func TestLogErrorClassification(t *testing.T) {
 			if _, err := s.Update(j.ID, func(j *backend.Job) error { j.Status.State = backend.Running; return nil }); err != nil {
 				t.Fatal(err)
 			}
-			_, err := c.Logs(context.Background(), j.ID, 0)
+			_, err := c.Logs(context.Background(), testActor(), j.ID, 0)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("log error: %v, want %v", err, tt.want)
 			}
@@ -464,7 +464,7 @@ func TestPlanIncludesRejections(t *testing.T) {
 	e := newExecutor()
 	e.checkErr = errors.New("images unsupported")
 	c := newControl(t, openStore(t), e)
-	_, _, err := c.Plan(backend.Task{Argv: []string{"work"}, Image: "image"})
+	_, _, err := c.Plan(testActor(), backend.Task{Argv: []string{"work"}, Image: "image"})
 	if !errors.Is(err, control.ErrUnsupported) || !strings.Contains(err.Error(), "local: images unsupported") {
 		t.Fatalf("plan rejection: %v", err)
 	}

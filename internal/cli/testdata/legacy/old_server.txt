@@ -16,10 +16,12 @@ stdout '^ID +TARGET +STATE\n$'
 ! stderr .
 
 # Authentication failure at the same old daemon must not be called legacy discovery.
+env SKYGO_TOKEN=
 ! skygo --token wrong info --target local --require finite-jobs-v1
 stderr 'unauthenticated'
 ! stderr 'legacy task commands'
 ! stdout .
+env SKYGO_TOKEN=coverage-token
 
 # Positive control: current default run uses the explicit legacy-compatible path.
 skygo --json run -f task.json --request-id legacy-default --wait

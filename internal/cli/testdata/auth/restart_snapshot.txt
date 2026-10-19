@@ -1,0 +1,45 @@
+# The durable scoped-mode marker and principal retry bindings survive both
+# daemon restart and an offline database snapshot restored with current auth.
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+server start
+taskfile success.json success
+skygo --token-file alice.token --json run -f success.json --request-id durable --wait
+job-id ALICE
+skygo auth token issue alice --auth-file $AUTH --output alice-new.token --expires-in 24h
+token-id alice.token OLD_ALICE
+skygo auth token revoke $OLD_ALICE --auth-file $AUTH
+await-auth unauthenticated alice.token jobs get $ALICE
+server stop
+! stderr .
+
+# An activated store cannot silently return to anonymous or single-token mode.
+! skygo server --data-dir $DATA --listen 127.0.0.1:0
+stderr '(auth|scoped)'
+! skygo server --data-dir $DATA --auth-file $AUTH --token forbidden-legacy-token --listen 127.0.0.1:0
+! stderr 'forbidden-legacy-token'
+skygo state backup --data-dir $DATA --output scoped.db
+[s01-binary] fenced-refusal $DATA/jobs.db
+skygo state restore --input scoped.db --data-dir restored
+server-directory restored
+server start
+skygo --token-file alice-new.token --json run -f success.json --request-id durable --wait
+stdout '"id": *"'$ALICE'"'
+! skygo --token-file alice.token jobs get $ALICE
+stderr '^unauthenticated: '
+! skygo --token-file bob.token jobs get $ALICE
+stderr '^not_found: '
+skygo --token-file bob.token --json jobs list
+! stdout '"id"'
+skygo --token-file admin.token jobs get $ALICE
+! stderr .
+server stop
+! stderr .
+server start
+skygo --token-file alice-new.token --json run -f success.json --request-id durable --wait
+stdout '"id": *"'$ALICE'"'
+server stop
+! stderr .

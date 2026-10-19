@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/store"
@@ -253,12 +254,17 @@ func TestCompletedBeforeObservedCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c, err := control.New(s, []backend.Target{{Name: "kube", Kind: "kubernetes", Backend: b}})
+			engine := auth.NewLegacy("")
+			actor, err := engine.Authenticate("")
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := control.New(s, []backend.Target{{Name: "kube", Kind: "kubernetes", Backend: b}}, engine)
 			if err != nil {
 				t.Fatal(err)
 			}
 			task := backend.Task{Argv: []string{"work"}, Image: "image"}
-			j, err := c.Submit("completed", task)
+			j, err := c.Submit(actor, "completed", task)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -276,7 +282,7 @@ func TestCompletedBeforeObservedCancellation(t *testing.T) {
 			if _, err := client.BatchV1().Jobs("workloads").UpdateStatus(ctx, remote, metav1.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := c.Cancel(j.ID); err != nil {
+			if _, err := c.Cancel(actor, j.ID); err != nil {
 				t.Fatal(err)
 			}
 			client.ClearActions()
@@ -285,7 +291,7 @@ func TestCompletedBeforeObservedCancellation(t *testing.T) {
 			if err := c.Run(runCtx); !errors.Is(err, context.DeadlineExceeded) {
 				t.Fatal(err)
 			}
-			got, err := c.Get(j.ID)
+			got, err := c.Get(actor, j.ID)
 			if err != nil || got.Status.State != tt.want {
 				t.Fatalf("completed cancellation: %+v %v", got, err)
 			}
@@ -314,12 +320,17 @@ func TestConflictingCreateIsNotAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := control.New(s, []backend.Target{{Name: "kube", Backend: b}})
+	engine := auth.NewLegacy("")
+	actor, err := engine.Authenticate("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := control.New(s, []backend.Target{{Name: "kube", Backend: b}}, engine)
 	if err != nil {
 		t.Fatal(err)
 	}
 	task := backend.Task{Argv: []string{"work"}, Image: "wanted"}
-	j, err := c.Submit("conflict", task)
+	j, err := c.Submit(actor, "conflict", task)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +352,7 @@ func TestConflictingCreateIsNotAdopted(t *testing.T) {
 	if err := c.Run(runCtx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
-	got, err := c.Get(j.ID)
+	got, err := c.Get(actor, j.ID)
 	if err != nil || got.Status.State != backend.Unknown || !strings.Contains(got.Status.Reason, "identity mismatch") {
 		t.Fatalf("conflict outcome: %+v %v", got, err)
 	}

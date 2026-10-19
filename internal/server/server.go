@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/local"
@@ -19,8 +20,8 @@ import (
 
 // Config selects durable storage, HTTP exposure, and execution targets.
 type Config struct {
-	DisableLocal           bool
-	DataDir, Listen, Token string
+	DisableLocal                     bool
+	DataDir, Listen, Token, AuthFile string
 
 	// Targets constructs additional targets using the persistent installation ID.
 	// It is called once, after the store opens and before the server listens.
@@ -31,6 +32,9 @@ type Config struct {
 // Run serves until cancellation, rejects new work before draining, and closes
 // local processes. Kubernetes workloads remain independent of server lifetime.
 func Run(ctx context.Context, cfg Config) (result error) {
+	if cfg.AuthFile != "" && cfg.Token != "" {
+		return errors.New("auth file conflicts with legacy token")
+	}
 	if cfg.DisableLocal && cfg.Targets == nil {
 		return errors.New("no execution targets configured")
 	}
@@ -39,7 +43,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return fmt.Errorf("listen address: %w", err)
 	}
 	ip := net.ParseIP(host)
-	if cfg.Token == "" && (ip == nil || !ip.IsLoopback()) {
+	if cfg.AuthFile == "" && cfg.Token == "" && (ip == nil || !ip.IsLoopback()) {
 		return errors.New("non-loopback listener requires a bearer token; use a trusted network or TLS proxy")
 	}
 	s, err := store.Open(cfg.DataDir)
@@ -47,6 +51,16 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		return err
 	}
 	defer func() { result = errors.Join(result, s.Close()) }()
+	if s.Scoped() != (cfg.AuthFile != "") {
+		return errors.New("scoped state requires its auth file; activate legacy state with auth init first")
+	}
+	engine := auth.NewLegacy(cfg.Token)
+	if cfg.AuthFile != "" {
+		engine, err = auth.NewFile(cfg.AuthFile, s.Owner())
+		if err != nil {
+			return fmt.Errorf("load authentication: %w", err)
+		}
+	}
 	var targets []backend.Target
 	if !cfg.DisableLocal {
 		localBackend, err := local.New(filepath.Join(cfg.DataDir, "logs"))
@@ -63,7 +77,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		targets = append(targets, extra...)
 	}
-	c, err := control.New(s, targets)
+	c, err := control.New(s, targets, engine)
 	if err != nil {
 		return err
 	}
@@ -82,13 +96,16 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		w.WriteHeader(http.StatusOK)
 	})
 	mux.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		if !ready.Load() || !c.Healthy() {
+		if !c.AuditHealthy() {
+			w.Header().Set("Skygo-Audit", "unavailable")
+		}
+		if !ready.Load() || !c.Healthy() || !engine.Ready() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	api := rpc.NewHandler(c, cfg.Token)
+	api := rpc.NewHandler(c, engine)
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !ready.Load() || !c.Healthy() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
@@ -98,6 +115,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	}))
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	authDone := make(chan struct{})
+	if cfg.AuthFile != "" {
+		go func() { defer close(authDone); engine.Run(runCtx) }()
+	} else {
+		close(authDone)
+	}
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return runCtx }}
 	reconciled := make(chan error, 1)
 	runDone := make(chan struct{})
@@ -124,6 +147,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		_ = srv.Close()
 		if result == nil {
 			result = err
+		}
+	}
+	select {
+	case <-authDone:
+	case <-drain.Done():
+		if result == nil {
+			result = errors.New("authentication refresh shutdown timed out")
 		}
 	}
 	// Canceling runCtx bounds backend I/O; await the loop before closing its store.

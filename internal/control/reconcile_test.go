@@ -34,11 +34,11 @@ func TestTargetRemovedAndRestored(t *testing.T) {
 			}
 			defer s.Close()
 			b := &configuredBackend{}
-			c, err := New(s, []backend.Target{{Name: "local", Backend: b}})
+			c, err := New(s, []backend.Target{{Name: "local", Backend: b}}, testEngine)
 			if err != nil {
 				t.Fatal(err)
 			}
-			j, err := c.Submit("one", backend.Task{Argv: []string{"work"}})
+			j, err := c.Submit(testActor(), "one", backend.Task{Argv: []string{"work"}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -50,21 +50,21 @@ func TestTargetRemovedAndRestored(t *testing.T) {
 			}
 			// Configuration is fixed for each daemon. A replacement configuration
 			// may omit the original target without changing durable execution state.
-			missing, err := New(s, []backend.Target{{Name: "replacement", Backend: b}})
+			missing, err := New(s, []backend.Target{{Name: "replacement", Backend: b}}, testEngine)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if err := missing.reconcile(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			got, err := c.Get(j.ID)
+			got, err := c.Get(testActor(), j.ID)
 			if err != nil || got.Status.State != state || got.Status.Reason != "target is not configured" {
 				t.Fatalf("missing target: %+v, %v", got, err)
 			}
 			if err := missing.reconcile(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			again, err := c.Get(j.ID)
+			again, err := c.Get(testActor(), j.ID)
 			if err != nil || !again.UpdatedAt.Equal(got.UpdatedAt) {
 				t.Fatalf("unchanged diagnostic rewrote job: %+v, %v", again, err)
 			}
@@ -74,7 +74,7 @@ func TestTargetRemovedAndRestored(t *testing.T) {
 			if err := c.reconcile(context.Background()); err != nil {
 				t.Fatal(err)
 			}
-			got, err = c.Get(j.ID)
+			got, err = c.Get(testActor(), j.ID)
 			if err != nil || got.Status.State != backend.Running || got.Status.Reason != "" {
 				t.Fatalf("restored target: %+v, %v", got, err)
 			}
@@ -99,24 +99,24 @@ func TestCancelQueuedWithMissingTarget(t *testing.T) {
 	}
 	defer s.Close()
 	b := &configuredBackend{}
-	c, err := New(s, []backend.Target{{Name: "replacement", Backend: b}})
+	c, err := New(s, []backend.Target{{Name: "replacement", Backend: b}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	j, err := s.Submit("one", backend.Task{Argv: []string{"work"}}, "removed")
+	j, err := s.Submit(testActor(), "one", backend.Task{Argv: []string{"work"}}, "removed")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := c.reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Cancel(j.ID); err != nil {
+	if _, err := c.Cancel(testActor(), j.ID); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	got, err := c.Get(j.ID)
+	got, err := c.Get(testActor(), j.ID)
 	if err != nil || got.Status.State != backend.Canceled || got.Status.Reason != "canceled before execution" || b.starts != 0 {
 		t.Fatalf("cancel with missing target: %+v, starts=%d, %v", got, b.starts, err)
 	}
