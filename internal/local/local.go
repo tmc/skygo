@@ -27,6 +27,7 @@ type Backend struct {
 	closed         bool
 	retryOps       retryProcessOps
 	retryAvailable bool
+	defaultOps     defaultProcessOps
 }
 
 type execution struct {
@@ -35,6 +36,7 @@ type execution struct {
 	done   chan struct{}
 	output *output
 	retry  *retryExecution
+	owned  *defaultExecution
 }
 
 type output struct {
@@ -57,7 +59,7 @@ func New(directory string) (*Backend, error) {
 	if err := os.Chmod(directory, 0700); err != nil {
 		return nil, fmt.Errorf("protect logs: %w", err)
 	}
-	return &Backend{directory: directory, jobs: make(map[string]*execution), retryOps: systemRetryProcessOps(), retryAvailable: retrySupported()}, nil
+	return &Backend{directory: directory, jobs: make(map[string]*execution), retryOps: systemRetryProcessOps(), retryAvailable: retrySupported(), defaultOps: systemDefaultProcessOps()}, nil
 }
 
 // Check rejects requirements that local processes cannot enforce.
@@ -141,52 +143,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if t.Retry != nil && t.Retry.MaxAttempts > 1 {
 		return b.startRetry(cmd, out, id, t.TimeoutSeconds)
 	}
-	e := &execution{cmd: cmd, status: backend.Status{State: backend.Starting}, done: make(chan struct{}), output: out}
-	b.jobs[id] = e
-	if err := cmd.Start(); err != nil {
-		e.status = backend.Status{State: backend.Failed, Reason: "start: " + err.Error()}
-		f.Close()
-		close(e.done)
-		return fmt.Errorf("start program: %w", err)
-	}
-	e.status.State = backend.Running
-	go b.wait(e, t.TimeoutSeconds)
-	return nil
-}
-
-func (b *Backend) wait(e *execution, seconds int64) {
-	var timer *time.Timer
-	if seconds > 0 {
-		timer = time.AfterFunc(time.Duration(seconds)*time.Second, func() { b.stop(e, backend.Failed, "execution timed out") })
-	}
-	err := e.cmd.Wait()
-	if timer != nil {
-		timer.Stop()
-	}
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	// Remove remaining members of the owned group even when the leader succeeded.
-	kill(e.cmd)
-	code := int32(e.cmd.ProcessState.ExitCode())
-	e.status.ExitCode = &code
-	if e.status.State == backend.Running {
-		e.status.State = backend.Succeeded
-		if errors.Is(err, exec.ErrWaitDelay) {
-			// WaitDelay means the leader succeeded but inherited pipes stayed open.
-			e.status.Reason = "output pipes remained open after exit; later output discarded"
-		} else if err != nil {
-			e.status.State = backend.Failed
-			e.status.Reason = err.Error()
-		}
-	}
-	e.output.mu.Lock()
-	if e.output.err != nil {
-		e.status.State = backend.Failed
-		e.status.Reason = "retain output: " + e.output.err.Error()
-	}
-	e.output.file.Close()
-	e.output.mu.Unlock()
-	close(e.done)
+	return b.startDefault(cmd, out, id, t.TimeoutSeconds)
 }
 
 func (b *Backend) stop(e *execution, state backend.State, reason string) error {
@@ -200,14 +157,9 @@ func (b *Backend) stop(e *execution, state backend.State, reason string) error {
 		}
 		return b.stopRetry(e, state, reason)
 	}
-	if e.status.State != backend.Running {
-		return nil
+	if e.owned != nil {
+		return b.stopDefault(e, state, reason)
 	}
-	if err := kill(e.cmd); err != nil {
-		return fmt.Errorf("kill process group: %w", err)
-	}
-	// This is the winning termination intent. Observe exposes Running until Wait.
-	e.status = backend.Status{State: state, Reason: reason}
 	return nil
 }
 
@@ -284,6 +236,11 @@ func (b *Backend) Close() error {
 	for _, e := range jobs {
 		select {
 		case <-e.done:
+			if e.owned != nil {
+				b.mu.Lock()
+				result = errors.Join(result, e.owned.cleanupErr)
+				b.mu.Unlock()
+			}
 			if e.retry != nil {
 				select {
 				case <-e.retry.reaped:
@@ -292,7 +249,7 @@ func (b *Backend) Close() error {
 				}
 			}
 		case <-timer.C:
-			return errors.Join(result, errors.New("timed out waiting for local processes"))
+			return errors.Join(result, errors.New("timed out waiting for local processes or output cleanup"))
 		}
 	}
 	return result

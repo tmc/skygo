@@ -1,6 +1,9 @@
 // Package local runs programs in private process groups on Linux and macOS.
 // Cancellation kills the group; programs that create new sessions can escape it.
 // A restarted backend reports old executions as unknown and never respawns them.
+// Default execution retains its leader until output grace and group cleanup
+// finish, then reaps once. Close bounds its wait for completion; blocked
+// filesystem output can outlive that wait and is reported as cleanup uncertainty.
 // Retained logs survive restart. Abrupt server death may leave running processes;
 // recovery never signals an old PID because it may have been reused.
 //
