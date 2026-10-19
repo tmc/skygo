@@ -1,0 +1,5 @@
+setup: |
+  printf '%s\n' 'setup value'
+run: |
+  value='two words'
+  printf '%s\n' "$value"

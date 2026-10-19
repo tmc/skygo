@@ -1,0 +1,281 @@
+{
+  "schema_version": 1,
+  "upstream_commit": "922a9f046c4a2714edf2b76fec3d1862dcd56ae3",
+  "profile": "sky-api67/task-v1",
+  "expect_scope": "codec data only; no wire SDK or domain execution qualification",
+  "cases": [
+    {
+      "name": "request-success",
+      "file": "request-success.json",
+      "sha256": "2ecd29bc9ff623fe918b6029f9d1fea18a8d8aa5274237a09f6a006efcd931be",
+      "kind": "request_payload",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/server/requests/requests.py",
+          "lines": "85-104,221-253,263-307,367-390,430-449",
+          "sha256": "fd9498ff796e94bf8bca00101bac2366734c90a690ab12f8310e7e6225124e82",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/server/constants.py",
+          "lines": "14-32,148-150",
+          "sha256": "f8042b97bb78ad487a69fb8bfea2381ff29a02c87b853c31ca749232f9a93faf",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/server/requests/serializers/decoders.py",
+          "lines": "29-40,77-80,122-139",
+          "sha256": "3d56e4b6840f34cb8c428f10f0761050b5aa9372c8fd61ce9ac178272faa06e2",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SDK_DECODE_PASS",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Codec fixture only; job_id1/handleNone is source-decodable, not evidence that managed launch/domain semantics exist. None bookkeeping does not support introspection/reexecution. Unmodified pinned SDK decoded this exact fixture; result/error value qualified, not HTTP/domain semantics.",
+      "oracle_result_sha256": "106aea4bf2fb9d56d80badf6dea941244d8df0153830cfe46efa508be9ee9157"
+    },
+    {
+      "name": "request-error",
+      "file": "request-error.json",
+      "sha256": "9c60d8ba61b0f0450e7b7d5cdafcdbaf990e7aa050db23d35cbde5f1bc79ea3c",
+      "kind": "async_error",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/server/requests/requests.py",
+          "lines": "85-104,221-253,263-307,367-390,430-449",
+          "sha256": "fd9498ff796e94bf8bca00101bac2366734c90a690ab12f8310e7e6225124e82",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/exceptions.py",
+          "lines": "78-147",
+          "sha256": "66a4c37eb6aa8713708e6b06928270a1f8140fbd1d6610b02760d50b4ad5a26d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SDK_DECODE_PASS",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Primitive-only error pickle generated with Python stdlib protocol4; subsequently decoded by the unmodified pinned SDK. Encoder may emit different safe bytes with identical decoded value. Unmodified pinned SDK decoded this exact fixture; result/error value qualified, not HTTP/domain semantics.",
+      "oracle_result_sha256": "106aea4bf2fb9d56d80badf6dea941244d8df0153830cfe46efa508be9ee9157"
+    },
+    {
+      "name": "error-primitive",
+      "file": "error-primitive.json",
+      "sha256": "524068edf18ab0cd16c6b903d49082036312b99293a9e90c5af34911436c858d",
+      "kind": "exception_data",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/exceptions.py",
+          "lines": "78-147",
+          "sha256": "66a4c37eb6aa8713708e6b06928270a1f8140fbd1d6610b02760d50b4ad5a26d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "args JSON array corresponds to allowed Python tuple in write-only pickle representation; only allowlisted builtin exception types."
+    },
+    {
+      "name": "validation-error",
+      "file": "validation-error.json",
+      "sha256": "fe1498ee71fc267a599b319791280c638dec1f7564d531f30eba9cbbff338991",
+      "kind": "validation_error",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/exceptions.py",
+          "lines": "78-147",
+          "sha256": "66a4c37eb6aa8713708e6b06928270a1f8140fbd1d6610b02760d50b4ad5a26d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SDK_DECODE_PASS",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Synchronous /validate400 uses plain serialized exception JSON, not async RequestPayload wrapper. Unmodified pinned SDK decoded this exact fixture; result/error value qualified, not HTTP/domain semantics.",
+      "oracle_result_sha256": "106aea4bf2fb9d56d80badf6dea941244d8df0153830cfe46efa508be9ee9157"
+    },
+    {
+      "name": "validate-minimal",
+      "file": "validate-minimal.json",
+      "sha256": "70d2dca633bcda08e8e6f69ec6c30a5713ee3e50a17c83ea3acd95be8d37f4c9",
+      "kind": "validate_body",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Source-derived single-task SDK envelope; actual SDK dump defaults still unqualified."
+    },
+    {
+      "name": "validate-unknown-effect",
+      "file": "validate-unknown-effect.json",
+      "sha256": "fd08081d603e42a9f7ad662736752560229d19c5087520937bf6f6a0f0a57ca1",
+      "kind": "validate_body",
+      "expect": "reject",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Selected strict boundary rejects unknown effectful field even though upstream BasePayload extra=ignore."
+    },
+    {
+      "name": "validate-controller-claim",
+      "file": "validate-controller-claim.json",
+      "sha256": "71d0a28782d4a4aa473c2993855f9586ba21c8d666eb5c189a6308be8b5f20ed",
+      "kind": "validate_authority",
+      "expect": "reject",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Frozen selected codec rejects nonnull authority fields; principal/version/access must be server-derived. No clientbody claim can grant role/version/access."
+    },
+    {
+      "name": "return-value-wrong-shape",
+      "file": "return-value-wrong-shape.json",
+      "sha256": "8cde8a1b7e07eccf4f04d2486df996bf6367f84a9665a9737f7f84a5302ca8e1",
+      "kind": "request_payload",
+      "expect": "reject",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/server/requests/requests.py",
+          "lines": "85-104,221-253,263-307,367-390,430-449",
+          "sha256": "fd9498ff796e94bf8bca00101bac2366734c90a690ab12f8310e7e6225124e82",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Required return_value is JSON string inside outerJSON, not nested object."
+    },
+    {
+      "name": "invalid-request-status",
+      "file": "invalid-request-status.json",
+      "sha256": "e14f88db45039f0f1dd8b926d22813edcaaa18e548775759db4fb4ef53055d0c",
+      "kind": "request_payload",
+      "expect": "reject",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/server/requests/requests.py",
+          "lines": "85-104,221-253,263-307,367-390,430-449",
+          "sha256": "fd9498ff796e94bf8bca00101bac2366734c90a690ab12f8310e7e6225124e82",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": ""
+    },
+    {
+      "name": "version-mismatch",
+      "file": "version-mismatch.json",
+      "sha256": "cc0e461fc0f143fb64848ef50db5b8b2612c48e77ef029950d7bd8025daa21d4",
+      "kind": "version_error",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/server/constants.py",
+          "lines": "14-32,148-150",
+          "sha256": "f8042b97bb78ad487a69fb8bfea2381ff29a02c87b853c31ca749232f9a93faf",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Response message illustrative; exact upstream status enum spelling and version middleware semantics must be source/oracle-qualified before handler use."
+    },
+    {
+      "name": "validate-sdk-remote-captured",
+      "file": "validate-sdk-remote-captured.json",
+      "sha256": "70c83b4bc21a23f9a8810dd5d10486847343ed604d2c65139256a422f1ca30b9",
+      "kind": "validate_body",
+      "expect": "accept",
+      "source": [
+        {
+          "path": "sky/server/requests/payloads.py",
+          "lines": "154-225,255-304,1072-1097",
+          "sha256": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "unmodified pinned remote-mode ValidateBody model_dump_json captured by C02; only listed nonsemantic diagnostic/identity strings normalized",
+      "oracle_status": "SDK_PAYLOAD_CAPTURED",
+      "oracle_input_sha256": "e74c929922f7e88998b55802268b3ba89b97c278f3b3550d4000ef0058de83dc",
+      "normalizations": {
+        "env_vars.SKYPILOT_USER_ID": "stable synthetic nonauthoritative identity/telemetry string",
+        "env_vars.SKYPILOT_USER": "stable synthetic nonauthoritative identity/telemetry string",
+        "env_vars.SKYPILOT_USAGE_RUN_ID": "stable synthetic nonauthoritative identity/telemetry string",
+        "entrypoint_command": "removed developer host diagnostic path only"
+      },
+      "runtime_status": "NOT_QUALIFIED",
+      "notes": "Exact SDK dag/body defaults and disable-usage context preserved; constructor capture made no HTTP request and qualifies no facade/server behavior."
+    }
+  ]
+}

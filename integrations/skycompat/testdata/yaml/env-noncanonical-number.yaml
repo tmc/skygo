@@ -1,0 +1,3 @@
+run: echo number
+envs:
+  COUNT: 0x10

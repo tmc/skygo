@@ -1,0 +1,3 @@
+run: echo env
+envs:
+  RATE: 1.25

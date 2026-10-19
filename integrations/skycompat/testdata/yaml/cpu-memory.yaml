@@ -1,0 +1,4 @@
+run: echo resource
+resources:
+  cpus: '1.5+'
+  memory: 2GB

@@ -1,0 +1,6 @@
+{
+  "dag": "run: echo data\n",
+  "request_options": null,
+  "workspace_access": "write",
+  "client_api_version": 67
+}

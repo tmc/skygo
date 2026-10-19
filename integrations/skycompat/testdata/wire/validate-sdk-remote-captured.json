@@ -1,0 +1,18 @@
+{
+  "env_vars": {
+    "SKYPILOT_DISABLE_USAGE_COLLECTION": "1",
+    "SKYPILOT_USER_ID": "11111111",
+    "SKYPILOT_USER": "fixture-user",
+    "SKYPILOT_USAGE_RUN_ID": "11111111-2222-4333-8444-555555555555"
+  },
+  "entrypoint": "",
+  "entrypoint_command": "python developer-oracle.py",
+  "using_remote_api_server": true,
+  "override_skypilot_config": {},
+  "override_skypilot_config_path": null,
+  "file_mounts_blob_id": null,
+  "client_api_version": null,
+  "workspace_access": null,
+  "dag": "name: null\n---\n\nresources: {}\n\nnum_nodes: 1\n\nrun: echo skycompat\n\nfile_mounts: {}\n\nvolumes: {}\n",
+  "request_options": null
+}

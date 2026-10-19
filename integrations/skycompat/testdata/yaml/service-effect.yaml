@@ -1,0 +1,4 @@
+run: echo serve
+service:
+  readiness_probe: /health
+  replicas: 1

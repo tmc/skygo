@@ -1,0 +1,2 @@
+workdir: ./project
+run: echo source

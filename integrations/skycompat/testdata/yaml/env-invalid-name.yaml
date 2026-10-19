@@ -1,0 +1,3 @@
+run: echo env
+envs:
+  1BAD: value

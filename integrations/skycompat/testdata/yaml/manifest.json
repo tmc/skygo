@@ -1,0 +1,1321 @@
+{
+  "schema_version": 1,
+  "upstream_commit": "922a9f046c4a2714edf2b76fec3d1862dcd56ae3",
+  "profile": "sky-api67/task-v1",
+  "expect_scope": "syntax parse only; no execution, shell permission, staging, auth or native qualification",
+  "default_options": "selected strict profile; no env overrides",
+  "cases": [
+    {
+      "name": "minimal",
+      "file": "minimal.yaml",
+      "sha256": "1ba476f35ccc5cec5884e5c930b2a5cd3eefd69b0eea69673b056b965cfe5c2a",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "name",
+        "run"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "values": {
+        "name": "hello",
+        "run": "echo skycompat"
+      }
+    },
+    {
+      "name": "multiline-shell",
+      "file": "multiline-shell.yaml",
+      "sha256": "97b85d3ceaf877c0b3d2e27f324a8df7c6c83e4ff5b55e7b9204281a55202761",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "setup",
+        "run",
+        "shell-text"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Data only: parser must never execute shell text; lowering requires explicit operator shell policy.",
+      "values": {
+        "setup": "printf '%s\\n' 'setup value'\n",
+        "run": "value='two words'\nprintf '%s\\n' \"$value\"\n"
+      }
+    },
+    {
+      "name": "env-scalars",
+      "file": "env-scalars.yaml",
+      "sha256": "bf49c0d9bbf33a12065baa5c4711bcc584cf6107ac3437078f61ccf34867ef4b",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "envs",
+        "python-coercion"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "values": {
+        "envs": {
+          "NAME": "two words",
+          "COUNT": "12",
+          "ENABLED": "True",
+          "DISABLED": "False",
+          "EMPTY": ""
+        }
+      }
+    },
+    {
+      "name": "env-null",
+      "file": "env-null.yaml",
+      "sha256": "96171924fbc3c40dec4cee7def2b723a38e076d6338c4e2fb7d73b9af56ed341",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [
+        "envs",
+        "null"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "error_path": "envs",
+      "error_code": "invalid"
+    },
+    {
+      "name": "env-float",
+      "file": "env-float.yaml",
+      "sha256": "80c0047564736bf082dfa1c0aa4a4b1e524f334eb2672bd44ab4798673051574",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [
+        "envs",
+        "coercion"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Selected subset refusal; upstream Python str(float) can accept. Not upstream-invalid.",
+      "error_path": "envs",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "env-invalid-name",
+      "file": "env-invalid-name.yaml",
+      "sha256": "ad95b49419987486c83f1ee076e5b79afdf973a9f21ed9a31879b2df7baa9f44",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [
+        "envs"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "error_path": "envs",
+      "error_code": "invalid"
+    },
+    {
+      "name": "cpu-memory",
+      "file": "cpu-memory.yaml",
+      "sha256": "bbdbb17bc358f2251c692a4ab37f11d33bc30574f7ba3d1f333e7265ef67ade3",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "minimum",
+        "units"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/skylet/constants.py",
+          "lines": "1030-1041",
+          "sha256": "c87fc7074f5b9b6e3a808a1dc3350a2cb9db835557569fade88888ff24bf041d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Preserve minimum and unit; runtime lowering must not silently claim exact CPU allocation or change GB meaning.",
+      "values": {
+        "cpus": "1.5+",
+        "memory": "2GB"
+      }
+    },
+    {
+      "name": "memory-numeric",
+      "file": "memory-numeric.yaml",
+      "sha256": "b6fa927250e41dfeb04317d73da0bd729f3cc952e5d7feba1063342eead4606d",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "units"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/skylet/constants.py",
+          "lines": "1030-1041",
+          "sha256": "c87fc7074f5b9b6e3a808a1dc3350a2cb9db835557569fade88888ff24bf041d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Upstream numeric 2 means 2 GiB under binary GB multiplier, never 2 bytes. Parser need only preserve exact raw quantity.",
+      "values": {
+        "memory": "2"
+      }
+    },
+    {
+      "name": "memory-plus",
+      "file": "memory-plus.yaml",
+      "sha256": "c016485d96fc3a05a038ba6b4ddf05b39363b6fde3c7301a8272f954881a67ee",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "minimum"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/skylet/constants.py",
+          "lines": "1030-1041",
+          "sha256": "c87fc7074f5b9b6e3a808a1dc3350a2cb9db835557569fade88888ff24bf041d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "values": {
+        "memory": "1.5+"
+      }
+    },
+    {
+      "name": "accelerator-model",
+      "file": "accelerator-model.yaml",
+      "sha256": "502737aff32bb8e6ce376a2771d7b52842f76d29a46daf9f03f89d0d24e80c23",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "accelerator-model"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "A100 model constraint must survive parse; generic nvidia resource does not prove model satisfaction."
+    },
+    {
+      "name": "cpu-zero",
+      "file": "cpu-zero.yaml",
+      "sha256": "0d2e312153763875fe1afea01b2c0521b04dae2ffd33fb8e7c99ad43a87d6376",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "error_path": "resources.cpus",
+      "error_code": "invalid"
+    },
+    {
+      "name": "cpu-negative",
+      "file": "cpu-negative.yaml",
+      "sha256": "f85178161d597ad66247fdcedfb2084e0692f874e3e6ce7a11cf33ac809e20cc",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "error_path": "resources.cpus",
+      "error_code": "invalid"
+    },
+    {
+      "name": "cpu-infinite",
+      "file": "cpu-infinite.yaml",
+      "sha256": "295fc7f300b7c8bc9b19c392d463134b5c5aa745fab7c5f4fdda9b65bedb0433",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Bounded selected parser rejects nonfinite values; actual upstream numerical edge behavior not qualified.",
+      "error_path": "resources.cpus",
+      "error_code": "invalid"
+    },
+    {
+      "name": "cpu-overflow",
+      "file": "cpu-overflow.yaml",
+      "sha256": "6d1e2c1fd81fcefe89ac5a9ce7502f1b8de2c68452424c1f2e99dcad7f9ae4dc",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Safety-bound refusal, not claimed upstream-invalid.",
+      "error_path": "resources.cpus",
+      "error_code": "invalid"
+    },
+    {
+      "name": "memory-ratio",
+      "file": "memory-ratio.yaml",
+      "sha256": "3480c360fac9dd62c7673791cc969431fbbec501796792a904899977d8d072aa",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Upstream internal ratio form recognized as selected unsupported until ratio semantics are implemented.",
+      "error_path": "resources.memory",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "workdir-reference",
+      "file": "workdir-reference.yaml",
+      "sha256": "098ff5990a622873cb339adc9ff22df6a7b2e0a8e7b3dbaaa5f6236fa9b0a7ea",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "workdir"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Client-relative reference only; parse must not read this path or reinterpret it as server filesystem access.",
+      "values": {
+        "workdir": "./project"
+      }
+    },
+    {
+      "name": "mount-reference",
+      "file": "mount-reference.yaml",
+      "sha256": "b683096ebb20a4d26737752f24ec292967e9f997092ed9c228775867bdb1f4d4",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "file_mounts"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Source reference retained; actual staging/authorization waits S06/S07."
+    },
+    {
+      "name": "volume-reference",
+      "file": "volume-reference.yaml",
+      "sha256": "a1e26aee78726e019e4baba2d590743ebdfc58c41612fe1855eb70c31ccd4ab0",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "volumes"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Syntax/reference recognition only; actual upstream/storage semantics need matching approved S07 mapping."
+    },
+    {
+      "name": "nodes-two",
+      "file": "nodes-two.yaml",
+      "sha256": "9aca7364f05478f222abc1d2fe3e2d85d4f6f72097a97226c3cfd8a6531e5bd6",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "num_nodes"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Syntax acceptance is not indexed/communicating rank execution; S09 gate stays open.",
+      "values": {
+        "num_nodes": 2
+      }
+    },
+    {
+      "name": "unknown-field",
+      "file": "unknown-field.yaml",
+      "sha256": "7fbd1b0718aaa958bc3163b6c8768d31fd5e28afc8d6d611fcecc8d4760a1250",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "error_path": "",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "unknown-resource",
+      "file": "unknown-resource.yaml",
+      "sha256": "efcbe358f31aa05922dd759dca6c277cb2997eb390e2967094abc000b16c1ec1",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "error_path": "resources",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "provider-effect",
+      "file": "provider-effect.yaml",
+      "sha256": "d24eb9b954b9f6663639c3104504096574599567016afe4b8df44e88e9f60104",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "provider-reference"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Coordinator frozen typed provider-reference preservation only. No provider validation/runtime SDK/provisioning support; semantic Lower must reject unsupported provider effects.",
+      "values": {
+        "cloud": "aws"
+      }
+    },
+    {
+      "name": "resource-alternatives",
+      "file": "resource-alternatives.yaml",
+      "sha256": "95a7cab6a268fb14f6d96a70bb8b72698cd814abc8a0b763ab9ff3cfa87ac86c",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Source supports alternatives; selected subset must not pick first/drop order.",
+      "error_path": "resources.any_of",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "service-effect",
+      "file": "service-effect.yaml",
+      "sha256": "f474cbb83549b102bc4041484f17487a0440e2ce9be10668aeef9df76785cc55",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "No service lifecycle claim before S14 and typed supported syntax.",
+      "error_path": "service",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "secret-effect",
+      "file": "secret-effect.yaml",
+      "sha256": "e2576e4edec90f9b274fea565d32060ec217b0382b3a078d092d689c4ba5bbe9",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Fixture uses no credential; parser must not resolve or echo secret values.",
+      "error_path": "secrets",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "config-effect",
+      "file": "config-effect.yaml",
+      "sha256": "07c731c16ac73284d4b312617f12b61b5ecc500ff92c908162c6b2cd72d8c3ea",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "No opaque override passthrough or host privilege.",
+      "error_path": "config",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "duplicate-key",
+      "file": "duplicate-key.yaml",
+      "sha256": "6b05eab6232ac4521144b62a4b5539774ed28719d6cc6ceb38a2cbd8ab5d0122",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Strict safety subset; source schema alone does not establish duplicate-key parser behavior.",
+      "error_path": "run",
+      "error_code": "invalid"
+    },
+    {
+      "name": "unsafe-tag",
+      "file": "unsafe-tag.yaml",
+      "sha256": "8b12b6be58bb26660a04caa4abc8878e96b37cdadbd72f0c1f45625800558a7e",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Adversarial data only, never pass to a constructor or execute.",
+      "error_path": "run",
+      "error_code": "invalid"
+    },
+    {
+      "name": "alias-cycle",
+      "file": "alias-cycle.yaml",
+      "sha256": "2a9c1c26274ff01f3867f0479ca263a4c6c4ac18387307073f7d5f98b6da59b8",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "No alias expansion/recursive traversal without bounds.",
+      "error_path": "envs",
+      "error_code": "invalid"
+    },
+    {
+      "name": "alias-value",
+      "file": "alias-value.yaml",
+      "sha256": "41ca77945873649d3f7c19525853e802903afc3b6d59b92223d13051c3833a72",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Strict no-alias initial profile; upstream YAML parser may accept. Not claimed upstream-invalid.",
+      "error_path": "run",
+      "error_code": "invalid"
+    },
+    {
+      "name": "extra-documents",
+      "file": "extra-documents.yaml",
+      "sha256": "eecf8e6912f9f5953bc58991a9cebfae0b256f284b1708ccfa74907a526ae1dc",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Task entrypoint accepts one document; separate DAG profile controls documents.",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "dag-sdk-one-task",
+      "file": "dag-sdk-one-task.yaml",
+      "sha256": "329848f475370c9d003eab824845e859332ad3c415b0b1a79a3feda88b4acace",
+      "entrypoint": "dag",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "sdk-dag-header",
+        "run"
+      ],
+      "source": [
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Source-derived shape matches header+task dumper, but exact SDK-produced defaults await actual SDK oracle; do not label this captured SDK output.",
+      "values": {
+        "task_count": 1,
+        "run": "echo skycompat"
+      }
+    },
+    {
+      "name": "dag-named-serial",
+      "file": "dag-named-serial.yaml",
+      "sha256": "d83125aa63ce056dbefa07a63652be05e6686218f9c98de7ff9779ba9c42cfd9",
+      "entrypoint": "dag",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "sdk-dag-header",
+        "serial"
+      ],
+      "source": [
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "",
+      "values": {
+        "task_count": 1,
+        "dag_name": "example"
+      }
+    },
+    {
+      "name": "dag-parallel",
+      "file": "dag-parallel.yaml",
+      "sha256": "559e7bcb63de982b05912f797d55042050b0f71b06a524d6cf4bd14ddd04f68c",
+      "entrypoint": "dag",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Job-group parallel semantics are outside one-task chain profile.",
+      "error_path": "execution",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "dag-extra-task",
+      "file": "dag-extra-task.yaml",
+      "sha256": "0cb92c5d23cbbb8e9564f833f004fb5fa83a76f682efcc863097e4a466c17129",
+      "entrypoint": "dag",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Valid upstream chain syntax remains S08-dependent, not silently truncated.",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "deep-nesting",
+      "file": "deep-nesting.yaml",
+      "sha256": "432a6ba26b3cecef12d6b497e71fbeb7a60770d75faae296a50ef9da11e93749",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Selected pre-semantic depth limit; no requirement to traverse/allocate the entire expanded tree.",
+      "error_code": "limit"
+    },
+    {
+      "name": "env-quoted-legacy-bool",
+      "file": "env-quoted-legacy-bool.yaml",
+      "sha256": "e354529f9b781185b910f82391da387db31dbda2d820c0ef1a0d8e28bd439771",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "envs"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Quoted scalar stays literal string, not PyYAML1.1 bool.",
+      "values": {
+        "envs": {
+          "FLAG": "yes"
+        }
+      }
+    },
+    {
+      "name": "env-plain-legacy-bool",
+      "file": "env-plain-legacy-bool.yaml",
+      "sha256": "786ef67063976c05d591205341806d9feb09a18e0592a1a8a45a588231373ca5",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "envs"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Upstream safe YAML1.1 resolves plain yes to Python bool; Go yaml.v3 leaves string unless adapter accounts for source semantics. Must distinguish quoting.",
+      "values": {
+        "envs": {
+          "FLAG": "True"
+        }
+      }
+    },
+    {
+      "name": "env-noncanonical-number",
+      "file": "env-noncanonical-number.yaml",
+      "sha256": "1f33e2e02a7265b5cac40a041d40f3a46b6fd979f93d112aa1755421cb310b5c",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [
+        "envs"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Selected subset refuses noncanonical numeric coercion until exact source-oracle semantics implemented.",
+      "error_path": "envs",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "sdk-default-disk",
+      "file": "sdk-default-disk.yaml",
+      "sha256": "176689ff1407025cbdb0d1789c7aa592cef6b81dd97a969efe65d558986ff043",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "sdk-default"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "42,2737-2746,2766-2799",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/skylet/constants.py",
+          "lines": "1030-1041",
+          "sha256": "c87fc7074f5b9b6e3a808a1dc3350a2cb9db835557569fade88888ff24bf041d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Pinned resources.py42 sets default256; lines2737-2746 collapse legacy disk_size256 to unspecified while to_yaml_config emits only explicit private field. Typed legacy-default preservation only, not claimed exact current SDK serialization or runtime disk provisioning.",
+      "values": {
+        "disk_size": "256"
+      }
+    },
+    {
+      "name": "disk-effect",
+      "file": "disk-effect.yaml",
+      "sha256": "f5b8f6b5d48fc4e40f814c5d7a413d323ed040e073e64ee0fe42a1b9e617a2a4",
+      "entrypoint": "task",
+      "expect": "reject",
+      "runtime_status": "NOT_APPLICABLE",
+      "features": [
+        "sdk-default"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/skylet/constants.py",
+          "lines": "1030-1041",
+          "sha256": "c87fc7074f5b9b6e3a808a1dc3350a2cb9db835557569fade88888ff24bf041d",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Nondefault disk effect cannot be ignored as transport metadata or mapped to existing core runtime.",
+      "error_path": "resources.disk_size",
+      "error_code": "unsupported"
+    },
+    {
+      "name": "sdk-provenance",
+      "file": "sdk-provenance.yaml",
+      "sha256": "277f42e3204f1b2db3a7e2510337668d19b17757daeafa6ffb9bcbcabf5851af",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "sdk-default"
+      ],
+      "source": [
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/utils/schemas.py",
+          "lines": "1200-1340",
+          "sha256": "d5fc3455488c021c255740678d8f5e2510dafe222a578421b272d923e096ad16",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "notes": "Known source provenance string preserved but never executed or accepted as authority over typed effective task."
+    },
+    {
+      "name": "provider-location",
+      "file": "provider-location.yaml",
+      "sha256": "7f644ac9ceb45175c4a59ab50855dfa7f8360391a5db153f83a31fc03013c43b",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "provider-reference"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "values": {
+        "cloud": "aws",
+        "region": "us-east-1",
+        "zone": "us-east-1a",
+        "instance_type": "m5.large"
+      },
+      "notes": "Typed syntax preservation only; no live provider/image validation/pull/operation."
+    },
+    {
+      "name": "image-reference",
+      "file": "image-reference.yaml",
+      "sha256": "2edb4871dd5afe0eb9d8ce1ca4f9a2352c578e3ac81a8ff9bb8ec3e7832bbd27",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "resources",
+        "provider-reference"
+      ],
+      "source": [
+        {
+          "path": "sky/resources.py",
+          "lines": "867-926,2496-2555,2660-2705",
+          "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "original compact fixture derived from pinned source semantics",
+      "oracle_status": "SOURCE_ONLY",
+      "values": {
+        "image_id": "docker:example/image:fixture"
+      },
+      "notes": "Typed syntax preservation only; no live provider/image validation/pull/operation."
+    },
+    {
+      "name": "sdk-task-captured",
+      "file": "sdk-task-captured.yaml",
+      "sha256": "f4a9e8aaf67a8079d9f275cfcbee5493445b7618dff3f84c8b92112d4df6084d",
+      "entrypoint": "task",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "actual-sdk-dump",
+        "empty-defaults",
+        "run"
+      ],
+      "source": [
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "exact bytes captured from unmodified pinned SDK Task serialization / DAG dumper by C02 isolated developer oracle",
+      "oracle_status": "SDK_DUMP_CAPTURED",
+      "values": {
+        "run": "echo skycompat",
+        "num_nodes": 1
+      },
+      "notes": "Actual resources{}, file_mounts{}, volumes{} and num_nodes1 defaults must parse; capture is neither HTTP facade nor domain execution qualification."
+    },
+    {
+      "name": "dag-sdk-captured",
+      "file": "dag-sdk-captured.yaml",
+      "sha256": "64c69ff707784ae583d0c22561f25e793f5eaf5e5570a7950198d470eaf28c7e",
+      "entrypoint": "dag",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
+      "features": [
+        "actual-sdk-dump",
+        "empty-defaults",
+        "run"
+      ],
+      "source": [
+        {
+          "path": "sky/utils/dag_utils.py",
+          "lines": "95-135,217-235",
+          "sha256": "048b0291847682493e8a7ab2a1fd79efc19fe2d4ed1db72c3a3deb9d9db7123d",
+          "license": "Apache-2.0"
+        },
+        {
+          "path": "sky/task.py",
+          "lines": "680-749,2014-2026,2088-2195",
+          "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+          "license": "Apache-2.0"
+        }
+      ],
+      "provenance": "exact bytes captured from unmodified pinned SDK Task serialization / DAG dumper by C02 isolated developer oracle",
+      "oracle_status": "SDK_DUMP_CAPTURED",
+      "values": {
+        "run": "echo skycompat",
+        "num_nodes": 1,
+        "task_count": 1
+      },
+      "notes": "Actual resources{}, file_mounts{}, volumes{} and num_nodes1 defaults must parse; capture is neither HTTP facade nor domain execution qualification."
+    }
+  ]
+}

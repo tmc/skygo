@@ -1,0 +1,3 @@
+run: echo image
+resources:
+  image_id: docker:example/image:fixture

@@ -1,0 +1,1 @@
+run: !!python/object/apply:os.system ['echo DO_NOT_EXECUTE']
