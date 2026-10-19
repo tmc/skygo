@@ -144,18 +144,21 @@ func TestConfigurationErrors(t *testing.T) {
 		cfg  server.Config
 		want string
 	}{
-		{"no targets", server.Config{Listen: "127.0.0.1:0", DisableLocal: true}, "store and targets required"},
+		{"no targets", server.Config{Listen: "127.0.0.1:0", DisableLocal: true}, "no execution targets configured"},
 		{"public without token", server.Config{Listen: "0.0.0.0:0"}, "requires a bearer token"},
 		{"hostname without token", server.Config{Listen: "localhost:0"}, "requires a bearer token"},
 		{"invalid listen", server.Config{Listen: "invalid"}, "listen address"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
-			tt.cfg.DataDir = t.TempDir()
+			tt.cfg.DataDir = filepath.Join(t.TempDir(), "state")
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
 			err := server.Run(ctx, tt.cfg)
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("Run error = %v; want %q", err, tt.want)
+			}
+			if _, err := os.Stat(tt.cfg.DataDir); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("invalid configuration created state: %v", err)
 			}
 			// Any startup failure must release the persistent store's singleton lock.
 			s, err := store.Open(tt.cfg.DataDir)

@@ -31,6 +31,9 @@ type Config struct {
 // Run serves until cancellation, rejects new work before draining, and closes
 // local processes. Kubernetes workloads remain independent of server lifetime.
 func Run(ctx context.Context, cfg Config) (result error) {
+	if cfg.DisableLocal && cfg.Targets == nil {
+		return errors.New("no execution targets configured")
+	}
 	host, _, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen address: %w", err)
