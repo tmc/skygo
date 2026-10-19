@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "installation": "0123456789abcdef0123456789abcdef",
+  "generation": 1,
+  "principals": [
+    {
+      "id": "legacy",
+      "role": "admin"
+    }
+  ],
+  "tokens": [
+    {
+      "id": "b74f0c2a67cf39df8f4fb290a70d31d2",
+      "principal": "legacy",
+      "created_at": "2026-10-19T02:09:54.340429Z",
+      "expires_at": "2026-11-18T02:09:54.340429Z",
+      "sha256": "789d388b514f76b7ac62780e21cf0ab695345b3195d61615ca3e9818b039a240"
+    }
+  ]
+}

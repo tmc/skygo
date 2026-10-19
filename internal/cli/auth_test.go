@@ -72,7 +72,7 @@ func runAuthScript(t *testing.T, exe, file string) {
 		if err != nil {
 			return nil, err
 		}
-		parts := regexp.MustCompile(`^skygo_([0-9a-f]{32})_[A-Za-z0-9_-]+\n?$`).FindSubmatch(data)
+		parts := regexp.MustCompile(`^sky(?:go)?_([0-9a-f]{32})_[A-Za-z0-9_-]{43}\n?$`).FindSubmatch(data)
 		if parts == nil {
 			return nil, errors.New("invalid credential format")
 		}

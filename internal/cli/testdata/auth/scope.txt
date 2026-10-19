@@ -1,6 +1,6 @@
 # Real credential file commands and real scoped control-plane requests.
 skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
-! stdout 'skygo_[0-9a-f]{32}_'
+! stdout 'sky(go)?_[0-9a-f]{32}_'
 ! stderr .
 skygo auth principal add alice --role operator --auth-file $AUTH
 skygo auth principal add bob --role operator --auth-file $AUTH
@@ -10,7 +10,7 @@ skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
 skygo auth token issue viewer --auth-file $AUTH --output viewer.token --expires-in 24h
 skygo --json auth token list --auth-file $AUTH
 stdout '"principal": *"alice"'
-! stdout '(digest|secret|skygo_[0-9a-f]{32}_)'
+! stdout '(digest|secret|sky(go)?_[0-9a-f]{32}_)'
 server start
 taskfile success.json success
 taskfile hold.json hold

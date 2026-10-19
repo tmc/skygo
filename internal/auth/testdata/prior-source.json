@@ -1,0 +1,18 @@
+{
+  "source_commit": "4cf861bb60167d5045828987a3e5b39aa4951d4d",
+  "source_files": {
+    "internal/auth/auth.go": "844cdef44a7303769434abebe580dbfd45d3fe7bd22811890b5b6881e21c97c3",
+    "internal/auth/auth_test.go": "836c547249ab6969521a64b19202077832d60c516510fc5a0212ead536436792",
+    "internal/auth/doc.go": "8c81a97befd90c79138f470f072ebd0ca847c403b0016629ca490ab78237a8ed",
+    "internal/auth/example_test.go": "b6e3becdc9a24866368af6129dad0555a45c08447600094c54ad706b0d4a4a6a",
+    "internal/auth/file.go": "e6f46869ebb78717fe729376757ed1950b4ad10e313bd7f49f2ea344df9bd06e"
+  },
+  "generator_sha256": "9fc7bdde55cd75357f3c90d65e334ed225ff497b990b809787ed9d9e043562e2",
+  "fixture_sha256": {
+    "prior-auth.json": "f81e777096180e441c80cb4d58a52e9bd50976245458b8b9e09a45135c381229",
+    "prior.token": "e3a5e5f6d248f80cc8ae81718b8a4cfc1e642da5095a01f6f91151621b7d21af"
+  },
+  "scope": "public test credentials for fixed nonproduction installation; never installed as real authority",
+  "archival_issuance_commit": "a6f9837e2a592ce706f054aceb75ac7d05939fc8",
+  "archival_issuance_note": "original development snapshot; canonical reachable commit has identical five issuer source blobs"
+}

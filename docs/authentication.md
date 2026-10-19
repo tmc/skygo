@@ -57,6 +57,9 @@ Verify the replacement credential before revoking the old public token ID.
 The tools prevent removing the last usable admin credential. Tokens are random
 bearer credentials, expire after 30 days by default, and may last at most 90 days.
 Raw credentials are written once to private files; the auth file stores hashes.
+New credentials use the `sky_` prefix; existing `skygo_` credentials remain valid.
+The prior scoped-auth binary accepts only the older format. Prefixes are part of
+the credential: changing one invalidates it.
 Keep credentials and auth files out of workload artifacts and logs.
 
 The server polls one local auth file and revalidates active streams. Updates

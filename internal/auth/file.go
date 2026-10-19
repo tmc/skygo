@@ -285,20 +285,29 @@ func generate(principal string, lifetime time.Duration, now time.Time) (string, 
 		return "", credential{}, errors.New("generate credential")
 	}
 	idText := hex.EncodeToString(id[:])
-	token := "skygo_" + idText + "_" + base64.RawURLEncoding.EncodeToString(secret[:])
+	token := "sky_" + idText + "_" + base64.RawURLEncoding.EncodeToString(secret[:])
 	digest := tokenHash(token)
 	return token, credential{ID: idText, Principal: principal, CreatedAt: now, ExpiresAt: now.Add(lifetime), Hash: hex.EncodeToString(digest[:]), digest: digest}, nil
 }
 func tokenID(token string) (string, bool) {
-	if len(token) != 82 || !strings.HasPrefix(token, "skygo_") || token[38] != '_' {
+	var payload string
+	switch {
+	case len(token) == 80 && strings.HasPrefix(token, "sky_"):
+		payload = token[4:]
+	case len(token) == 82 && strings.HasPrefix(token, "skygo_"):
+		payload = token[6:]
+	default:
 		return "", false
 	}
-	id := token[6:38]
+	if payload[32] != '_' {
+		return "", false
+	}
+	id := payload[:32]
 	if !hexID(id) {
 		return "", false
 	}
-	b, err := base64.RawURLEncoding.DecodeString(token[39:])
-	if err != nil || len(b) != 32 || base64.RawURLEncoding.EncodeToString(b) != token[39:] {
+	b, err := base64.RawURLEncoding.DecodeString(payload[33:])
+	if err != nil || len(b) != 32 || base64.RawURLEncoding.EncodeToString(b) != payload[33:] {
 		return "", false
 	}
 	return id, true

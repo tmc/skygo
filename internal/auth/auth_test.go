@@ -395,7 +395,7 @@ func TestLastUsableAdminAndOutputConflicts(t *testing.T) {
 
 func TestTokenPropertiesLimitsAndConcurrentMutation(t *testing.T) {
 	f := newFixture(t)
-	if !strings.HasPrefix(f.initial, "skygo_") || len(f.initial) != 82 {
+	if !strings.HasPrefix(f.initial, "sky_") || len(f.initial) != 80 {
 		t.Fatal("token format")
 	}
 	data, _ := os.ReadFile(f.path)
