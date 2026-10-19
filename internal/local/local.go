@@ -152,7 +152,10 @@ func (b *Backend) wait(e *execution, seconds int64) {
 	e.status.ExitCode = &code
 	if e.status.State == backend.Running {
 		e.status.State = backend.Succeeded
-		if err != nil {
+		if errors.Is(err, exec.ErrWaitDelay) {
+			// WaitDelay means the leader succeeded but inherited pipes stayed open.
+			e.status.Reason = "output pipes remained open after exit; later output discarded"
+		} else if err != nil {
 			e.status.State = backend.Failed
 			e.status.Reason = err.Error()
 		}
