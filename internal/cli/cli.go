@@ -161,20 +161,25 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		defer cancel()
 		client := o.client()
 		if !run {
-			r, err := client.PlanTask(ctx, request(o, &skyv1.PlanTaskRequest{Task: task}))
+			r, err := o.planTask(ctx, client, task)
 			if err != nil {
 				return err
 			}
 			if o.json {
-				return writeJSON(cmd.OutOrStdout(), r.Msg)
+				return writeJSON(cmd.OutOrStdout(), r)
 			}
-			if _, err := fmt.Fprintln(cmd.OutOrStdout(), r.Msg.Target); err != nil {
+			if _, err := fmt.Fprintln(cmd.OutOrStdout(), r.Target); err != nil {
 				return err
 			}
-			for _, r := range r.Msg.Rejections {
+			for _, r := range r.Rejections {
 				fmt.Fprintf(cmd.ErrOrStderr(), "%s: %s\n", r.Target, r.Reason)
 			}
 			return nil
+		}
+		if len(taskCapabilities(task)) != 0 {
+			if _, err := o.planTask(ctx, client, task); err != nil {
+				return err
+			}
 		}
 		if id == "" {
 			var b [16]byte
@@ -345,6 +350,10 @@ type taskFile struct {
 	AcceleratorCount int32             `yaml:"accelerator_count"`
 	Target           string            `yaml:"target"`
 	TimeoutSeconds   int64             `yaml:"timeout_seconds"`
+	CPULimitMillis   int64             `yaml:"cpu_limit_millis"`
+	MemoryLimitBytes int64             `yaml:"memory_limit_bytes"`
+	TargetLabels     map[string]string `yaml:"target_labels"`
+	NodeSelector     map[string]string `yaml:"node_selector"`
 }
 
 func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
@@ -380,5 +389,5 @@ func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
 	if len(f.Argv) == 0 {
 		return nil, errors.New("task argv must not be empty")
 	}
-	return &skyv1.Task{Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds}, nil
+	return &skyv1.Task{Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
 }

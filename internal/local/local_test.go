@@ -398,3 +398,40 @@ func TestLogRanges(t *testing.T) {
 		t.Fatalf("read at end = %+v, %v", chunk, err)
 	}
 }
+
+func TestUnsupportedExtensions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		change func(*backend.Task)
+	}{
+		{"cpu limit", func(t *backend.Task) { t.CPULimitMillis = 100 }},
+		{"memory limit", func(t *backend.Task) { t.MemoryLimitBytes = 1024 }},
+		{"negative limit", func(t *backend.Task) { t.CPULimitMillis = -1 }},
+		{"node selector", func(t *backend.Task) { t.NodeSelector = map[string]string{"zone": "west"} }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := newBackend(t)
+			input := task("success")
+			tc.change(&input)
+			if err := b.Check(input); err == nil {
+				t.Fatal("unsupported requirement accepted")
+			}
+			if err := b.Start(context.Background(), "0123456789abcdef0123456789abcdef", input); err == nil {
+				t.Fatal("unsupported requirement started")
+			}
+			entries, err := os.ReadDir(b.directory)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("start created output: %v, %v", entries, err)
+			}
+			if len(b.jobs) != 0 {
+				t.Fatal("start created execution")
+			}
+		})
+	}
+	b := newBackend(t)
+	input := task("success")
+	input.TargetLabels = map[string]string{"pool": "batch"}
+	if err := b.Check(input); err != nil {
+		t.Fatalf("core placement labels rejected locally: %v", err)
+	}
+}

@@ -11,7 +11,6 @@ import (
 	"sort"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
@@ -40,19 +39,21 @@ type Control struct {
 	auditFailed atomic.Bool
 	auditLost   atomic.Bool
 	access      chan pendingAccess
+	started     atomic.Bool
 }
 
 // New validates targets and orders selection by name.
 func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Control, error) {
-	if s == nil || len(targets) == 0 || engine == nil {
+	if s == nil || len(targets) == 0 || len(targets) > 32 || engine == nil {
 		return nil, fmt.Errorf("store, targets and authentication required")
 	}
 	targets = append([]backend.Target(nil), targets...)
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
 	for i, t := range targets {
-		if t.Name == "" || t.Backend == nil || (i > 0 && targets[i-1].Name == t.Name) {
-			return nil, fmt.Errorf("invalid target %q", t.Name)
+		if t.Name == "" || t.Backend == nil || (i > 0 && targets[i-1].Name == t.Name) || !validText(t.Binding, 256, false) || !validLabels(t.Labels, 32) || !validAcceleratorNames(t.AcceleratorNames) {
+			return nil, fmt.Errorf("invalid target configuration")
 		}
+		targets[i] = cloneTarget(t)
 	}
 	return &Control{store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess)}, nil
 }
@@ -81,7 +82,15 @@ func Validate(t backend.Task) error {
 	if (t.Accelerator == "") != (t.AcceleratorCount == 0) {
 		return fmt.Errorf("%w: accelerator name and positive count required together", ErrInvalid)
 	}
-	data, err := json.Marshal(t)
+	if t.CPULimitMillis < 0 || t.MemoryLimitBytes < 0 ||
+		(t.CPULimitMillis != 0 && (t.CPUMillis <= 0 || t.CPULimitMillis < t.CPUMillis)) ||
+		(t.MemoryLimitBytes != 0 && (t.MemoryBytes <= 0 || t.MemoryLimitBytes < t.MemoryBytes)) {
+		return fmt.Errorf("%w: resource limit requires a positive request no greater than the limit", ErrInvalid)
+	}
+	if !validLabels(t.TargetLabels, 16) || !validLabels(t.NodeSelector, 16) {
+		return fmt.Errorf("%w: invalid placement labels or selectors", ErrInvalid)
+	}
+	data, err := backend.TaskBytes(t)
 	if err != nil {
 		return err
 	}
@@ -96,7 +105,11 @@ func (c *Control) Targets(actor auth.Actor) ([]backend.Target, error) {
 	if _, err := c.engine.Check(actor, auth.Read); err != nil {
 		return nil, err
 	}
-	return append([]backend.Target(nil), c.targets...), nil
+	targets := make([]backend.Target, len(c.targets))
+	for i, t := range c.targets {
+		targets[i] = cloneTarget(t)
+	}
+	return targets, nil
 }
 
 // Plan selects the first eligible target without promising available capacity.
@@ -116,8 +129,14 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 		var err error
 		if t.Target != "" && t.Target != target.Name {
 			err = fmt.Errorf("target constraint differs")
+		} else if !matchesLabels(target.Labels, t.TargetLabels) {
+			err = fmt.Errorf("target labels differ")
+		} else if (t.CPULimitMillis != 0 || t.MemoryLimitBytes != 0) && !target.SupportsResourceLimits {
+			err = fmt.Errorf("resource limits are unsupported")
+		} else if len(t.NodeSelector) != 0 && !target.SupportsNodeSelector {
+			err = fmt.Errorf("node selectors are unsupported")
 		} else {
-			err = target.Backend.Check(t)
+			err = target.Backend.Check(cloneTask(t))
 		}
 		if err != nil {
 			rejected = append(rejected, Rejection{target.Name, err.Error()})
@@ -161,7 +180,8 @@ func (c *Control) Submit(actor auth.Actor, requestID string, t backend.Task) (ba
 	if err != nil {
 		return backend.Job{}, err
 	}
-	return c.store.Submit(actor, requestID, t, target)
+	configured, _ := c.target(target)
+	return c.store.Submit(actor, requestID, t, target, configured.Binding)
 }
 
 // Get returns one accepted job.
@@ -267,13 +287,13 @@ func (c *Control) Cancel(actor auth.Actor, id string) (backend.Job, error) {
 	})
 }
 
-func (c *Control) target(name string) backend.Backend {
+func (c *Control) target(name string) (backend.Target, bool) {
 	for _, t := range c.targets {
 		if t.Name == name {
-			return t.Backend
+			return t, true
 		}
 	}
-	return nil
+	return backend.Target{}, false
 }
 
 // Logs reads a bounded segment; loss and truncation are explicit.
@@ -301,11 +321,11 @@ func (c *Control) Logs(ctx context.Context, actor auth.Actor, id string, offset 
 		}
 		return backend.LogChunk{}, nil
 	}
-	b := c.target(j.Target)
-	if b == nil {
+	target, reason := c.boundTarget(j)
+	if reason != "" {
 		return backend.LogChunk{}, ErrUnavailable
 	}
-	chunk, err := b.Logs(ctx, backend.Reference{ID: j.ID, Task: j.Task}, offset, backend.MaxChunkBytes)
+	chunk, err := target.Backend.Logs(ctx, reference(j), offset, backend.MaxChunkBytes)
 	if err == nil {
 		return chunk, nil
 	}
@@ -324,114 +344,3 @@ func (c *Control) Logs(ctx context.Context, actor auth.Actor, id string, offset 
 
 // Healthy reports whether durable reconciliation has encountered a store error.
 func (c *Control) Healthy() bool { return !c.failed.Load() }
-
-// Run reconciles serially until canceled. Only one Run may be active.
-func (c *Control) Run(ctx context.Context) error {
-	tick := time.NewTicker(100 * time.Millisecond)
-	defer tick.Stop()
-	for {
-		if err := c.reconcile(ctx); err != nil {
-			c.failed.Store(true)
-			return err
-		}
-		c.drainAccess(ctx)
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-tick.C:
-		}
-	}
-}
-func (c *Control) reconcile(ctx context.Context) error {
-	jobs, err := c.store.Active()
-	if err != nil {
-		return err
-	}
-	active := 0
-	for _, j := range jobs {
-		if j.Status.State == backend.Starting || j.Status.State == backend.Running {
-			active++
-		}
-	}
-	for _, j := range jobs {
-		if ctx.Err() != nil {
-			return nil
-		}
-		// Re-read to include cancellation persisted since the active snapshot.
-		j, err = c.store.Get(j.ID)
-		if err != nil {
-			return err
-		}
-		if j.Status.State == backend.Queued && j.CancelRequested {
-			_, err = c.store.Update(j.ID, func(current *backend.Job) error {
-				current.Status = backend.Status{State: backend.Canceled, Reason: "canceled before execution"}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-			continue
-		}
-		b := c.target(j.Target)
-		if b == nil {
-			if j.Status.Reason != "target is not configured" {
-				_, err = c.store.Update(j.ID, func(current *backend.Job) error {
-					current.Status.Reason = "target is not configured"
-					return nil
-				})
-				if err != nil {
-					return err
-				}
-			}
-			continue
-		}
-		if j.Status.State == backend.Queued {
-			if active >= 32 {
-				continue
-			}
-			active++
-			j, err = c.store.Update(j.ID, func(current *backend.Job) error {
-				if current.CancelRequested {
-					current.Status = backend.Status{State: backend.Canceled, Reason: "canceled before execution"}
-				} else {
-					current.Status = backend.Status{State: backend.Starting}
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-			if j.Status.State.Terminal() {
-				continue
-			}
-			call, cancel := context.WithTimeout(ctx, 10*time.Second)
-			// Ambiguous start errors are resolved by Observe, never by a second Start.
-			_ = b.Start(call, j.ID, j.Task)
-			cancel()
-		}
-		call, cancel := context.WithTimeout(ctx, 10*time.Second)
-		if j.CancelRequested {
-			_ = b.Cancel(call, backend.Reference{ID: j.ID, Task: j.Task})
-		}
-		status, observeErr := b.Observe(call, backend.Reference{ID: j.ID, Task: j.Task})
-		cancel()
-		if errors.Is(observeErr, backend.ErrIdentityMismatch) {
-			status = backend.Status{State: backend.Unknown, Reason: "execution identity mismatch; conflicting workload left untouched"}
-		} else if observeErr != nil {
-			continue
-		}
-		if status.State == "" {
-			continue
-		}
-		_, err = c.store.Update(j.ID, func(current *backend.Job) error {
-			if !current.Status.State.Terminal() {
-				current.Status = status
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}

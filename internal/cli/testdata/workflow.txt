@@ -50,3 +50,26 @@ env SKYGO_EXIT_CODE
 stdout '^SKYGO_EXIT_CODE=2\n$'
 skygo jobs logs $HOLD
 stdout '^workload is running\n$'
+
+# Unsupported local requirements fail during planning, before acceptance.
+skygo info --target local --require target-labels-v1
+stdout 'target-labels-v1'
+! skygo run -f limits.yaml --request-id no-limits
+stderr 'failed_precondition'
+! stdout .
+! skygo run -f selector.yaml --request-id no-selector
+stderr 'failed_precondition'
+! stdout .
+! skygo plan -f labels.yaml
+stderr 'failed_precondition'
+! stdout .
+-- limits.yaml --
+argv: [unused]
+cpu_millis: 100
+cpu_limit_millis: 100
+-- selector.yaml --
+argv: [unused]
+node_selector: {zone: west}
+-- labels.yaml --
+argv: [unused]
+target_labels: {pool: absent}

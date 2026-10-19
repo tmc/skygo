@@ -67,7 +67,7 @@ func newScopedControl(t *testing.T) scopedControl {
 		}
 		actors[id] = a
 	}
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: newExecutor()}}, e)
+	c, err := control.New(s, []backend.Target{{Name: "local", Binding: "test-binding", Kind: "local", Backend: newExecutor()}}, e)
 	if err != nil {
 		t.Fatal(err)
 	}

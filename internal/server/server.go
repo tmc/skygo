@@ -62,13 +62,18 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 	}
 	var targets []backend.Target
+	var localBinding string
 	if !cfg.DisableLocal {
 		localBackend, err := local.New(filepath.Join(cfg.DataDir, "logs"))
 		if err != nil {
 			return err
 		}
 		defer func() { result = errors.Join(result, localBackend.Close()) }()
-		targets = append(targets, backend.Target{Name: "local", Kind: "local", Backend: localBackend})
+		localBinding, err = backend.LocalBinding(s.Owner())
+		if err != nil {
+			return fmt.Errorf("local binding: %w", err)
+		}
+		targets = append(targets, backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding})
 	}
 	if cfg.Targets != nil {
 		extra, err := cfg.Targets(s.Owner())
@@ -80,6 +85,12 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	c, err := control.New(s, targets, engine)
 	if err != nil {
 		return err
+	}
+	// Only the built-in backend constructed above authorizes legacy local binding.
+	if localBinding != "" {
+		if err := s.BindLegacyLocal(localBinding); err != nil {
+			return fmt.Errorf("bind legacy local jobs: %w", err)
+		}
 	}
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {

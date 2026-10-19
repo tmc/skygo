@@ -22,4 +22,8 @@
 // Open migrates supported legacy state atomically and refuses newer schemas
 // before writes. Rollback requires the matching binary and its old snapshot;
 // unfenced older binaries must never open a newer database.
+// Format upgrades do not activate scoped authentication or reset admission
+// counters. Target bindings are immutable server metadata outside task equality.
+// Unbound historical remote work requires separate operator recovery; it is
+// never assigned a route from a current target alias.
 package store

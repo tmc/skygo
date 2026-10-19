@@ -295,7 +295,7 @@ func fencedRefusal(t *testing.T) script.Cmd {
 			return nil, errors.New("S01 refusal modified scoped state")
 		}
 		stateHash := sha256.Sum256(before)
-		s.Logf("S01 binary SHA256 %s refused schema2; database SHA256 %x unchanged (%d bytes)\n", want, stateHash, len(before))
+		s.Logf("S01 binary SHA256 %s refused current scoped schema; database SHA256 %x unchanged (%d bytes)\n", want, stateHash, len(before))
 		return nil, nil
 	})
 }

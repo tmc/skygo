@@ -1,5 +1,5 @@
 # Actual pinned 9135253 daemon: discovery is absent, legacy work still executes.
-# info is read-only; this proves its capability refusal, not future run gating.
+# New placement fields are ignored by its Plan; the CLI must fence submission.
 server start
 legacy targets list
 stdout 'local +local'
@@ -11,6 +11,31 @@ stderr 'unimplemented: server does not support capability discovery'
 calls /skygo.v1.ControlService/GetServerInfo 1
 calls /skygo.v1.ControlService/SubmitJob 0
 ! exists marker
+legacy jobs list
+stdout '^ID +TARGET +STATE\n$'
+! stderr .
+
+# The old Plan ignores selectors and target labels. Each current command must
+# reach missing discovery, produce no success output and never submit work.
+! skygo --json plan -f selector.yaml
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+! skygo --json run -f selector.yaml --request-id refused-selector
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+! skygo --json plan -f labels.yaml
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+! skygo --json run -f labels.yaml --request-id refused-labels
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+calls /skygo.v1.ControlService/PlanTask 4
+calls /skygo.v1.ControlService/GetServerInfo 5
+calls /skygo.v1.ControlService/SubmitJob 0
+! exists marker
+legacy --json jobs list
+! stdout '"id"'
+! stderr .
 legacy jobs list
 stdout '^ID +TARGET +STATE\n$'
 ! stderr .
@@ -37,3 +62,10 @@ skygo jobs logs $JOB
 stdout '^legacy-compatible workload\n$'
 server stop
 ! stderr .
+
+-- selector.yaml --
+argv: [unused]
+node_selector: {zone: west}
+-- labels.yaml --
+argv: [unused]
+target_labels: {pool: batch}

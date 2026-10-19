@@ -1,0 +1,27 @@
+version: 1
+targets:
+  - name: cpu-a
+    kubeconfig: ./kubeconfig
+    context: disposable
+    namespace: skygo-a
+    labels:
+      location: lab
+    resources:
+      max_cpu_millis: 2000
+      max_memory_bytes: 2147483648
+  - name: gpu-b
+    in_cluster: true
+    namespace: skygo-b
+    labels:
+      location: lab
+    resources:
+      max_accelerators: 1
+      node_selectors:
+        skygo.test/model: [a100]
+      accelerators:
+        nvidia:
+          resource_name: nvidia.com/gpu
+        A100:
+          resource_name: nvidia.com/gpu
+          required_node_selector:
+            skygo.test/model: a100

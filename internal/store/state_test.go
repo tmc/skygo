@@ -34,11 +34,11 @@ func TestBackupRestorePreservesOwnerRequestAndSequence(t *testing.T) {
 	if s.Owner() != "legacy-owner" {
 		t.Fatal("owner changed")
 	}
-	got, err := s.Submit(testActor(), "original-request", want.Task, "new-target")
+	got, err := s.Submit(testActor(), "original-request", want.Task, "new-target", "test-binding")
 	if err != nil || got.ID != want.ID || got.Sequence != 1 || got.Target != want.Target {
 		t.Fatalf("restored retry: %+v %v", got, err)
 	}
-	next, err := s.Submit(testActor(), "next", backend.Task{Argv: []string{"next"}}, "local")
+	next, err := s.Submit(testActor(), "next", backend.Task{Argv: []string{"next"}}, "local", "test-binding")
 	if err != nil || next.Sequence != 2 {
 		t.Fatalf("sequence not preserved: %+v %v", next, err)
 	}
@@ -121,7 +121,7 @@ func TestActiveSnapshotPreservesIntent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	j, err := s.Submit(testActor(), "active", backend.Task{Argv: []string{"work"}}, "local")
+	j, err := s.Submit(testActor(), "active", backend.Task{Argv: []string{"work"}}, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -195,3 +195,45 @@ Remove the disposable cluster when finished:
 ```sh
 kind delete cluster --name skygo-test
 ```
+
+
+## Named target and resource checks
+
+Use only a disposable Kubernetes context and namespace for these checks. Build
+both binaries as described in the README. Prepare a version1 targets file from
+`integrations/kubernetes/examples/targets.yaml`, keeping a CPU target named
+`cpu-a` with public label `location: lab`; set its explicit kubeconfig/context
+and disposable namespace. Remove targets that you cannot test. Start:
+
+```sh
+./bin/skygo-kubernetes server --data-dir ./state-targets --disable-local --targets ./targets.yaml
+./bin/skygo info --target cpu-a --require resource-limits-v1,target-labels-v1
+```
+
+The server should advertise only the configured names and their declared
+metadata. Conflicting `--targets` and `--namespace`, `--context` or `--kubeconfig`
+flags must fail before starting the server. An invalid configuration must also
+fail before startup; no current-context fallback is permitted for named targets.
+
+Copy the Kubernetes task example and add a positive CPU/memory request with a
+limit at least that request, `target: cpu-a`, and `target_labels: {location: lab}`.
+Run `plan -f FILE`, then `run -f FILE --request-id limits-1 --wait`. Inspect the
+actual Job/Pod in the disposable namespace: requests and limits must match,
+PodScheduled must be true, and logs and terminal status must come from that Pod.
+A request above the configured maximum, a limit below its request, or a disallowed
+node selector must fail with no accepted job or new native Job. A local
+server must reject resource limits and node selectors before execution.
+
+Stop the server and save a snapshot before changing configuration. Change the
+accepted target's namespace or policy, restart with the same state and confirm
+that the old job is held and its backend logs are unavailable; no operation may
+reach the replacement route. Restore the exact configuration before attempting
+further observation or cancellation. Reusing an accepted request through the API
+must retain its original ID/task/binding. CLI capability preflight can refuse a
+retry against changed policy; editing the task is not a safe retry mechanism.
+Do not run an older binary against the upgraded database: rollback requires the
+stopped pre-upgrade snapshot and external-work reconciliation.
+
+These manual checks do not establish production capacity, GPU model scheduling,
+HA or workload isolation. Native receipts must identify the exact binary,
+configuration, Job/Pod UIDs and unrun cases separately from unit-test results.

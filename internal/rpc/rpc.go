@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io/fs"
+	"maps"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -86,10 +88,10 @@ func task(t *v1.Task) backend.Task {
 	if t == nil {
 		return backend.Task{}
 	}
-	return backend.Task{Argv: append([]string(nil), t.Argv...), Env: t.Env, Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds}
+	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector)}
 }
 func wireTask(t backend.Task) *v1.Task {
-	return &v1.Task{Argv: t.Argv, Env: t.Env, Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds}
+	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector)}
 }
 
 var states = map[backend.State]v1.JobState{backend.Queued: v1.JobState_JOB_STATE_QUEUED, backend.Starting: v1.JobState_JOB_STATE_STARTING, backend.Running: v1.JobState_JOB_STATE_RUNNING, backend.Succeeded: v1.JobState_JOB_STATE_SUCCEEDED, backend.Failed: v1.JobState_JOB_STATE_FAILED, backend.Canceled: v1.JobState_JOB_STATE_CANCELED, backend.Unknown: v1.JobState_JOB_STATE_UNKNOWN}
@@ -192,10 +194,17 @@ func (h *handler) ListTargets(ctx context.Context, r *connect.Request[v1.ListTar
 	return connect.NewResponse(out), nil
 }
 
-// All current backends implement finite jobs. New target-specific semantics must
-// be advertised and checked by that integration when they are introduced.
+// wireTarget reports configured support, not available capacity.
 func wireTarget(t backend.Target) *v1.Target {
-	return &v1.Target{Name: t.Name, Kind: t.Kind, Capabilities: []v1.Capability{v1.Capability_CAPABILITY_FINITE_JOBS_V1}}
+	capabilities := []v1.Capability{v1.Capability_CAPABILITY_FINITE_JOBS_V1}
+	if t.SupportsResourceLimits {
+		capabilities = append(capabilities, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1)
+	}
+	if t.SupportsNodeSelector {
+		capabilities = append(capabilities, v1.Capability_CAPABILITY_NODE_SELECTOR_V1)
+	}
+	capabilities = append(capabilities, v1.Capability_CAPABILITY_TARGET_LABELS_V1)
+	return &v1.Target{Name: t.Name, Kind: t.Kind, Capabilities: capabilities, Labels: maps.Clone(t.Labels), AcceleratorNames: slices.Clone(t.AcceleratorNames)}
 }
 
 func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {

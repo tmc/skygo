@@ -18,6 +18,10 @@ type Task struct {
 	AcceleratorCount int32             `json:"accelerator_count,omitempty" yaml:"accelerator_count,omitempty"`
 	Target           string            `json:"target,omitempty" yaml:"target,omitempty"`
 	TimeoutSeconds   int64             `json:"timeout_seconds,omitempty" yaml:"timeout_seconds,omitempty"`
+	CPULimitMillis   int64             `json:"cpu_limit_millis,omitempty" yaml:"cpu_limit_millis,omitempty"`
+	MemoryLimitBytes int64             `json:"memory_limit_bytes,omitempty" yaml:"memory_limit_bytes,omitempty"`
+	TargetLabels     map[string]string `json:"target_labels,omitempty" yaml:"target_labels,omitempty"`
+	NodeSelector     map[string]string `json:"node_selector,omitempty" yaml:"node_selector,omitempty"`
 }
 
 // State records an observed execution state. Unknown does not imply termination.
@@ -43,7 +47,7 @@ type Status struct {
 	ExitCode *int32 `json:"exit_code,omitempty"`
 }
 
-// Job is a durable accepted task. Task and Target never change.
+// Job is a durable accepted task. Task, Target and TargetBinding never change.
 type Job struct {
 	ID              string    `json:"id"`
 	Task            Task      `json:"task"`
@@ -53,6 +57,7 @@ type Job struct {
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
 	Sequence        uint64    `json:"sequence"`
+	TargetBinding   string    `json:"target_binding,omitempty"`
 }
 
 // LogChunk is a bounded segment of the retained combined output prefix.
@@ -70,8 +75,9 @@ const MaxChunkBytes = 64 << 10
 // Reference binds execution identity to the immutable accepted task.
 // Task lets recovering backends verify execution against durable state.
 type Reference struct {
-	ID   string
-	Task Task
+	ID      string
+	Task    Task
+	Binding string
 }
 
 // ErrIdentityMismatch means an execution does not match its durable reference.
@@ -94,7 +100,12 @@ type Backend interface {
 
 // Target binds a configured name and kind to an executor.
 type Target struct {
-	Name    string
-	Kind    string
-	Backend Backend
+	Name                   string
+	Kind                   string
+	Backend                Backend
+	Binding                string
+	Labels                 map[string]string
+	AcceleratorNames       []string
+	SupportsResourceLimits bool
+	SupportsNodeSelector   bool
 }

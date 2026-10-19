@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -10,7 +11,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 2
+const schemaVersion = 3
 
 var schemaKey = []byte("schema_version")
 
@@ -28,7 +29,7 @@ func inspect(tx *bolt.Tx) error {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != schemaVersion {
+			if n != 1 && n != 2 && n != schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
@@ -51,6 +52,9 @@ func inspect(tx *bolt.Tx) error {
 	}
 	if data := m.Get(taskBytesKey); data != nil && len(data) != 8 {
 		return errors.New("invalid task byte counter")
+	}
+	if bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) && m.Get(taskBytesKey) == nil {
+		return errors.New("missing task byte counter")
 	}
 	if len(m.Get([]byte("owner"))) == 0 && tx.Bucket(jobsBucket).Stats().KeyN != 0 {
 		return errors.New("missing installation owner")
@@ -85,7 +89,7 @@ func initialize(tx *bolt.Tx, owner string) error {
 			if err := json.Unmarshal(data, &j); err != nil {
 				return err
 			}
-			task, err := json.Marshal(j.Task)
+			task, err := backend.TaskBytes(j.Task)
 			if err != nil {
 				return err
 			}
@@ -106,10 +110,12 @@ func initialize(tx *bolt.Tx, owner string) error {
 			return err
 		}
 	}
-	if m.Get(schemaKey) == nil {
-		return m.Put(schemaKey, sequenceKey(1))
+	if !bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) {
+		if err := m.Put(schemaKey, sequenceKey(schemaVersion)); err != nil {
+			return err
+		}
 	}
-	return nil
+	return validateSnapshot(tx)
 }
 
 // validateSnapshot checks references before publishing a restore. It does not
@@ -132,6 +138,9 @@ func validateSnapshot(tx *bolt.Tx) error {
 		}
 		if string(id) != j.ID || j.Sequence == 0 || j.Sequence > sequence.Sequence() || string(sequence.Get(sequenceKey(j.Sequence))) != j.ID {
 			return errors.New("invalid snapshot job sequence")
+		}
+		if err := validateRouting(tx, j); err != nil {
+			return err
 		}
 		return nil
 	}); err != nil {

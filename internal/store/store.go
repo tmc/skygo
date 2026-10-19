@@ -122,11 +122,11 @@ func lookup(tx *bolt.Tx, actor auth.Actor, requestID string, task backend.Task) 
 	if err != nil {
 		return j, true, err
 	}
-	want, err := json.Marshal(task)
+	want, err := backend.TaskBytes(task)
 	if err != nil {
 		return j, true, err
 	}
-	have, err := json.Marshal(j.Task)
+	have, err := backend.TaskBytes(j.Task)
 	if err != nil {
 		return j, true, err
 	}
@@ -147,8 +147,9 @@ func (s *Store) Lookup(actor auth.Actor, requestID string, task backend.Task) (j
 }
 
 // Submit atomically binds requestID within the actor's namespace to a job. Repeating an
-// identical request returns the original job, including its original target.
-func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, target string) (j backend.Job, err error) {
+// identical request returns the original job, including its target and binding,
+// before validating the newly proposed route.
+func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, target, binding string) (j backend.Job, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
 		return
 	}
@@ -169,7 +170,10 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 			j = existing
 			return nil
 		}
-		encodedTask, e := json.Marshal(task)
+		if target == "" || !validBinding(binding) {
+			return errors.New("new job requires a target and valid binding")
+		}
+		encodedTask, e := backend.TaskBytes(task)
 		if e != nil {
 			return e
 		}
@@ -195,7 +199,7 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 			return e
 		}
 		now := time.Now().UTC()
-		accepted := backend.Job{ID: id, Task: task, Target: target, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
+		accepted := backend.Job{ID: id, Task: task, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
 		data, e = json.Marshal(accepted)
 		if e != nil {
 			return e
@@ -290,7 +294,7 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	if e != nil {
 		return j, e
 	}
-	originalTask, e := json.Marshal(before.Task)
+	originalTask, e := backend.TaskBytes(before.Task)
 	if e != nil {
 		return j, e
 	}
@@ -298,11 +302,11 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	if e = fn(&j); e != nil {
 		return j, e
 	}
-	changedTask, e := json.Marshal(j.Task)
+	changedTask, e := backend.TaskBytes(j.Task)
 	if e != nil {
 		return j, e
 	}
-	if j.ID != before.ID || j.Target != before.Target || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
+	if j.ID != before.ID || j.Target != before.Target || j.TargetBinding != before.TargetBinding || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
 		return j, errors.New("cannot change immutable job fields")
 	}
 	j.UpdatedAt = time.Now().UTC()

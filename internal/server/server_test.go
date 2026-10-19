@@ -42,6 +42,11 @@ type running struct {
 
 func start(t *testing.T, dir, token string) *running {
 	t.Helper()
+	return startConfig(t, server.Config{DataDir: dir, Token: token})
+}
+
+func startConfig(t *testing.T, cfg server.Config) *running {
+	t.Helper()
 	// Run does not expose its listener. Reserve and release a loopback port;
 	// startup below detects the small race with another process binding that port.
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -55,7 +60,8 @@ func start(t *testing.T, dir, token string) *running {
 	ctx, cancel := context.WithCancel(context.Background())
 	r := &running{url: "http://" + address, cancel: cancel, done: make(chan struct{})}
 	go func() {
-		r.err = server.Run(ctx, server.Config{Listen: address, DataDir: dir, Token: token})
+		cfg.Listen = address
+		r.err = server.Run(ctx, cfg)
 		close(r.done)
 	}()
 	t.Cleanup(func() {
@@ -257,8 +263,13 @@ func TestShutdownWithWorkloadAndStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Get(id); err != nil {
+	stored, err := s.Get(id)
+	if err != nil {
 		t.Fatal(err)
+	}
+	binding, err := backend.LocalBinding(s.Owner())
+	if err != nil || stored.TargetBinding != binding {
+		t.Fatalf("local binding = %q; want %q, %v", stored.TargetBinding, binding, err)
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)

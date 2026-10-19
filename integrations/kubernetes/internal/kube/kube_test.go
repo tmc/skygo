@@ -25,7 +25,7 @@ const testID = "0123456789abcdef0123456789abcdef"
 func TestJobLifecycle(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
-	b, err := New(client, "workloads", "test")
+	b, err := testBackend(client, "workloads", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestJobLifecycle(t *testing.T) {
 		t.Fatal("adopted different task")
 	}
 	task = originalTask
-	status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	status, err := b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Starting {
 		t.Fatalf("observe: %+v %v", status, err)
 	}
@@ -66,19 +66,19 @@ func TestJobLifecycle(t *testing.T) {
 	if _, err = client.BatchV1().Jobs("workloads").UpdateStatus(ctx, j, metav1.UpdateOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	status, err = b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Succeeded || status.ExitCode == nil || *status.ExitCode != 0 {
 		t.Fatalf("complete: %+v %v", status, err)
 	}
-	if err = b.Cancel(ctx, backend.Reference{ID: testID, Task: task}); err != nil {
+	if err = b.Cancel(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	status, err = b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Succeeded {
 		t.Fatalf("cancel completed: %+v %v", status, err)
 	}
-	restarted, _ := New(client, "workloads", "test")
-	status, err = restarted.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	restarted, _ := testBackend(client, "workloads", "test")
+	status, err = restarted.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Succeeded {
 		t.Fatalf("restart completed: %+v %v", status, err)
 	}
@@ -87,24 +87,24 @@ func TestJobLifecycle(t *testing.T) {
 	if err = b.Start(ctx, activeID, task); err != nil {
 		t.Fatal(err)
 	}
-	if err = b.Cancel(ctx, backend.Reference{ID: activeID, Task: task}); err != nil {
+	if err = b.Cancel(ctx, backend.Reference{Binding: testBinding, ID: activeID, Task: task}); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		status, err = b.Observe(ctx, backend.Reference{ID: activeID, Task: task})
+		status, err = b.Observe(ctx, backend.Reference{Binding: testBinding, ID: activeID, Task: task})
 		if err != nil || status.State != backend.Canceled {
 			t.Fatalf("cancel: %+v %v", status, err)
 		}
 	}
-	status, err = restarted.Observe(ctx, backend.Reference{ID: activeID, Task: task})
+	status, err = restarted.Observe(ctx, backend.Reference{Binding: testBinding, ID: activeID, Task: task})
 	if err != nil || status.State != backend.Unknown {
 		t.Fatalf("restart missing: %+v %v", status, err)
 	}
-	if err = restarted.Cancel(ctx, backend.Reference{ID: activeID, Task: task}); err != nil {
+	if err = restarted.Cancel(ctx, backend.Reference{Binding: testBinding, ID: activeID, Task: task}); err != nil {
 		t.Fatal(err)
 	}
-	status, err = restarted.Observe(ctx, backend.Reference{ID: activeID, Task: task})
-	if err != nil || status.State != backend.Canceled {
+	status, err = restarted.Observe(ctx, backend.Reference{Binding: testBinding, ID: activeID, Task: task})
+	if err != nil || status.State != backend.Unknown {
 		t.Fatalf("replay cancel: %+v %v", status, err)
 	}
 
@@ -113,17 +113,25 @@ func TestJobLifecycle(t *testing.T) {
 func TestOwnershipAndFailures(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
-	b, _ := New(client, "workloads", "test")
+	b, _ := testBackend(client, "workloads", "test")
 	task := backend.Task{Argv: []string{"true"}, Image: "busybox"}
 	if err := b.Start(ctx, testID, task); err != nil {
 		t.Fatal(err)
 	}
-	other, _ := New(client, "workloads", "other")
+	other, _ := testBackend(client, "workloads", "other")
 	for name, run := range map[string]func() error{
-		"start":   func() error { return other.Start(ctx, testID, task) },
-		"observe": func() error { _, err := other.Observe(ctx, backend.Reference{ID: testID, Task: task}); return err },
-		"cancel":  func() error { return other.Cancel(ctx, backend.Reference{ID: testID, Task: task}) },
-		"logs":    func() error { _, err := other.Logs(ctx, backend.Reference{ID: testID, Task: task}, 0, 10); return err },
+		"start": func() error { return other.Start(ctx, testID, task) },
+		"observe": func() error {
+			_, err := other.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
+			return err
+		},
+		"cancel": func() error {
+			return other.Cancel(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
+		},
+		"logs": func() error {
+			_, err := other.Logs(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task}, 0, 10)
+			return err
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if err := run(); err == nil || !strings.Contains(err.Error(), "ownership") {
@@ -138,18 +146,18 @@ func TestOwnershipAndFailures(t *testing.T) {
 		}
 		return false, nil, nil
 	})
-	if _, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task}); err == nil {
+	if _, err := b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task}); err == nil {
 		t.Fatal("outage was treated as terminal state")
 	}
 	interrupted = false
-	status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	status, err := b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Starting {
 		t.Fatalf("observe after API recovery: %+v %v", status, err)
 	}
 }
 
 func TestCheck(t *testing.T) {
-	b, _ := New(fake.NewSimpleClientset(), "workloads", "test")
+	b, _ := testBackend(fake.NewSimpleClientset(), "workloads", "test")
 	for _, test := range []struct {
 		name string
 		task backend.Task
@@ -178,7 +186,7 @@ func TestCheck(t *testing.T) {
 func TestPodObservation(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
-	b, _ := New(client, "workloads", "test")
+	b, _ := testBackend(client, "workloads", "test")
 	task := backend.Task{Argv: []string{"true"}, Image: "busybox"}
 	if err := b.Start(ctx, testID, task); err != nil {
 		t.Fatal(err)
@@ -189,19 +197,19 @@ func TestPodObservation(t *testing.T) {
 	controller := true
 	p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Labels: j.Labels, OwnerReferences: []metav1.OwnerReference{{UID: j.UID, Name: j.Name, Kind: "Job", Controller: &controller}}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodScheduled, Status: corev1.ConditionFalse, Reason: "Unschedulable"}}}}
 	client.CoreV1().Pods("workloads").Create(ctx, p, metav1.CreateOptions{})
-	status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	status, err := b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Starting || !strings.Contains(status.Reason, "Unschedulable") {
 		t.Fatalf("pending: %+v %v", status, err)
 	}
 	p.Status.Phase = corev1.PodRunning
 	client.CoreV1().Pods("workloads").UpdateStatus(ctx, p, metav1.UpdateOptions{})
-	status, err = b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+	status, err = b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 	if err != nil || status.State != backend.Running {
 		t.Fatalf("running: %+v %v", status, err)
 	}
 	p.Name = "second"
 	client.CoreV1().Pods("workloads").Create(ctx, p, metav1.CreateOptions{})
-	if _, err = b.Logs(ctx, backend.Reference{ID: testID, Task: task}, 0, 10); err == nil || !strings.Contains(err.Error(), "ambiguous") {
+	if _, err = b.Logs(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task}, 0, 10); err == nil || !strings.Contains(err.Error(), "ambiguous") {
 		t.Fatalf("multiple pods: %v", err)
 	}
 }
@@ -209,7 +217,7 @@ func TestPodObservation(t *testing.T) {
 func TestDeletedJobIsNotRecreated(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
-	b, _ := New(client, "workloads", "test")
+	b, _ := testBackend(client, "workloads", "test")
 	task := backend.Task{Argv: []string{"true"}, Image: "busybox"}
 	if err := b.Start(ctx, testID, task); err != nil {
 		t.Fatal(err)
@@ -219,7 +227,7 @@ func TestDeletedJobIsNotRecreated(t *testing.T) {
 	}
 	client.ClearActions()
 	for i := 0; i < 2; i++ {
-		status, err := b.Observe(ctx, backend.Reference{ID: testID, Task: task})
+		status, err := b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
 		if err != nil || status.State != backend.Unknown {
 			t.Fatalf("observe: %+v %v", status, err)
 		}
@@ -250,7 +258,7 @@ func TestCompletedBeforeObservedCancellation(t *testing.T) {
 			}
 			defer s.Close()
 			client := fake.NewSimpleClientset()
-			b, err := New(client, "workloads", s.Owner())
+			b, err := testBackend(client, "workloads", s.Owner())
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -259,7 +267,7 @@ func TestCompletedBeforeObservedCancellation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			c, err := control.New(s, []backend.Target{{Name: "kube", Kind: "kubernetes", Backend: b}}, engine)
+			c, err := control.New(s, []backend.Target{{Name: "kube", Kind: "kubernetes", Backend: b, Binding: b.binding}}, engine)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -316,7 +324,7 @@ func TestConflictingCreateIsNotAdopted(t *testing.T) {
 	}
 	defer s.Close()
 	client := fake.NewSimpleClientset()
-	b, err := New(client, "workloads", s.Owner())
+	b, err := testBackend(client, "workloads", s.Owner())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +333,7 @@ func TestConflictingCreateIsNotAdopted(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := control.New(s, []backend.Target{{Name: "kube", Backend: b}}, engine)
+	c, err := control.New(s, []backend.Target{{Name: "kube", Backend: b, Binding: b.binding}}, engine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -361,11 +369,11 @@ func TestConflictingCreateIsNotAdopted(t *testing.T) {
 func TestRestartRejectsMismatchedTask(t *testing.T) {
 	ctx := context.Background()
 	task := backend.Task{Argv: []string{"work"}, Image: "wanted"}
-	ref := backend.Reference{ID: testID, Task: task}
+	ref := backend.Reference{Binding: testBinding, ID: testID, Task: task}
 	for _, annotation := range []string{"", "different"} {
 		t.Run(annotation, func(t *testing.T) {
 			client := fake.NewSimpleClientset()
-			b, _ := New(client, "workloads", "test")
+			b, _ := testBackend(client, "workloads", "test")
 			if err := b.Start(ctx, testID, task); err != nil {
 				t.Fatal(err)
 			}
@@ -377,7 +385,7 @@ func TestRestartRejectsMismatchedTask(t *testing.T) {
 			if _, err := client.BatchV1().Jobs("workloads").Update(ctx, remote, metav1.UpdateOptions{}); err != nil {
 				t.Fatal(err)
 			}
-			recovered, _ := New(client, "workloads", "test")
+			recovered, _ := testBackend(client, "workloads", "test")
 			client.ClearActions()
 			for name, run := range map[string]func() error{
 				"observe": func() error { _, err := recovered.Observe(ctx, ref); return err },
@@ -402,8 +410,8 @@ func TestRestartRejectsMismatchedTask(t *testing.T) {
 func TestMissingPodLogs(t *testing.T) {
 	ctx := context.Background()
 	client := fake.NewSimpleClientset()
-	b, _ := New(client, "workloads", "test")
-	ref := backend.Reference{ID: testID, Task: backend.Task{Argv: []string{"work"}, Image: "image"}}
+	b, _ := testBackend(client, "workloads", "test")
+	ref := backend.Reference{Binding: testBinding, ID: testID, Task: backend.Task{Argv: []string{"work"}, Image: "image"}}
 	if err := b.Start(ctx, ref.ID, ref.Task); err != nil {
 		t.Fatal(err)
 	}
@@ -425,11 +433,11 @@ func TestMissingPodLogs(t *testing.T) {
 }
 
 func TestMissingJobLogs(t *testing.T) {
-	b, err := New(fake.NewSimpleClientset(), "workloads", "test")
+	b, err := testBackend(fake.NewSimpleClientset(), "workloads", "test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = b.Logs(context.Background(), backend.Reference{ID: testID}, 0, 10)
+	_, err = b.Logs(context.Background(), backend.Reference{Binding: testBinding, ID: testID}, 0, 10)
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("missing job logs: %v", err)
 	}

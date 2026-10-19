@@ -24,10 +24,11 @@ func TestLive(t *testing.T) {
 	if contextName == "" || namespace == "" || image == "" {
 		t.Fatal("SKYGO_KUBE_CONTEXT, SKYGO_KUBE_NAMESPACE and SKYGO_KUBE_IMAGE are required")
 	}
-	b, err := FromConfig(os.Getenv("KUBECONFIG"), contextName, namespace, "skygo-live-test")
+	target, err := FromConfig(os.Getenv("KUBECONFIG"), contextName, namespace, "skygo-live-test")
 	if err != nil {
 		t.Fatal(err)
 	}
+	b := target.Backend.(*Backend)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	for _, test := range []struct {
@@ -41,7 +42,7 @@ func TestLive(t *testing.T) {
 			}
 			id := hex.EncodeToString(raw[:])
 			task := backend.Task{Argv: []string{"/bin/sh", "-c", test.script}, Image: image, TimeoutSeconds: 150}
-			ref := backend.Reference{ID: id, Task: task}
+			ref := backend.Reference{ID: id, Task: task, Binding: target.Binding}
 			t.Cleanup(func() {
 				cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 				defer cancel()
@@ -61,10 +62,11 @@ func TestLive(t *testing.T) {
 			if err := b.Start(ctx, id, task); err != nil {
 				t.Fatal(err)
 			}
-			recovered, err := FromConfig(os.Getenv("KUBECONFIG"), contextName, namespace, "skygo-live-test")
+			recoveredTarget, err := FromConfig(os.Getenv("KUBECONFIG"), contextName, namespace, "skygo-live-test")
 			if err != nil {
 				t.Fatal(err)
 			}
+			recovered := recoveredTarget.Backend.(*Backend)
 			if err = recovered.Start(ctx, id, task); err != nil {
 				t.Fatalf("adopt: %v", err)
 			}

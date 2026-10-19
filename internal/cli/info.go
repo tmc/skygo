@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
+	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
 )
 
 func (o *options) infoCommand() *cobra.Command {
@@ -18,10 +19,20 @@ func (o *options) infoCommand() *cobra.Command {
 	cmd := &cobra.Command{Use: "info", Short: "Show capabilities advertised by this server", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		var required []v1.Capability
 		for _, name := range names {
-			if name != "finite-jobs-v1" {
+			var capability v1.Capability
+			switch name {
+			case "finite-jobs-v1":
+				capability = v1.Capability_CAPABILITY_FINITE_JOBS_V1
+			case "resource-limits-v1":
+				capability = v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1
+			case "node-selector-v1":
+				capability = v1.Capability_CAPABILITY_NODE_SELECTOR_V1
+			case "target-labels-v1":
+				capability = v1.Capability_CAPABILITY_TARGET_LABELS_V1
+			default:
 				return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown capability %q", name))
 			}
-			required = append(required, v1.Capability_CAPABILITY_FINITE_JOBS_V1)
+			required = append(required, capability)
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
 		defer cancel()
@@ -52,13 +63,20 @@ func (o *options) infoCommand() *cobra.Command {
 		return w.Flush()
 	}}
 	cmd.Flags().StringVar(&target, "target", "", "Select one named target")
-	cmd.Flags().StringSliceVar(&names, "require", nil, "Require capabilities on --target (finite-jobs-v1)")
+	cmd.Flags().StringSliceVar(&names, "require", nil, "Require capabilities on --target (finite-jobs-v1, resource-limits-v1, node-selector-v1, target-labels-v1)")
 	return cmd
 }
 
 func capabilityName(capability v1.Capability) string {
-	if capability == v1.Capability_CAPABILITY_FINITE_JOBS_V1 {
+	switch capability {
+	case v1.Capability_CAPABILITY_FINITE_JOBS_V1:
 		return "finite-jobs-v1"
+	case v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1:
+		return "resource-limits-v1"
+	case v1.Capability_CAPABILITY_NODE_SELECTOR_V1:
+		return "node-selector-v1"
+	case v1.Capability_CAPABILITY_TARGET_LABELS_V1:
+		return "target-labels-v1"
 	}
 	return fmt.Sprintf("unknown(%d)", capability)
 }
@@ -70,7 +88,9 @@ func (o *options) requireCapabilities(ctx context.Context, target string, requir
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("capability requirements need --target"))
 	}
 	for _, capability := range required {
-		if capability != v1.Capability_CAPABILITY_FINITE_JOBS_V1 {
+		switch capability {
+		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1:
+		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown required capability %d", capability))
 		}
 	}
@@ -106,6 +126,39 @@ func (o *options) requireCapabilities(ctx context.Context, target string, requir
 		}
 		if !found {
 			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("target %q does not advertise %s", target, capabilityName(capability)))
+		}
+	}
+	return r.Msg, nil
+}
+
+// taskCapabilities returns capabilities required by the task's extensions.
+func taskCapabilities(task *v1.Task) []v1.Capability {
+	var required []v1.Capability
+	if task.CpuLimitMillis != 0 || task.MemoryLimitBytes != 0 {
+		required = append(required, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1)
+	}
+	if len(task.NodeSelector) != 0 {
+		required = append(required, v1.Capability_CAPABILITY_NODE_SELECTOR_V1)
+	}
+	if len(task.TargetLabels) != 0 {
+		required = append(required, v1.Capability_CAPABILITY_TARGET_LABELS_V1)
+	}
+	return required
+}
+
+// planTask checks the chosen target before returning a successful plan.
+// Discovery does not reserve capacity or change the original task.
+func (o *options) planTask(ctx context.Context, client skyv1connect.ControlServiceClient, task *v1.Task) (*v1.PlanTaskResponse, error) {
+	r, err := client.PlanTask(ctx, request(o, &v1.PlanTaskRequest{Task: task}))
+	if err != nil {
+		return nil, err
+	}
+	if required := taskCapabilities(task); len(required) != 0 {
+		if r.Msg.Target == "" {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, errors.New("server returned no planned target"))
+		}
+		if _, err := o.requireCapabilities(ctx, r.Msg.Target, required...); err != nil {
+			return nil, err
 		}
 	}
 	return r.Msg, nil

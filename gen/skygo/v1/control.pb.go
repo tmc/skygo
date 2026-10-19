@@ -90,8 +90,11 @@ func (JobState) EnumDescriptor() ([]byte, []int) {
 type Capability int32
 
 const (
-	Capability_CAPABILITY_UNSPECIFIED    Capability = 0
-	Capability_CAPABILITY_FINITE_JOBS_V1 Capability = 1
+	Capability_CAPABILITY_UNSPECIFIED        Capability = 0
+	Capability_CAPABILITY_FINITE_JOBS_V1     Capability = 1
+	Capability_CAPABILITY_RESOURCE_LIMITS_V1 Capability = 2
+	Capability_CAPABILITY_NODE_SELECTOR_V1   Capability = 3
+	Capability_CAPABILITY_TARGET_LABELS_V1   Capability = 4
 )
 
 // Enum value maps for Capability.
@@ -99,10 +102,16 @@ var (
 	Capability_name = map[int32]string{
 		0: "CAPABILITY_UNSPECIFIED",
 		1: "CAPABILITY_FINITE_JOBS_V1",
+		2: "CAPABILITY_RESOURCE_LIMITS_V1",
+		3: "CAPABILITY_NODE_SELECTOR_V1",
+		4: "CAPABILITY_TARGET_LABELS_V1",
 	}
 	Capability_value = map[string]int32{
-		"CAPABILITY_UNSPECIFIED":    0,
-		"CAPABILITY_FINITE_JOBS_V1": 1,
+		"CAPABILITY_UNSPECIFIED":        0,
+		"CAPABILITY_FINITE_JOBS_V1":     1,
+		"CAPABILITY_RESOURCE_LIMITS_V1": 2,
+		"CAPABILITY_NODE_SELECTOR_V1":   3,
+		"CAPABILITY_TARGET_LABELS_V1":   4,
 	}
 )
 
@@ -133,7 +142,7 @@ func (Capability) EnumDescriptor() ([]byte, []int) {
 	return file_skygo_v1_control_proto_rawDescGZIP(), []int{1}
 }
 
-// Task is immutable after acceptance. Resource quantities are requests, not capacity promises.
+// Task is immutable after acceptance. Resource requests and limits are not capacity promises.
 type Task struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Argv             []string               `protobuf:"bytes,1,rep,name=argv,proto3" json:"argv,omitempty"`
@@ -146,6 +155,10 @@ type Task struct {
 	AcceleratorCount int32                  `protobuf:"varint,8,opt,name=accelerator_count,json=acceleratorCount,proto3" json:"accelerator_count,omitempty"`
 	Target           string                 `protobuf:"bytes,9,opt,name=target,proto3" json:"target,omitempty"`
 	TimeoutSeconds   int64                  `protobuf:"varint,10,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	CpuLimitMillis   int64                  `protobuf:"varint,11,opt,name=cpu_limit_millis,json=cpuLimitMillis,proto3" json:"cpu_limit_millis,omitempty"`
+	MemoryLimitBytes int64                  `protobuf:"varint,12,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"`
+	TargetLabels     map[string]string      `protobuf:"bytes,13,rep,name=target_labels,json=targetLabels,proto3" json:"target_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	NodeSelector     map[string]string      `protobuf:"bytes,14,rep,name=node_selector,json=nodeSelector,proto3" json:"node_selector,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -248,6 +261,34 @@ func (x *Task) GetTimeoutSeconds() int64 {
 		return x.TimeoutSeconds
 	}
 	return 0
+}
+
+func (x *Task) GetCpuLimitMillis() int64 {
+	if x != nil {
+		return x.CpuLimitMillis
+	}
+	return 0
+}
+
+func (x *Task) GetMemoryLimitBytes() int64 {
+	if x != nil {
+		return x.MemoryLimitBytes
+	}
+	return 0
+}
+
+func (x *Task) GetTargetLabels() map[string]string {
+	if x != nil {
+		return x.TargetLabels
+	}
+	return nil
+}
+
+func (x *Task) GetNodeSelector() map[string]string {
+	if x != nil {
+		return x.NodeSelector
+	}
+	return nil
 }
 
 type Job struct {
@@ -359,12 +400,14 @@ func (x *Job) GetUpdatedAt() *timestamppb.Timestamp {
 }
 
 type Target struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
-	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
-	Capabilities  []Capability           `protobuf:"varint,3,rep,packed,name=capabilities,proto3,enum=skygo.v1.Capability" json:"capabilities,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state            protoimpl.MessageState `protogen:"open.v1"`
+	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Kind             string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Capabilities     []Capability           `protobuf:"varint,3,rep,packed,name=capabilities,proto3,enum=skygo.v1.Capability" json:"capabilities,omitempty"`
+	Labels           map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	AcceleratorNames []string               `protobuf:"bytes,5,rep,name=accelerator_names,json=acceleratorNames,proto3" json:"accelerator_names,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *Target) Reset() {
@@ -414,6 +457,20 @@ func (x *Target) GetKind() string {
 func (x *Target) GetCapabilities() []Capability {
 	if x != nil {
 		return x.Capabilities
+	}
+	return nil
+}
+
+func (x *Target) GetLabels() map[string]string {
+	if x != nil {
+		return x.Labels
+	}
+	return nil
+}
+
+func (x *Target) GetAcceleratorNames() []string {
+	if x != nil {
+		return x.AcceleratorNames
 	}
 	return nil
 }
@@ -1237,7 +1294,7 @@ var File_skygo_v1_control_proto protoreflect.FileDescriptor
 
 const file_skygo_v1_control_proto_rawDesc = "" +
 	"\n" +
-	"\x16skygo/v1/control.proto\x12\bskygo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x83\x03\n" +
+	"\x16skygo/v1/control.proto\x12\bskygo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xeb\x05\n" +
 	"\x04Task\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12)\n" +
 	"\x03env\x18\x02 \x03(\v2\x17.skygo.v1.Task.EnvEntryR\x03env\x12\x1c\n" +
@@ -1250,8 +1307,18 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x11accelerator_count\x18\b \x01(\x05R\x10acceleratorCount\x12\x16\n" +
 	"\x06target\x18\t \x01(\tR\x06target\x12'\n" +
 	"\x0ftimeout_seconds\x18\n" +
-	" \x01(\x03R\x0etimeoutSeconds\x1a6\n" +
+	" \x01(\x03R\x0etimeoutSeconds\x12(\n" +
+	"\x10cpu_limit_millis\x18\v \x01(\x03R\x0ecpuLimitMillis\x12,\n" +
+	"\x12memory_limit_bytes\x18\f \x01(\x03R\x10memoryLimitBytes\x12E\n" +
+	"\rtarget_labels\x18\r \x03(\v2 .skygo.v1.Task.TargetLabelsEntryR\ftargetLabels\x12E\n" +
+	"\rnode_selector\x18\x0e \x03(\v2 .skygo.v1.Task.NodeSelectorEntryR\fnodeSelector\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
+	"\x11TargetLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
+	"\x11NodeSelectorEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe4\x02\n" +
 	"\x03Job\x12\x0e\n" +
@@ -1267,11 +1334,16 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\f\n" +
 	"\n" +
-	"_exit_code\"j\n" +
+	"_exit_code\"\x88\x02\n" +
 	"\x06Target\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
 	"\x04kind\x18\x02 \x01(\tR\x04kind\x128\n" +
-	"\fcapabilities\x18\x03 \x03(\x0e2\x14.skygo.v1.CapabilityR\fcapabilities\";\n" +
+	"\fcapabilities\x18\x03 \x03(\x0e2\x14.skygo.v1.CapabilityR\fcapabilities\x124\n" +
+	"\x06labels\x18\x04 \x03(\v2\x1c.skygo.v1.Target.LabelsEntryR\x06labels\x12+\n" +
+	"\x11accelerator_names\x18\x05 \x03(\tR\x10acceleratorNames\x1a9\n" +
+	"\vLabelsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\";\n" +
 	"\tRejection\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"5\n" +
@@ -1327,11 +1399,14 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x13JOB_STATE_SUCCEEDED\x10\x04\x12\x14\n" +
 	"\x10JOB_STATE_FAILED\x10\x05\x12\x16\n" +
 	"\x12JOB_STATE_CANCELED\x10\x06\x12\x15\n" +
-	"\x11JOB_STATE_UNKNOWN\x10\a*G\n" +
+	"\x11JOB_STATE_UNKNOWN\x10\a*\xac\x01\n" +
 	"\n" +
 	"Capability\x12\x1a\n" +
 	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
-	"\x19CAPABILITY_FINITE_JOBS_V1\x10\x012\xd1\x04\n" +
+	"\x19CAPABILITY_FINITE_JOBS_V1\x10\x01\x12!\n" +
+	"\x1dCAPABILITY_RESOURCE_LIMITS_V1\x10\x02\x12\x1f\n" +
+	"\x1bCAPABILITY_NODE_SELECTOR_V1\x10\x03\x12\x1f\n" +
+	"\x1bCAPABILITY_TARGET_LABELS_V1\x10\x042\xd1\x04\n" +
 	"\x0eControlService\x12A\n" +
 	"\bPlanTask\x12\x19.skygo.v1.PlanTaskRequest\x1a\x1a.skygo.v1.PlanTaskResponse\x12D\n" +
 	"\tSubmitJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12;\n" +
@@ -1355,7 +1430,7 @@ func file_skygo_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
+var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
 var file_skygo_v1_control_proto_goTypes = []any{
 	(JobState)(0),                 // 0: skygo.v1.JobState
 	(Capability)(0),               // 1: skygo.v1.Capability
@@ -1380,45 +1455,51 @@ var file_skygo_v1_control_proto_goTypes = []any{
 	(*GetServerInfoRequest)(nil),  // 20: skygo.v1.GetServerInfoRequest
 	(*GetServerInfoResponse)(nil), // 21: skygo.v1.GetServerInfoResponse
 	nil,                           // 22: skygo.v1.Task.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
+	nil,                           // 23: skygo.v1.Task.TargetLabelsEntry
+	nil,                           // 24: skygo.v1.Task.NodeSelectorEntry
+	nil,                           // 25: skygo.v1.Target.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 26: google.protobuf.Timestamp
 }
 var file_skygo_v1_control_proto_depIdxs = []int32{
 	22, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
-	2,  // 1: skygo.v1.Job.task:type_name -> skygo.v1.Task
-	0,  // 2: skygo.v1.Job.state:type_name -> skygo.v1.JobState
-	23, // 3: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	23, // 4: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
-	1,  // 5: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
-	2,  // 6: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
-	5,  // 7: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
-	2,  // 8: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
-	3,  // 9: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
-	3,  // 10: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
-	3,  // 11: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
-	3,  // 12: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
-	4,  // 13: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
-	4,  // 14: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
-	6,  // 15: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
-	8,  // 16: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
-	10, // 17: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
-	12, // 18: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
-	14, // 19: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
-	16, // 20: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
-	18, // 21: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
-	20, // 22: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
-	7,  // 23: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
-	9,  // 24: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
-	11, // 25: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
-	13, // 26: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
-	15, // 27: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
-	17, // 28: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
-	19, // 29: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
-	21, // 30: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
-	23, // [23:31] is the sub-list for method output_type
-	15, // [15:23] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	23, // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
+	24, // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
+	2,  // 3: skygo.v1.Job.task:type_name -> skygo.v1.Task
+	0,  // 4: skygo.v1.Job.state:type_name -> skygo.v1.JobState
+	26, // 5: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	26, // 6: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
+	1,  // 7: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
+	25, // 8: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
+	2,  // 9: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
+	5,  // 10: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
+	2,  // 11: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
+	3,  // 12: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
+	3,  // 13: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
+	3,  // 14: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
+	3,  // 15: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
+	4,  // 16: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
+	4,  // 17: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
+	6,  // 18: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
+	8,  // 19: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
+	10, // 20: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
+	12, // 21: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
+	14, // 22: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
+	16, // 23: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
+	18, // 24: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
+	20, // 25: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
+	7,  // 26: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
+	9,  // 27: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
+	11, // 28: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
+	13, // 29: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
+	15, // 30: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
+	17, // 31: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
+	19, // 32: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
+	21, // 33: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
+	26, // [26:34] is the sub-list for method output_type
+	18, // [18:26] is the sub-list for method input_type
+	18, // [18:18] is the sub-list for extension type_name
+	18, // [18:18] is the sub-list for extension extendee
+	0,  // [0:18] is the sub-list for field type_name
 }
 
 func init() { file_skygo_v1_control_proto_init() }
@@ -1433,7 +1514,7 @@ func file_skygo_v1_control_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skygo_v1_control_proto_rawDesc), len(file_skygo_v1_control_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   21,
+			NumMessages:   24,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

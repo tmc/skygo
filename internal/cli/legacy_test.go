@@ -119,6 +119,7 @@ func runLegacyScript(t *testing.T, current, legacy, daemon, file string) {
 		}
 		return nil, nil
 	})
+	cover := coverDir(t)
 	e.Cmds["taskfile"] = script.Command(script.CmdUsage{Summary: "write a task whose execution creates a marker", Args: "file marker"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
 		if len(args) != 2 {
 			return nil, script.ErrUsage
@@ -127,9 +128,13 @@ func runLegacyScript(t *testing.T, current, legacy, daemon, file string) {
 		if err != nil {
 			return nil, err
 		}
+		env := map[string]string{"SKYGO_DISCOVERY_MARKER": s.Path(args[1])}
+		if cover != "" {
+			env["GOCOVERDIR"] = cover
+		}
 		task := map[string]any{
 			"argv": []string{exe, "-test.run=^TestDiscoveryWorkload$"},
-			"env":  map[string]string{"SKYGO_DISCOVERY_MARKER": s.Path(args[1])},
+			"env":  env,
 		}
 		data, err := json.Marshal(task)
 		if err != nil {

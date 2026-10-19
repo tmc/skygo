@@ -48,6 +48,7 @@ with a different task fails. Request bindings survive server restart.
 skygo server --data-dir DIR
 skygo server --data-dir DIR --auth-file FILE
 skygo-kubernetes server --data-dir DIR --namespace NS [--disable-local]
+skygo-kubernetes server --data-dir DIR --targets FILE [--disable-local]
 skygo targets list
 skygo info [--target NAME --require finite-jobs-v1]
 skygo state backup --data-dir DIR --output FILE
@@ -74,8 +75,10 @@ offsets. Diagnostics and retry IDs go to stderr. Use `-f -` to read YAML on stdi
 
 `info` reports capabilities for each configured target. A requirement applies
 only to the named target and fails when discovery is unavailable. Discovery is
-not a capacity reservation. Legacy task commands remain available against older
-servers; this does not make them support newer task semantics.
+not a capacity reservation. Tasks using resource limits, target labels or node
+selectors check the selected target before submission; the original task remains
+unchanged. Legacy task commands remain available against older servers; this does
+not make them support newer task semantics.
 
 Stop the server before `state backup` or `state restore`. These local commands
 preserve the database's installation identity, job records and request bindings.
@@ -102,17 +105,30 @@ namespace to run its server outside a cluster:
 ./bin/skygo run -f examples/kubernetes.yaml --wait
 ```
 
-The integration requires `--namespace`; with no kubeconfig/context, it uses
-in-cluster credentials. Both binaries provide the same client commands and can
-connect to either server. The root binary has no Kubernetes server flags.
+For one target, `--namespace` is required; with no kubeconfig/context, the server
+uses in-cluster credentials. For named targets, use `--targets FILE` instead of
+those three flags. The [configuration example](integrations/kubernetes/examples/targets.yaml)
+shows separate namespaces, public target labels, resource maxima and selector
+allowlists. File-based targets require an explicit kubeconfig and context, or
+`in_cluster: true`; relative paths resolve against the configuration file.
+
+CPU/memory requests and limits, configured accelerator mappings and allowed node
+selectors are enforced by the Kubernetes backend. Changing a target's route,
+trust or policy holds its previously accepted work until the original binding
+is restored. Take a stopped pre-upgrade snapshot before opening existing state;
+legacy remote rows without a binding remain held. See the
+[binding and rollback contracts](docs/contracts.md#state-backup-and-rollback).
+
+Both binaries provide the same client commands and can connect to either server.
+The root binary has no Kubernetes server flags.
 [Deployment instructions](docs/kubernetes.md) describe the singleton PVC-backed
 installation, authentication, and rollback.
 
 ## Boundaries
 
 - Local execution trusts workloads as the server's OS identity and inherits its
-  environment. It is not a sandbox. Images, CPU/memory requests, and accelerators
-  are rejected locally. The Kubernetes deployment disables this target.
+  environment. It is not a sandbox. Images, CPU/memory requests and limits,
+  accelerators, and node selectors are rejected locally. The Kubernetes deployment disables this target.
 - After abrupt local server death, unfinished jobs become `unknown`; they are
   never automatically relaunched or killed using an old PID. Orphan processes
   can remain. Process-group cancellation cannot contain programs that escape

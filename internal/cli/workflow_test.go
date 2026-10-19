@@ -99,7 +99,7 @@ func runLocalWorkflow(t *testing.T, e *script.Engine, pattern string) {
 		}
 	})
 	engine := auth.NewLegacy("workflow-token")
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}}, engine)
+	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Binding: "test-local", Backend: b}}, engine)
 	if err != nil {
 		t.Fatal(err)
 	}

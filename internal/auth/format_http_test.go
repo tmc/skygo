@@ -114,7 +114,7 @@ func TestMixedCredentialHTTPIdentity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		c, err := control.New(s, []backend.Target{{Name: "test", Kind: "test", Backend: admissionBackend{}}}, e)
+		c, err := control.New(s, []backend.Target{{Name: "test", Kind: "test", Binding: "test-route", Backend: admissionBackend{}}}, e)
 		if err != nil {
 			t.Fatal(err)
 		}

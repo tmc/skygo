@@ -1,9 +1,15 @@
 // Package control validates tasks, selects configured targets, and reconciles
 // durable jobs independently of the transport and execution backend.
 //
-// Submit persists acceptance before returning. Run owns one reconciliation loop;
+// Submit persists acceptance before returning. Run owns one reconciliation loop for the lifetime of its Control;
 // cancellation records intent separately from the observed outcome. An unknown
-// outcome never authorizes another execution of the same job.
+// outcome never authorizes another execution of the same job. Targets are frozen
+// at construction. Every backend call requires the job's original routing binding;
+// missing or changed bindings hold execution without implying termination.
+// Request replay returns its original placement despite configuration changes.
+// Each target has one bounded I/O worker; unresponsive targets cannot occupy
+// another target's worker. Canceling Run does not force a context-ignoring call
+// to return, and a second Run on the same Control is refused.
 //
 // Each public request takes an auth.Actor and revalidates its current role and
 // credential with the configured auth.Engine. Scoped stores enforce ownership

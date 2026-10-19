@@ -73,7 +73,7 @@ func answer(call observation, state backend.State, err error) {
 }
 func newControl(t *testing.T, s *store.Store, e *executor) *control.Control {
 	t.Helper()
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: e}}, testEngine)
+	c, err := control.New(s, []backend.Target{{Name: "local", Binding: "test-binding", Kind: "local", Backend: e}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +161,7 @@ func TestConcurrentDedupAndChangedConfiguration(t *testing.T) {
 	defer s.Close()
 	unavailable := newExecutor()
 	unavailable.checkErr = errors.New("capability removed")
-	c, err = control.New(s, []backend.Target{{Name: "replacement", Kind: "local", Backend: unavailable}}, testEngine)
+	c, err = control.New(s, []backend.Target{{Name: "replacement", Binding: "test-binding", Kind: "local", Backend: unavailable}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +351,7 @@ func TestPlanDeterministic(t *testing.T) {
 	s := openStore(t)
 	bad := newExecutor()
 	bad.checkErr = errors.New("unsupported image")
-	c, err := control.New(s, []backend.Target{{Name: "z", Backend: newExecutor()}, {Name: "b", Backend: bad}, {Name: "a", Backend: newExecutor()}}, testEngine)
+	c, err := control.New(s, []backend.Target{{Name: "z", Binding: "test-binding", Backend: newExecutor()}, {Name: "b", Binding: "test-binding", Backend: bad}, {Name: "a", Binding: "test-binding", Backend: newExecutor()}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestCancelQueuedAfterTargetRemoved(t *testing.T) {
 	c := newControl(t, s, newExecutor())
 	j := submit(t, c, "removed-target")
 	replacement := newExecutor()
-	c, err := control.New(s, []backend.Target{{Name: "replacement", Kind: "local", Backend: replacement}}, testEngine)
+	c, err := control.New(s, []backend.Target{{Name: "replacement", Binding: "test-binding", Kind: "local", Backend: replacement}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}

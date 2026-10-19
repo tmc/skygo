@@ -73,26 +73,26 @@ func TestScopedNamespacesAndDenseIndex(t *testing.T) {
 	f := newScopeFixture(t)
 	a, b, admin := f.actors["alice"], f.actors["bob"], f.actors["legacy"]
 	task := backend.Task{Argv: []string{"a"}}
-	first, err := f.s.Submit(a, "same", task, "local")
+	first, err := f.s.Submit(a, "same", task, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
-	other, err := f.s.Submit(b, "same", backend.Task{Argv: []string{"b"}}, "local")
+	other, err := f.s.Submit(b, "same", backend.Task{Argv: []string{"b"}}, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := f.s.Submit(a, "second", task, "local")
+	second, err := f.s.Submit(a, "second", task, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if first.ID == other.ID {
 		t.Fatal("request crossed principal namespace")
 	}
-	again, err := f.s.Submit(a, "same", task, "new-target")
+	again, err := f.s.Submit(a, "same", task, "new-target", "test-binding")
 	if err != nil || again.ID != first.ID || again.Target != "local" {
 		t.Fatalf("retry: %+v %v", again, err)
 	}
-	if _, err := f.s.Submit(a, "same", backend.Task{Argv: []string{"different"}}, "local"); !errors.Is(err, ErrConflict) {
+	if _, err := f.s.Submit(a, "same", backend.Task{Argv: []string{"different"}}, "local", "test-binding"); !errors.Is(err, ErrConflict) {
 		t.Fatalf("conflict: %v", err)
 	}
 	n, err := f.s.LastSequenceFor(a)
@@ -120,10 +120,10 @@ func TestScopedNamespacesAndDenseIndex(t *testing.T) {
 	if _, err := f.s.UpdateFor(f.actors["reader"], first.ID, func(j *backend.Job) error { called = true; return nil }); !errors.Is(err, auth.ErrPermissionDenied) || called {
 		t.Fatalf("reader mutation: %v", err)
 	}
-	if _, err := f.s.Submit(auth.Actor{}, "zero", task, "local"); !errors.Is(err, auth.ErrUnauthenticated) {
+	if _, err := f.s.Submit(auth.Actor{}, "zero", task, "local", "test-binding"); !errors.Is(err, auth.ErrUnauthenticated) {
 		t.Fatalf("zero actor: %v", err)
 	}
-	adminJob, err := f.s.Submit(admin, "same", task, "local")
+	adminJob, err := f.s.Submit(admin, "same", task, "local", "test-binding")
 	if err != nil || adminJob.ID == first.ID {
 		t.Fatalf("admin namespace: %+v %v", adminJob, err)
 	}
@@ -136,11 +136,11 @@ func TestScopedActivationPreservesLegacyAndSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	original, err := s.Submit(testActor(), "legacy-request", backend.Task{Argv: []string{"old"}}, "local")
+	original, err := s.Submit(testActor(), "legacy-request", backend.Task{Argv: []string{"old"}}, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := s.Submit(testActor(), "second-legacy", backend.Task{Argv: []string{"second"}}, "local")
+	second, err := s.Submit(testActor(), "second-legacy", backend.Task{Argv: []string{"second"}}, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,11 +187,11 @@ func TestScopedActivationPreservesLegacyAndSnapshots(t *testing.T) {
 	if !s.Scoped() || s.Owner() != owner {
 		t.Fatal("restore lost mode or installation")
 	}
-	restoredSecond, err := s.Submit(testActor(), "second-legacy", second.Task, "replacement")
+	restoredSecond, err := s.Submit(testActor(), "second-legacy", second.Task, "replacement", "test-binding")
 	if err != nil || restoredSecond.ID != second.ID || restoredSecond.Sequence != 2 {
 		t.Fatalf("second legacy binding changed: %+v %v", restoredSecond, err)
 	}
-	again, err := s.Submit(testActor(), "legacy-request", original.Task, "replacement")
+	again, err := s.Submit(testActor(), "legacy-request", original.Task, "replacement", "test-binding")
 	if err != nil || again.ID != original.ID {
 		t.Fatalf("restored binding: %+v %v", again, err)
 	}
@@ -209,7 +209,7 @@ func TestScopedIntegrityRefusesWithoutWrites(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			j, err := s.Submit(testActor(), "old", backend.Task{Argv: []string{"work"}}, "local")
+			j, err := s.Submit(testActor(), "old", backend.Task{Argv: []string{"work"}}, "local", "test-binding")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -300,7 +300,7 @@ func TestBoundedMetadataAudit(t *testing.T) {
 
 func TestScopedActivationTransactionRollback(t *testing.T) {
 	s := openTest(t)
-	accepted, err := s.Submit(testActor(), "old", backend.Task{Argv: []string{"old"}}, "local")
+	accepted, err := s.Submit(testActor(), "old", backend.Task{Argv: []string{"old"}}, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,14 +320,14 @@ func TestScopedActivationTransactionRollback(t *testing.T) {
 		if isScoped(tx) || tx.Bucket(jobPrincipalsBucket) != nil || tx.Bucket(principalRequestsBucket) != nil || tx.Bucket(principalIndexBucket) != nil || tx.Bucket(auditBucket) != nil {
 			t.Error("partial scoped relations committed")
 		}
-		if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(1)) {
+		if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(schemaVersion)) {
 			t.Error("failed activation bumped schema")
 		}
 		return nil
 	}); err != nil {
 		t.Fatal(err)
 	}
-	again, err := s.Submit(testActor(), "old", accepted.Task, "changed")
+	again, err := s.Submit(testActor(), "old", accepted.Task, "changed", "test-binding")
 	if err != nil || again.ID != accepted.ID {
 		t.Fatalf("activation changed binding: %+v %v", again, err)
 	}
@@ -339,7 +339,7 @@ func TestZeroActorDeniedAtEveryScopedStoreEntrypoint(t *testing.T) {
 	task := backend.Task{Argv: []string{"work"}}
 	calls := map[string]func() error{
 		"lookup": func() error { _, _, err := f.s.Lookup(zero, "zero", task); return err },
-		"submit": func() error { _, err := f.s.Submit(zero, "zero", task, "local"); return err },
+		"submit": func() error { _, err := f.s.Submit(zero, "zero", task, "local", "test-binding"); return err },
 		"get":    func() error { _, err := f.s.GetFor(zero, "missing"); return err },
 		"last":   func() error { _, err := f.s.LastSequenceFor(zero); return err },
 		"list":   func() error { _, err := f.s.ListFor(zero, 0, 1, 1); return err },

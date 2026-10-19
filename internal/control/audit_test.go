@@ -22,7 +22,7 @@ func auditControl(t *testing.T) (*Control, *store.Store, string, string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { s.Close() })
-	job, err := s.Submit(testActor(), "audit-job", backend.Task{Argv: []string{"work"}}, "local")
+	job, err := s.Submit(testActor(), "audit-job", backend.Task{Argv: []string{"work"}}, "local", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,7 +32,7 @@ func auditControl(t *testing.T) (*Control, *store.Store, string, string) {
 	if err := s.ActivateScoped(); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(s, []backend.Target{{Name: "local", Backend: &configuredBackend{}}}, testEngine)
+	c, err := New(s, []backend.Target{{Name: "local", Binding: "test-binding", Backend: &configuredBackend{}}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}

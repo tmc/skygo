@@ -12,33 +12,64 @@ applies additional task and RPC size limits. YAML is not SkyPilot-compatible.
 | `image` | Required for Kubernetes; rejected locally |
 | `cpu_millis` | Kubernetes CPU request in millicores |
 | `memory_bytes` | Kubernetes memory request in bytes |
-| `accelerator` | `nvidia` on Kubernetes; requires a positive count |
-| `accelerator_count` | Requested `nvidia.com/gpu` units |
-| `target` | Optional configured target name: `local` or `kubernetes` |
+| `accelerator` | Configured accelerator name; requires a positive count |
+| `accelerator_count` | Requested units of the configured accelerator resource |
+| `target` | Optional hard configured target name; never falls back to another target |
 | `timeout_seconds` | Positive execution timeout; zero leaves it unspecified |
+| `cpu_limit_millis` | CPU limit in millicores; zero leaves it unspecified |
+| `memory_limit_bytes` | Memory limit in bytes; zero leaves it unspecified |
+| `target_labels` | Exact string matches against configured target labels |
+| `node_selector` | Exact Kubernetes node label matches, subject to target policy |
 
-CPU and memory requests do not impose workload limits. GPU requests also set the
-matching limit. Actual placement depends on cluster configuration and available
-resources. No hardware discovery, quota check, VM provisioning, or price model
-runs during planning. A shell is used only when explicitly present in argv.
+A nonzero CPU or memory limit requires a positive corresponding request and
+must be at least that request. Requests alone do not impose limits. Accelerator
+requests also set the matching limit. Local execution rejects resource requests,
+limits, images, accelerators and node selectors; it does not silently ignore them.
+Target labels constrain core target selection, including a hard `target` when
+present. A missing label differs from a label whose value is empty. Node selectors
+constrain native placement within the chosen target; they do not choose a target.
+
+Configured target labels are limited to 32 entries, and each task placement map
+to 16. Keys are nonempty and at most 256 bytes; values are at most 4096 bytes.
+Both must be valid UTF-8 without NUL. An integration can impose further native
+syntax and policy restrictions. Actual placement depends on cluster configuration
+and available resources. No hardware discovery, quota check, VM provisioning, or
+price model runs during planning. A shell is used only when explicitly in argv.
 
 The public protocol is `skygo.v1.ControlService` in
 [`control.proto`](../proto/skygo/v1/control.proto). The methods are
 PlanTask, SubmitJob, GetJob, ListJobs, CancelJob, StreamJobLogs, ListTargets, and
 GetServerInfo. Discovery reports typed capabilities for each configured target.
-The current
-capability is `FINITE_JOBS_V1`; it describes finite-job semantics, not available
-capacity. A client requiring a capability must check the actual selected target
-before performing the associated operation. Missing discovery is unsupported,
-not implicit support. Existing servers cannot be made to reject unknown newer
-protobuf fields retroactively.
+The capabilities are `FINITE_JOBS_V1`, `RESOURCE_LIMITS_V1`, `NODE_SELECTOR_V1`
+and `TARGET_LABELS_V1`. Finite jobs and target-label matching are core semantics;
+resource limits and node selectors are advertised only by targets configured to
+support them. `Target.labels` and `Target.accelerator_names` report declared
+metadata. Kind/name does not imply support, and discovery does not report capacity
+or expose execution bindings, kubeconfigs or credentials.
+
+For a task using limits or placement maps, CLI `plan` and `run` first call
+PlanTask with the original task, then check required capabilities on that exact
+chosen target through GetServerInfo. A failed check produces no successful plan
+and prevents submission. `run` then submits the original task and request ID,
+without inserting the chosen target into the payload. Default tasks need no new
+capability check and remain usable on old servers. Explicit inspection uses, for
+example, `info --target batch --require resource-limits-v1,node-selector-v1`.
+Missing discovery is unsupported, not implicit support. Existing servers cannot
+be made to reject unknown newer protobuf fields retroactively.
+
+Target configuration is immutable for a server lifetime. The preflight sequence
+is not a reservation or an atomic handshake across replacement of an endpoint
+with a different server. CLI preflight can refuse a retry when today's route no
+longer qualifies; the SubmitJob API still replays an already accepted identical
+request before considering today's route. Do not edit a task to force a retry
+onto a new target.
 Generated clients live in `gen/skygo/v1/skyv1connect`. Both executable
 entrypoints use this protocol; a client does not need Kubernetes dependencies
 to submit tasks to a server configured with the Kubernetes integration.
 
 A submission requires a request ID. Scoped mode namespaces IDs by the
 authenticated principal; legacy mode has one global namespace. The server
-persists the ID, normalized task,
+persists the ID, original task, selected target binding,
 and resulting job atomically before acknowledging acceptance. Identical retries
 return the same job; different tasks with the same ID return `already_exists`.
 Acceptance does not guarantee execution. There is no automatic workload retry.
@@ -72,17 +103,32 @@ Accepted task payloads are limited to 16 MiB in aggregate per data directory,
 in addition to the 10,000-job limit. Existing request IDs remain retryable at
 capacity. The controller starts at most 32 executions at a time.
 
-A missing configured target preserves the last observed state with an explicit
-reason. Restore that target to resume reconciliation. Kubernetes operations
-verify the stored task identity as well as ownership; a conflicting native Job
-is left untouched and the accepted job becomes unknown.
+Each accepted job carries an immutable execution binding separate from Task.
+Reconciliation and backend log reads require the configured name and binding to
+match. Missing, changed or unbound legacy routes retain their last observed state
+with an explicit held reason and cause no backend calls. Restore the exact route
+to resume; reusing a name for another cluster does not rebind old jobs. Queued
+cancellation can settle without a route because execution never started.
+Kubernetes operations also verify task identity and ownership; a conflicting
+native Job remains untouched and the accepted job becomes unknown.
 
+Only the server's actual built-in local backend authorizes automatic binding of
+historical unbound `local` rows. This runs after store/auth/target validation and
+before listening or reconciliation, and is skipped with `--disable-local`.
+A factory target's name or kind is not proof of that construction. Local binding
+identifies logical installation semantics, not a physical machine or surviving
+PID. Legacy Kubernetes/unknown routes remain held; there is no automatic remote
+binding migration.
 ## State backup and rollback
 
-The store checks its schema before migration. Missing schema markers identify
-legacy state; supported legacy state migrates transactionally without changing
-accepted task bytes, installation identity or request bindings. Newer schemas
-and malformed markers refuse without modifying the existing database.
+The store checks its schema before migration. Format 3 stores target bindings
+independently of legacy/scoped authentication mode. Opening supported historical
+state upgrades the format transactionally without changing accepted task bytes,
+installation identity, request bindings, ownership or accounting. It does not
+activate scoped auth. Opening can upgrade format even if later server configuration
+fails. Take a stopped pre-upgrade snapshot before using the new binary. Newer
+schemas and malformed state refuse before writes. Historical remote rows without
+a binding remain readable and replayable but held from execution and backend logs.
 
 `state backup --data-dir DIR --output FILE` creates a consistent offline database
 snapshot. Stop the writable server first; its database lock blocks backup.

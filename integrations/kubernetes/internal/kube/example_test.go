@@ -1,4 +1,4 @@
-package kube_test
+package kube
 
 import (
 	"context"
@@ -6,14 +6,13 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/tmc/skygo/integrations/kubernetes/internal/kube"
 	"github.com/tmc/skygo/internal/backend"
 	"k8s.io/client-go/kubernetes/fake"
 )
 
 // The fake API stores native Job objects but runs no Pods or controllers.
-func exampleKube() *kube.Backend {
-	b, err := kube.New(fake.NewSimpleClientset(), "workloads", "example")
+func exampleKube() *Backend {
+	b, err := testBackend(fake.NewSimpleClientset(), "workloads", "example")
 	if err != nil {
 		panic(err)
 	}
@@ -22,7 +21,7 @@ func exampleKube() *kube.Backend {
 
 func Example() {
 	b := exampleKube()
-	ref := backend.Reference{ID: "0123456789abcdef0123456789abcdef", Task: backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}}
+	ref := backend.Reference{Binding: testBinding, ID: "0123456789abcdef0123456789abcdef", Task: backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}}
 	fmt.Println(b.Check(ref.Task))
 	fmt.Println(b.Start(context.Background(), ref.ID, ref.Task))
 	status, err := b.Observe(context.Background(), ref)
@@ -35,7 +34,7 @@ func Example() {
 
 func ExampleBackend_Cancel() {
 	b := exampleKube()
-	ref := backend.Reference{ID: "0123456789abcdef0123456789abcdef", Task: backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}}
+	ref := backend.Reference{Binding: testBinding, ID: "0123456789abcdef0123456789abcdef", Task: backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}}
 	if err := b.Start(context.Background(), ref.ID, ref.Task); err != nil {
 		panic(err)
 	}
@@ -50,7 +49,7 @@ func ExampleBackend_Cancel() {
 
 func ExampleBackend_Logs() {
 	b := exampleKube()
-	ref := backend.Reference{ID: "0123456789abcdef0123456789abcdef", Task: backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}}
+	ref := backend.Reference{Binding: testBinding, ID: "0123456789abcdef0123456789abcdef", Task: backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}}
 	if err := b.Start(context.Background(), ref.ID, ref.Task); err != nil {
 		panic(err)
 	}
@@ -82,11 +81,18 @@ users:
 	if err := os.WriteFile(path, []byte(config), 0600); err != nil {
 		panic(err)
 	}
-	b, err := kube.FromConfig(path, "test", "workloads", "example")
+	b, err := FromConfig(path, "test", "workloads", "example")
 	if err != nil {
 		panic(err)
 	}
 	// Construction and capability validation do not contact the API server.
-	fmt.Println(b.Check(backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}))
+	fmt.Println(b.Backend.Check(backend.Task{Argv: []string{"trainer"}, Image: "trainer:v1"}))
 	// Output: <nil>
+}
+
+func ExampleFromTarget() {
+	_, err := FromTarget(TargetConfig{Name: "training", Namespace: "workloads"}, "example")
+	// A named target never guesses a default kubeconfig or context.
+	fmt.Println(err)
+	// Output: target requires kubeconfig and context or explicit in_cluster
 }

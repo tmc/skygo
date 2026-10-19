@@ -26,7 +26,7 @@ func TestGetServerInfo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := &v1.GetServerInfoResponse{Targets: []*v1.Target{{Name: "local", Kind: "local", Capabilities: []v1.Capability{v1.Capability_CAPABILITY_FINITE_JOBS_V1}}}}
+	want := &v1.GetServerInfoResponse{Targets: []*v1.Target{{Name: "local", Kind: "local", Capabilities: []v1.Capability{v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1}}}}
 	if !proto.Equal(info.Msg, want) {
 		t.Fatalf("info = %v; want %v", info.Msg, want)
 	}

@@ -13,7 +13,7 @@ service ControlService {
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
 }
-// Task is immutable after acceptance. Resource quantities are requests, not capacity promises.
+// Task is immutable after acceptance. Resource requests and limits are not capacity promises.
 message Task {
   repeated string argv = 1;
   map<string, string> env = 2;
@@ -25,6 +25,10 @@ message Task {
   int32 accelerator_count = 8;
   string target = 9;
   int64 timeout_seconds = 10;
+  int64 cpu_limit_millis = 11;
+  int64 memory_limit_bytes = 12;
+  map<string, string> target_labels = 13;
+  map<string, string> node_selector = 14;
 }
 enum JobState {
   JOB_STATE_UNSPECIFIED = 0;
@@ -51,11 +55,16 @@ message Job {
 enum Capability {
   CAPABILITY_UNSPECIFIED = 0;
   CAPABILITY_FINITE_JOBS_V1 = 1;
+  CAPABILITY_RESOURCE_LIMITS_V1 = 2;
+  CAPABILITY_NODE_SELECTOR_V1 = 3;
+  CAPABILITY_TARGET_LABELS_V1 = 4;
 }
 message Target {
   string name = 1;
   string kind = 2;
   repeated Capability capabilities = 3;
+  map<string, string> labels = 4;
+  repeated string accelerator_names = 5;
 }
 message Rejection {
   string target = 1;

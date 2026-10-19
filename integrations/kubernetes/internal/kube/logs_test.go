@@ -20,9 +20,9 @@ import (
 
 func TestLogPrefix(t *testing.T) {
 	controller := true
-	ref := backend.Reference{ID: testID, Task: backend.Task{Argv: []string{"work"}, Image: "image"}}
+	ref := backend.Reference{Binding: testBinding, ID: testID, Task: backend.Task{Argv: []string{"work"}, Image: "image"}}
 	raw, _ := json.Marshal(ref.Task)
-	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "skygo-" + testID, UID: "uid", Annotations: map[string]string{taskAnnotation: fmt.Sprintf("%x", sha256.Sum256(raw))}, Labels: map[string]string{ownerLabel: "test", idLabel: testID}}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
+	job := batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "skygo-" + testID, UID: "uid", Annotations: map[string]string{bindingAnnotation: testBinding, taskAnnotation: fmt.Sprintf("%x", sha256.Sum256(raw))}, Labels: map[string]string{ownerLabel: "test", idLabel: testID}}, Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue}}}}
 	pod := corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Labels: job.Labels, OwnerReferences: []metav1.OwnerReference{{Name: job.Name, UID: job.UID, Kind: "Job", Controller: &controller}}}}
 	output := strings.Repeat("x", backend.MaxLogBytes+10)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -47,7 +47,7 @@ func TestLogPrefix(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _ := New(client, "workloads", "test")
+	b, _ := testBackend(client, "workloads", "test")
 	chunk, err := b.Logs(context.Background(), ref, backend.MaxLogBytes-3, 10)
 	if err != nil {
 		t.Fatal(err)

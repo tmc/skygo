@@ -1,0 +1,57 @@
+{
+  "source_commit": "ddb7d6e70b3bc2e344f501a1bc24021f09a8a3ba",
+  "source_tree": "0458bb4940b0df270d3ee69df51f4bd34ef97185",
+  "producer": "new test-only cmd/b1fixture/main.go calling unchanged signed predecessor Store/auth APIs; all other source files from git archive",
+  "qualification": "Exact predecessor logical durable bytes; running is trusted simulated state, no native process execution",
+  "files": {
+    "ddb7-source.tar": "c35dbb7852e51d830a1e92eb2d6be6ea13860944768eb8a8b35ebaa66fb63f19",
+    "source/cmd/b1fixture/main.go": "70ae3e9861c26575ce35329270a8b641bdc1d7d1d5001705acace1ad66362e70",
+    "source/internal/store/store.go": "00d07ccec829b718ce46bf6f177b775233cda19c73b4314d501d320d16ee2934",
+    "source/internal/store/schema.go": "89cc20fabf39b3d977bab4d77e30a21578b5870bcd676807c379887a907c5f43",
+    "source/internal/store/scoped.go": "15fb653b4e069c544f53991f97ba415f10e705003c53ba40d32597585b62ebea",
+    "schema1.json": "2b90b4c29734505f68db6d35f8a5b371641828acfccebe23486a0b2a1aa5b9bf",
+    "schema2.json": "a53ed85191f01f445dcf10d48c170a52fd4edef455b4484df6c8cdd14d0a064b"
+  },
+  "fixtures": {
+    "schema1": {
+      "schema": 1,
+      "scoped": false,
+      "job_count": 3,
+      "states": [
+        "queued",
+        "running",
+        "running"
+      ],
+      "targets": [
+        "kubernetes",
+        "local",
+        "local"
+      ]
+    },
+    "schema2": {
+      "schema": 2,
+      "scoped": true,
+      "job_count": 3,
+      "states": [
+        "queued",
+        "running",
+        "running"
+      ],
+      "targets": [
+        "kubernetes",
+        "local",
+        "local"
+      ]
+    }
+  },
+  "workload": {
+    "argv": [
+      "./legacy-workload",
+      "-test.run=^TestLegacyWorkload$"
+    ],
+    "env": {
+      "SKYGO_LEGACY_WORKLOAD": "success"
+    },
+    "notes": "Caller may supply matching Go test executable without rewriting accepted task; stored Running states were explicitly synthesized by trusted predecessor Store.Update, no PID adoption/runtime claim."
+  }
+}

@@ -34,7 +34,7 @@ func TestTargetRemovedAndRestored(t *testing.T) {
 			}
 			defer s.Close()
 			b := &configuredBackend{}
-			c, err := New(s, []backend.Target{{Name: "local", Backend: b}}, testEngine)
+			c, err := New(s, []backend.Target{{Name: "local", Binding: "test-binding", Backend: b}}, testEngine)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -50,18 +50,18 @@ func TestTargetRemovedAndRestored(t *testing.T) {
 			}
 			// Configuration is fixed for each daemon. A replacement configuration
 			// may omit the original target without changing durable execution state.
-			missing, err := New(s, []backend.Target{{Name: "replacement", Backend: b}}, testEngine)
+			missing, err := New(s, []backend.Target{{Name: "replacement", Binding: "test-binding", Backend: b}}, testEngine)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := missing.reconcile(context.Background()); err != nil {
+			if err := reconcileStep(t, missing); err != nil {
 				t.Fatal(err)
 			}
 			got, err := c.Get(testActor(), j.ID)
 			if err != nil || got.Status.State != state || got.Status.Reason != "target is not configured" {
 				t.Fatalf("missing target: %+v, %v", got, err)
 			}
-			if err := missing.reconcile(context.Background()); err != nil {
+			if err := reconcileStep(t, missing); err != nil {
 				t.Fatal(err)
 			}
 			again, err := c.Get(testActor(), j.ID)
@@ -71,14 +71,14 @@ func TestTargetRemovedAndRestored(t *testing.T) {
 			if b.starts != 0 {
 				t.Fatalf("missing target started %d jobs", b.starts)
 			}
-			if err := c.reconcile(context.Background()); err != nil {
+			if err := reconcileStep(t, c); err != nil {
 				t.Fatal(err)
 			}
 			got, err = c.Get(testActor(), j.ID)
 			if err != nil || got.Status.State != backend.Running || got.Status.Reason != "" {
 				t.Fatalf("restored target: %+v, %v", got, err)
 			}
-			if err := c.reconcile(context.Background()); err != nil {
+			if err := reconcileStep(t, c); err != nil {
 				t.Fatal(err)
 			}
 			wantStarts := 0
@@ -99,21 +99,21 @@ func TestCancelQueuedWithMissingTarget(t *testing.T) {
 	}
 	defer s.Close()
 	b := &configuredBackend{}
-	c, err := New(s, []backend.Target{{Name: "replacement", Backend: b}}, testEngine)
+	c, err := New(s, []backend.Target{{Name: "replacement", Binding: "test-binding", Backend: b}}, testEngine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	j, err := s.Submit(testActor(), "one", backend.Task{Argv: []string{"work"}}, "removed")
+	j, err := s.Submit(testActor(), "one", backend.Task{Argv: []string{"work"}}, "removed", "test-binding")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.reconcile(context.Background()); err != nil {
+	if err := reconcileStep(t, c); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := c.Cancel(testActor(), j.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.reconcile(context.Background()); err != nil {
+	if err := reconcileStep(t, c); err != nil {
 		t.Fatal(err)
 	}
 	got, err := c.Get(testActor(), j.ID)

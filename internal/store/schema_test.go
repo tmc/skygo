@@ -105,7 +105,7 @@ func TestLegacyMigrationPreservesRecordsAndIdentity(t *testing.T) {
 		if len(task.Env) == 0 {
 			task.Env = map[string]string{}
 		}
-		got, err := s.Submit(testActor(), binding.request, task, "replacement")
+		got, err := s.Submit(testActor(), binding.request, task, "replacement", "test-binding")
 		if err != nil || got.ID != binding.job.ID || got.Target != binding.job.Target || got.Sequence != binding.job.Sequence {
 			t.Fatalf("retry: %+v %v", got, err)
 		}
@@ -121,7 +121,7 @@ func TestLegacyMigrationPreservesRecordsAndIdentity(t *testing.T) {
 			total += uint64(len(taskRaw))
 		}
 		m := tx.Bucket(metadataBucket)
-		if !bytes.Equal(m.Get(schemaKey), sequenceKey(1)) {
+		if !bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) {
 			t.Error("missing schema fence")
 		}
 		if !bytes.Equal(m.Get(taskBytesKey), sequenceKey(total)) {
@@ -146,7 +146,7 @@ func TestSchemaRefusedWithoutWrites(t *testing.T) {
 			name   string
 			value  []byte
 			future bool
-		}{{"future", sequenceKey(3), true}, {"malformed", []byte{1}, false}} {
+		}{{"future", sequenceKey(schemaVersion + 1), true}, {"malformed", []byte{1}, false}} {
 			t.Run(marker.name+map[bool]string{false: "/synced", true: "/unsynced"}[unsynced], func(t *testing.T) {
 				dir := t.TempDir()
 				legacyFixture(t, dir, unsynced)
@@ -229,7 +229,7 @@ func TestLegacyCanonicalTaskV1(t *testing.T) {
 		{"sorted-env", backend.Task{Argv: []string{"work"}, Env: map[string]string{"Z": "2", "A": "1"}, CPUMillis: 1, TimeoutSeconds: 2}, `{"argv":["work"],"env":{"A":"1","Z":"2"},"cpu_millis":1,"timeout_seconds":2}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			raw, err := json.Marshal(test.task)
+			raw, err := backend.TaskBytes(test.task)
 			if err != nil || string(raw) != test.want {
 				t.Fatalf("canonical hash input changed: %s %v", raw, err)
 			}

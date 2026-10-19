@@ -8,8 +8,34 @@ import (
 	"strings"
 
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/store"
 )
+
+func ExampleStore_BindLegacyLocal() {
+	dir, err := os.MkdirTemp("", "skygo-local-migration-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	s, err := store.Open(filepath.Join(dir, "state"))
+	if err != nil {
+		panic(err)
+	}
+	defer s.Close()
+	// Only actual built-in executor construction permits this migration.
+	executor, err := local.New(filepath.Join(dir, "logs"))
+	if err != nil {
+		panic(err)
+	}
+	defer executor.Close()
+	binding, err := backend.LocalBinding(s.Owner())
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(s.BindLegacyLocal(binding))
+	// Output: <nil>
+}
 
 // exampleStore gives each runnable example a private, disposable database.
 func exampleStore() (*store.Store, func()) {
@@ -34,7 +60,7 @@ func Example() {
 	s, close := exampleStore()
 	defer close()
 	task := backend.Task{Argv: []string{"trainer"}}
-	job, err := s.Submit(testActor(), "training-1", task, "local")
+	job, err := s.Submit(testActor(), "training-1", task, "local", "test-binding")
 	same, found, lookupErr := s.Lookup(testActor(), "training-1", task)
 	fmt.Println(job.Status.State, err, found, lookupErr, same.ID == job.ID)
 	// Output: queued <nil> true <nil> true
@@ -43,7 +69,7 @@ func Example() {
 func ExampleStore_Get() {
 	s, close := exampleStore()
 	defer close()
-	accepted, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local")
+	accepted, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local", "test-binding")
 	if err != nil {
 		panic(err)
 	}
@@ -55,7 +81,7 @@ func ExampleStore_Get() {
 func ExampleStore_List() {
 	s, close := exampleStore()
 	defer close()
-	if _, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local"); err != nil {
+	if _, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local", "test-binding"); err != nil {
 		panic(err)
 	}
 	last, err := s.LastSequence()
@@ -70,7 +96,7 @@ func ExampleStore_List() {
 func ExampleStore_Update() {
 	s, close := exampleStore()
 	defer close()
-	job, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local")
+	job, err := s.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}}, "local", "test-binding")
 	if err != nil {
 		panic(err)
 	}
@@ -180,7 +206,7 @@ func ExampleStore_ActivateScoped() {
 func ExampleStore_GetFor() {
 	s, actor, close := exampleScopedStore()
 	defer close()
-	accepted, err := s.Submit(actor, "training", backend.Task{Argv: []string{"trainer"}}, "local")
+	accepted, err := s.Submit(actor, "training", backend.Task{Argv: []string{"trainer"}}, "local", "test-binding")
 	if err != nil {
 		panic(err)
 	}
@@ -208,7 +234,7 @@ func ExampleStore_ListFor() {
 func ExampleStore_UpdateFor() {
 	s, actor, close := exampleScopedStore()
 	defer close()
-	accepted, err := s.Submit(actor, "training", backend.Task{Argv: []string{"trainer"}}, "local")
+	accepted, err := s.Submit(actor, "training", backend.Task{Argv: []string{"trainer"}}, "local", "test-binding")
 	if err != nil {
 		panic(err)
 	}

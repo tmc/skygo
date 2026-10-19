@@ -4,11 +4,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"path"
 	"sort"
 	"sync"
@@ -22,59 +22,24 @@ import (
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/clientcmd"
 )
 
 const (
-	ownerLabel     = "skygo.tmc.dev/owner"
-	idLabel        = "skygo.tmc.dev/id"
-	taskAnnotation = "skygo.tmc.dev/task-sha256"
+	ownerLabel        = "skygo.tmc.dev/owner"
+	idLabel           = "skygo.tmc.dev/id"
+	taskAnnotation    = "skygo.tmc.dev/task-sha256"
+	bindingAnnotation = "skygo.tmc.dev/target-binding"
 )
 
 // Backend executes native Kubernetes Jobs in a single namespace.
-// Construct one with New or FromConfig; the zero value is not usable.
+// Construct one with FromTarget or FromConfig; the zero value is not usable.
 type Backend struct {
 	client           kubernetes.Interface
 	namespace, owner string
+	binding          string
+	policy           ResourcePolicy
 	mu               sync.Mutex
 	canceled         map[string]bool
-}
-
-// New binds a client to an explicit namespace and stable operator owner label.
-func New(client kubernetes.Interface, namespace, owner string) (*Backend, error) {
-	if client == nil {
-		return nil, errors.New("kubernetes client is required")
-	}
-	if namespace == "" || len(validation.IsDNS1123Label(namespace)) != 0 {
-		return nil, errors.New("invalid kubernetes namespace")
-	}
-	if owner == "" || len(validation.IsValidLabelValue(owner)) != 0 {
-		return nil, errors.New("invalid kubernetes owner")
-	}
-	return &Backend{client: client, namespace: namespace, owner: owner, canceled: make(map[string]bool)}, nil
-}
-
-// FromConfig uses in-cluster credentials when both kubeconfig and context are
-// empty. Otherwise it loads the requested kubeconfig context.
-func FromConfig(kubeconfig, contextName, namespace, owner string) (*Backend, error) {
-	var config *rest.Config
-	var err error
-	if kubeconfig == "" && contextName == "" {
-		config, err = rest.InClusterConfig()
-	} else {
-		rules := clientcmd.NewDefaultClientConfigLoadingRules()
-		rules.ExplicitPath = kubeconfig
-		config, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: contextName}).ClientConfig()
-	}
-	if err != nil {
-		return nil, fmt.Errorf("load kubernetes configuration: %w", err)
-	}
-	client, err := kubernetes.NewForConfig(config)
-	if err != nil {
-		return nil, fmt.Errorf("create kubernetes client: %w", err)
-	}
-	return New(client, namespace, owner)
 }
 
 // Check validates capability requirements without making network requests.
@@ -94,12 +59,12 @@ func (b *Backend) Check(t backend.Task) error {
 	if (t.Accelerator == "") != (t.AcceleratorCount == 0) {
 		return errors.New("accelerator and count must be specified together")
 	}
-	if t.Accelerator != "" && t.Accelerator != "nvidia" {
-		return errors.New("kubernetes supports only the nvidia accelerator")
+	if err := b.checkPolicy(t); err != nil {
+		return err
 	}
 	for k := range t.Env {
 		if len(validation.IsEnvVarName(k)) != 0 {
-			return fmt.Errorf("invalid environment name %q", k)
+			return errors.New("invalid environment name")
 		}
 	}
 	return nil
@@ -114,14 +79,20 @@ func jobName(id string) (string, error) {
 }
 
 func (b *Backend) owned(j *batchv1.Job, id string) error {
-	if j.Labels[ownerLabel] != b.owner || j.Labels[idLabel] != id {
+	if j.Labels[ownerLabel] != b.owner || j.Labels[idLabel] != id || j.UID == "" {
 		return fmt.Errorf("%w: kubernetes job ownership differs", backend.ErrIdentityMismatch)
+	}
+	if j.Annotations[bindingAnnotation] != b.binding {
+		return fmt.Errorf("%w: kubernetes target binding differs", backend.ErrIdentityMismatch)
 	}
 	return nil
 }
 
 // Start creates a Job or adopts an existing Job with the same owner and task.
 func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
+	if b.binding == "" {
+		return fmt.Errorf("%w: kubernetes target is unbound", backend.ErrIdentityMismatch)
+	}
 	if err := b.Check(t); err != nil {
 		return err
 	}
@@ -129,7 +100,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if err != nil {
 		return err
 	}
-	raw, err := json.Marshal(t)
+	raw, err := backend.TaskBytes(t)
 	if err != nil {
 		return err
 	}
@@ -145,10 +116,17 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 		resources[corev1.ResourceMemory] = *resource.NewQuantity(t.MemoryBytes, resource.BinarySI)
 	}
 	limits := corev1.ResourceList{}
+	if t.CPULimitMillis > 0 {
+		limits[corev1.ResourceCPU] = *resource.NewMilliQuantity(t.CPULimitMillis, resource.DecimalSI)
+	}
+	if t.MemoryLimitBytes > 0 {
+		limits[corev1.ResourceMemory] = *resource.NewQuantity(t.MemoryLimitBytes, resource.BinarySI)
+	}
 	if t.AcceleratorCount > 0 {
 		q := *resource.NewQuantity(int64(t.AcceleratorCount), resource.DecimalSI)
-		resources["nvidia.com/gpu"] = q
-		limits["nvidia.com/gpu"] = q
+		name := corev1.ResourceName(b.policy.Accelerators[t.Accelerator].ResourceName)
+		resources[name] = q
+		limits[name] = q
 	}
 	keys := make([]string, 0, len(t.Env))
 	for k := range t.Env {
@@ -163,7 +141,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	j := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: b.namespace, Labels: jobLabels,
-			Annotations: map[string]string{taskAnnotation: hash},
+			Annotations: map[string]string{taskAnnotation: hash, bindingAnnotation: b.binding},
 		},
 		Spec: batchv1.JobSpec{
 			BackoffLimit: &zero, Parallelism: &one, Completions: &one,
@@ -172,6 +150,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 				Spec: corev1.PodSpec{
 					AutomountServiceAccountToken: &automount,
 					RestartPolicy:                corev1.RestartPolicyNever,
+					NodeSelector:                 maps.Clone(t.NodeSelector),
 					Containers: []corev1.Container{{
 						Name: "task", Image: t.Image, Command: t.Argv,
 						Env: env, WorkingDir: t.Directory,
@@ -202,6 +181,9 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 }
 
 func (b *Backend) get(ctx context.Context, ref backend.Reference) (*batchv1.Job, error) {
+	if b.binding == "" || ref.Binding != b.binding {
+		return nil, fmt.Errorf("%w: kubernetes target binding differs", backend.ErrIdentityMismatch)
+	}
 	id := ref.ID
 	name, err := jobName(id)
 	if err != nil {
@@ -214,7 +196,7 @@ func (b *Backend) get(ctx context.Context, ref backend.Reference) (*batchv1.Job,
 	if err := b.owned(j, id); err != nil {
 		return nil, err
 	}
-	raw, err := json.Marshal(ref.Task)
+	raw, err := backend.TaskBytes(ref.Task)
 	if err != nil {
 		return nil, err
 	}
@@ -232,6 +214,9 @@ func (b *Backend) pods(ctx context.Context, j *batchv1.Job, id string) ([]corev1
 	}
 	var pods []corev1.Pod
 	for _, p := range list.Items {
+		if p.Labels[ownerLabel] != b.owner || p.Labels[idLabel] != id {
+			continue
+		}
 		for _, ref := range p.OwnerReferences {
 			if ref.UID == j.UID && ref.Kind == "Job" && ref.Name == j.Name && ref.Controller != nil && *ref.Controller {
 				pods = append(pods, p)
@@ -243,7 +228,8 @@ func (b *Backend) pods(ctx context.Context, j *batchv1.Job, id string) ([]corev1
 }
 
 // Observe reports controller state; a missing Job is Unknown unless cancellation
-// was requested through this Backend instance. It never recreates missing Jobs.
+// was successfully delivered for an observed UID through this Backend instance.
+// It never recreates missing Jobs.
 func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
 	id := ref.ID
 	j, err := b.get(ctx, ref)
@@ -294,9 +280,6 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	id := ref.ID
 	j, err := b.get(ctx, ref)
 	if apierrors.IsNotFound(err) {
-		b.mu.Lock()
-		b.canceled[id] = true
-		b.mu.Unlock()
 		return nil
 	}
 	if err != nil {
@@ -310,7 +293,10 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	}
 	policy := metav1.DeletePropagationForeground
 	err = b.client.BatchV1().Jobs(b.namespace).Delete(ctx, j.Name, metav1.DeleteOptions{PropagationPolicy: &policy, Preconditions: &metav1.Preconditions{UID: &j.UID}})
-	if err != nil && !apierrors.IsNotFound(err) {
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
 		return err
 	}
 	b.mu.Lock()

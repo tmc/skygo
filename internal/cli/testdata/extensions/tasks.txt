@@ -1,0 +1,48 @@
+skygo --json plan -f task.yaml
+stdout '"target": *"chosen"'
+! stderr .
+skygo --json run -f task.yaml --request-id stable --wait
+stdout '"cpu_limit_millis": *"200"'
+stdout '"memory_limit_bytes": *"2048"'
+stdout '"target_labels": *\{"pool": *"batch"\}'
+stdout '"node_selector": *\{"zone": *"west"\}'
+stderr 'request-id: stable'
+skygo --json run -f task.yaml --request-id stable
+stdout '"target": *"chosen"'
+skygo info --target chosen --require resource-limits-v1,node-selector-v1,target-labels-v1
+stdout 'resource-limits-v1,node-selector-v1,target-labels-v1'
+! skygo run -f unknown.yaml
+stderr 'field ignored not found'
+! stdout .
+! skygo run -f duplicate.yaml
+stderr 'already defined'
+! stdout .
+! skygo run -f wrong-type.yaml
+stderr 'cannot unmarshal'
+! stdout .
+# The old server ignores newer task fields. Discovery must fence both commands.
+! skygo --endpoint $OLD_SERVER plan -f task.yaml
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+! skygo --endpoint $OLD_SERVER run -f task.yaml --request-id refused
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+-- task.yaml --
+argv: [program, 雪]
+env: {A: B}
+target: chosen
+cpu_millis: 100
+memory_bytes: 1024
+cpu_limit_millis: 200
+memory_limit_bytes: 2048
+target_labels: {pool: batch}
+node_selector: {zone: west}
+-- unknown.yaml --
+argv: [program]
+ignored: true
+-- duplicate.yaml --
+argv: [program]
+node_selector: {zone: west, zone: east}
+-- wrong-type.yaml --
+argv: [program]
+node_selector: [zone, west]

@@ -24,7 +24,8 @@ func isScoped(tx *bolt.Tx) bool {
 }
 
 // ActivateScoped atomically assigns historical work to legacy and activates
-// schema 2. Call only while stopped, under this Store's exclusive writer lock,
+// scoped authentication without downgrading the store format. Call only while
+// stopped, under this Store's exclusive writer lock,
 // after preparing the separately backed-up installation-bound auth file.
 func (s *Store) ActivateScoped() error {
 	err := s.db.Update(activateScoped)
@@ -41,6 +42,9 @@ func activateScoped(tx *bolt.Tx) error {
 	}
 	if isScoped(tx) {
 		return errors.New("scoped authentication already active")
+	}
+	if err := initialize(tx, string(tx.Bucket(metadataBucket).Get([]byte("owner")))); err != nil {
+		return err
 	}
 	for _, name := range [][]byte{jobPrincipalsBucket, principalRequestsBucket, principalIndexBucket, auditBucket} {
 		if _, err := tx.CreateBucket(name); err != nil {
@@ -75,7 +79,7 @@ func activateScoped(tx *bolt.Tx) error {
 	if err := m.Put(scopedKey, []byte{1}); err != nil {
 		return err
 	}
-	if err := m.Put(schemaKey, sequenceKey(2)); err != nil {
+	if err := m.Put(schemaKey, sequenceKey(schemaVersion)); err != nil {
 		return err
 	}
 	return validateScoped(tx)
@@ -213,9 +217,13 @@ func validateScoped(tx *bolt.Tx) error {
 		n = binary.BigEndian.Uint64(v)
 	}
 	active := isScoped(tx)
-	if n != 2 {
-		if m.Get(scopedKey) != nil {
-			return errors.New("scoped mode requires schema 2")
+	flag := m.Get(scopedKey)
+	if m.Bucket(scopedKey) != nil || flag != nil && !active {
+		return errors.New("invalid scoped mode flag")
+	}
+	if !active {
+		if n == 2 {
+			return errors.New("schema 2 requires scoped mode")
 		}
 		for _, name := range [][]byte{jobPrincipalsBucket, principalRequestsBucket, principalIndexBucket, auditBucket} {
 			if tx.Bucket(name) != nil {
@@ -224,8 +232,8 @@ func validateScoped(tx *bolt.Tx) error {
 		}
 		return nil
 	}
-	if !active {
-		return errors.New("schema 2 requires scoped mode")
+	if n != 2 && n != schemaVersion {
+		return errors.New("scoped mode requires a supported format")
 	}
 	owners, requests, indexes := tx.Bucket(jobPrincipalsBucket), tx.Bucket(principalRequestsBucket), tx.Bucket(principalIndexBucket)
 	if owners == nil || requests == nil || indexes == nil {

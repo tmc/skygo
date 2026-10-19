@@ -29,7 +29,7 @@ func exampleControl() (*control.Control, func()) {
 		os.RemoveAll(dir)
 		panic(err)
 	}
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}}, testEngine)
+	c, err := control.New(s, []backend.Target{{Name: "local", Binding: "test-binding", Kind: "local", Backend: b}}, testEngine)
 	if err != nil {
 		b.Close()
 		s.Close()

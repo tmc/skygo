@@ -65,6 +65,12 @@ func (b *Backend) Check(t backend.Task) error {
 	if t.Image != "" || t.CPUMillis != 0 || t.MemoryBytes != 0 || t.Accelerator != "" || t.AcceleratorCount != 0 {
 		return errors.New("local execution does not support images or resource requests")
 	}
+	if t.CPULimitMillis != 0 || t.MemoryLimitBytes != 0 {
+		return errors.New("local execution does not support resource limits")
+	}
+	if len(t.NodeSelector) != 0 {
+		return errors.New("local execution does not support node selectors")
+	}
 	if t.Directory != "" && !filepath.IsAbs(t.Directory) {
 		return errors.New("directory must be absolute")
 	}

@@ -1,0 +1,47 @@
+{
+  "format": "S04 design vectors, not executed qualification",
+  "cases": [
+    {
+      "name": "kubernetes-baseline",
+      "compact_json": "{\"format\":\"skygo-kubernetes-target-v1\",\"kind\":\"kubernetes\",\"server\":\"https://127.0.0.1:6443\",\"namespace\":\"skygo-a\",\"labels\":{\"location\":\"lab\"},\"tls_server_name\":\"\",\"ca_sha256\":\"c8874cb8dfa8ddd4e97c9c27df8b88ad7ab6b6585c836696a01127fc8ebe106f\",\"insecure_skip_verify\":false,\"policy\":{\"max_cpu_millis\":0,\"max_memory_bytes\":0,\"max_accelerators\":0,\"accelerators\":{\"nvidia\":{\"resource_name\":\"nvidia.com/gpu\",\"required_node_selector\":{}}},\"node_selectors\":{}}}",
+      "binding": "sha256:186eb3bf290a56eb9a4c2507a0edd8359ff88290be33472970b6d470569ff559",
+      "notes": "Derived from normalized loaded routing config, no credentials."
+    },
+    {
+      "name": "credential-context-path-rotation",
+      "compact_json": "{\"format\":\"skygo-kubernetes-target-v1\",\"kind\":\"kubernetes\",\"server\":\"https://127.0.0.1:6443\",\"namespace\":\"skygo-a\",\"labels\":{\"location\":\"lab\"},\"tls_server_name\":\"\",\"ca_sha256\":\"c8874cb8dfa8ddd4e97c9c27df8b88ad7ab6b6585c836696a01127fc8ebe106f\",\"insecure_skip_verify\":false,\"policy\":{\"max_cpu_millis\":0,\"max_memory_bytes\":0,\"max_accelerators\":0,\"accelerators\":{\"nvidia\":{\"resource_name\":\"nvidia.com/gpu\",\"required_node_selector\":{}}},\"node_selectors\":{}}}",
+      "binding": "sha256:186eb3bf290a56eb9a4c2507a0edd8359ff88290be33472970b6d470569ff559",
+      "notes": "Same projection/digest: changed credential/context/file-path inputs are excluded; constructor tests must prove exclusion."
+    },
+    {
+      "name": "namespace-changed",
+      "compact_json": "{\"format\":\"skygo-kubernetes-target-v1\",\"kind\":\"kubernetes\",\"server\":\"https://127.0.0.1:6443\",\"namespace\":\"skygo-b\",\"labels\":{\"location\":\"lab\"},\"tls_server_name\":\"\",\"ca_sha256\":\"c8874cb8dfa8ddd4e97c9c27df8b88ad7ab6b6585c836696a01127fc8ebe106f\",\"insecure_skip_verify\":false,\"policy\":{\"max_cpu_millis\":0,\"max_memory_bytes\":0,\"max_accelerators\":0,\"accelerators\":{\"nvidia\":{\"resource_name\":\"nvidia.com/gpu\",\"required_node_selector\":{}}},\"node_selectors\":{}}}",
+      "binding": "sha256:986d6e2321526b0f0aca3f8e680584a92a1bf0758a6fe881219a4f7ee74090e1",
+      "notes": "Old accepted work held, no alias rebinding."
+    },
+    {
+      "name": "check-policy-changed",
+      "compact_json": "{\"format\":\"skygo-kubernetes-target-v1\",\"kind\":\"kubernetes\",\"server\":\"https://127.0.0.1:6443\",\"namespace\":\"skygo-a\",\"labels\":{\"location\":\"lab\"},\"tls_server_name\":\"\",\"ca_sha256\":\"c8874cb8dfa8ddd4e97c9c27df8b88ad7ab6b6585c836696a01127fc8ebe106f\",\"insecure_skip_verify\":false,\"policy\":{\"max_cpu_millis\":2000,\"max_memory_bytes\":0,\"max_accelerators\":0,\"accelerators\":{\"nvidia\":{\"resource_name\":\"nvidia.com/gpu\",\"required_node_selector\":{}}},\"node_selectors\":{}}}",
+      "binding": "sha256:cc9786de68fb995e450e3ed52f480bbe6af8c352d67d6f98088b3fe744dc34c5",
+      "notes": "Backend.Check policy is binding input."
+    },
+    {
+      "name": "placement-label-changed",
+      "compact_json": "{\"format\":\"skygo-kubernetes-target-v1\",\"kind\":\"kubernetes\",\"server\":\"https://127.0.0.1:6443\",\"namespace\":\"skygo-a\",\"labels\":{\"location\":\"other\"},\"tls_server_name\":\"\",\"ca_sha256\":\"c8874cb8dfa8ddd4e97c9c27df8b88ad7ab6b6585c836696a01127fc8ebe106f\",\"insecure_skip_verify\":false,\"policy\":{\"max_cpu_millis\":0,\"max_memory_bytes\":0,\"max_accelerators\":0,\"accelerators\":{\"nvidia\":{\"resource_name\":\"nvidia.com/gpu\",\"required_node_selector\":{}}},\"node_selectors\":{}}}",
+      "binding": "sha256:7b7217ea2649d05af5122e7112b909f70f5980e882db5d2120821f0ab793069e",
+      "notes": "Hard target-label placement facts are immutable binding input."
+    },
+    {
+      "name": "system-roots",
+      "compact_json": "{\"format\":\"skygo-kubernetes-target-v1\",\"kind\":\"kubernetes\",\"server\":\"https://127.0.0.1:6443\",\"namespace\":\"skygo-a\",\"labels\":{\"location\":\"lab\"},\"tls_server_name\":\"\",\"ca_sha256\":\"system-roots\",\"insecure_skip_verify\":false,\"policy\":{\"max_cpu_millis\":0,\"max_memory_bytes\":0,\"max_accelerators\":0,\"accelerators\":{\"nvidia\":{\"resource_name\":\"nvidia.com/gpu\",\"required_node_selector\":{}}},\"node_selectors\":{}}}",
+      "binding": "sha256:d8159a158839dfd18454c9df612443194f57a93950b30aa0ed234c52917acc93",
+      "notes": "Marker explicit, not physical-cluster proof."
+    },
+    {
+      "name": "built-in-local",
+      "compact_json": "{\"format\":\"skygo-local-target-v1\",\"installation\":\"0123456789abcdef0123456789abcdef\",\"kind\":\"local\"}",
+      "binding": "sha256:144481267d9841772b470124aeae800db7143265da3bb29f98457197c0bce382",
+      "notes": "Only actual server-created local backend; logical installation identity, no physical host/PID recovery."
+    }
+  ]
+}

@@ -105,7 +105,7 @@ func scoped(t *testing.T, b *logBackend) *scopedFixture {
 	done := make(chan struct{})
 	go func() { defer close(done); f.engine.Run(ctx) }()
 	t.Cleanup(func() { cancel(); <-done })
-	f.control, err = control.New(s, []backend.Target{{Name: "test", Kind: "test", Backend: b}}, f.engine)
+	f.control, err = control.New(s, []backend.Target{{Name: "test", Kind: "test", Binding: "test-route", Backend: b}}, f.engine)
 	if err != nil {
 		t.Fatal(err)
 	}
