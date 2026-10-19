@@ -1,0 +1,58 @@
+# Durable retry across an outage and a restart of the server executable.
+# Go contract: cli.go:181-188 prints the request ID before sending and names it
+# in the failure, control.go:122-145 binds a request ID to one task in the
+# store, server.go:31-33 kills local processes on shutdown. Request IDs are a
+# Go extension; upstream has no client-chosen submission identity.
+taskfile success.json success
+taskfile hold.json hold
+
+# With no server, submission fails but stays retryable under the same ID.
+! skygo run -f success.json --request-id outage
+stderr '^request-id: outage\n'
+stderr 'submit \(retry with --request-id outage\): unavailable: '
+! stdout .
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'
+
+server start
+skygo --json run -f success.json --request-id outage --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+job-id OUTAGE
+
+# The data directory has one writer; a second server is refused.
+! skygo server --listen 127.0.0.1:0 --data-dir $DATA
+stderr '^open job database: timeout\n$'
+
+skygo --json run -f hold.json --request-id hold
+job-id HOLD
+await-file ready
+server stop
+! stderr .
+! skygo jobs get $HOLD
+stderr '^unavailable: '
+rm ready
+
+server start
+# Bindings survive the restart: the same request returns the same job, and
+# the ID still refuses a different task.
+skygo --json run -f success.json --request-id outage
+stdout '"id": *"'$OUTAGE'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+! skygo run -f hold.json --request-id outage
+stderr 'already_exists'
+
+# Shutdown killed the local workload. The restarted server cannot observe it,
+# reports it unknown, keeps its retained output and does not start it again.
+! skygo --json run -f hold.json --request-id hold --wait
+stdout '"id": *"'$HOLD'"'
+stdout '"state": *"JOB_STATE_UNKNOWN"'
+stdout '"reason": *"execution is not owned by this server"'
+skygo jobs logs $HOLD
+stdout '^holding\n$'
+! exists ready
+skygo jobs list
+stdout '^ID +TARGET +STATE\n'$OUTAGE' +local +succeeded\n'$HOLD' +local +unknown\n$'
+
+server stop
+! stdout .
+! stderr .

@@ -52,7 +52,11 @@ func TestLocalWorkflow(t *testing.T) {
 // an independent database and executor; it cannot inherit another script's jobs.
 func TestCLIParity(t *testing.T) {
 	exe := filepath.Join(t.TempDir(), "skygo")
-	build := exec.Command("go", "build", "-o", exe, "../../cmd/skygo")
+	args := []string{"build", "-o", exe}
+	if mode := testing.CoverMode(); mode != "" {
+		args = append(args, "-cover", "-covermode="+mode, "-coverpkg=github.com/tmc/skygo/...")
+	}
+	build := exec.Command("go", append(args, "../../cmd/skygo")...)
 	build.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=0")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("build CLI: %v\n%s", err, out)
@@ -63,7 +67,11 @@ func TestCLIParity(t *testing.T) {
 	}
 	for _, file := range files {
 		t.Run(strings.TrimSuffix(filepath.Base(file), ".txt"), func(t *testing.T) {
-			runLocalWorkflow(t, executableScriptEngine(exe, nil, nil), file)
+			var env []string
+			if dir := coverDir(t); dir != "" {
+				env = []string{"GOCOVERDIR=" + dir}
+			}
+			runLocalWorkflow(t, executableScriptEngine(exe, nil, env), file)
 		})
 	}
 }

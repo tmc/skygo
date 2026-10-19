@@ -1,0 +1,54 @@
+# Interrupting a live log follow stops the client, not the job.
+# Go contract: cli.go:292 ("interrupting does not cancel the job"), 296-301
+# (follow uses the command context, not --timeout), main.go:15 (SIGINT
+# cancels that context). Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3
+# command.py:342-359 has the analogous rule for interrupted blocking
+# requests: the request continues and cancellation is a separate command.
+# Server, CLI and workload are all separate processes.
+server start
+taskfile release.json release
+skygo --json run -f release.json --request-id follow
+job-id JOB
+await-file ready
+
+# Attach, wait until the client has printed live output, then interrupt it.
+! skygo jobs logs $JOB --follow &
+await-stdout '^first\n$'
+interrupt
+wait
+stdout '^first\n$'
+# The signal and transport cancellation paths may supply different prose.
+# The stable contract is the canceled classification and unsuccessful exit.
+stderr '^canceled: '
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=1\n$'
+
+# The interrupt neither cancelled nor finished the job, and the workload still
+# reacts to input given after the client went away.
+skygo --json jobs get $JOB
+stdout '"state": *"JOB_STATE_RUNNING"'
+! stdout 'cancel_requested'
+mkdir release
+await-file released
+skygo jobs logs $JOB
+stdout '^first\nsecond\n$'
+
+# A second follower attached to the still-running job ends on its own once an
+# explicit cancellation makes the job terminal.
+skygo jobs logs $JOB --follow &
+await-stdout '^first\nsecond\n$'
+skygo --json jobs cancel $JOB --yes
+stdout '"cancel_requested": *true'
+wait
+stdout '^first\nsecond\n$'
+! stderr .
+! skygo --json run -f release.json --request-id follow --wait
+stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_CANCELED"'
+stdout '"reason": *"canceled by operator"'
+env SKYGO_EXIT_CODE
+stdout '^SKYGO_EXIT_CODE=2\n$'
+
+server stop
+! stdout .
+! stderr .
