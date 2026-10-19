@@ -1,8 +1,9 @@
 # skygo
 
 skygo runs finite, single-node jobs on local Linux/macOS processes or Kubernetes
-Jobs. One Go server owns durable job records; the CLI uses its generated Connect
-API. The root Go module and `skygo` binary have no Kubernetes dependencies.
+Jobs, or directly owned Pods for opt-in retries. One Go server owns durable job
+records; the CLI uses its generated Connect API. The root Go module and `skygo`
+binary have no Kubernetes dependencies.
 The separate `integrations/kubernetes` module builds `skygo-kubernetes`, which
 adds the Kubernetes backend. No Python, Ray, external database, or `kubectl` is
 required by either application.
@@ -57,7 +58,7 @@ skygo plan -f task.yaml
 skygo run -f task.yaml [--request-id ID] [--wait]
 skygo jobs list [--page-size N] [--page-token TOKEN]
 skygo jobs get ID
-skygo jobs logs ID [--follow] [--offset BYTES]
+skygo jobs logs ID [--follow] [--offset BYTES] [--attempt N]
 skygo jobs cancel ID --yes
 ```
 
@@ -91,6 +92,32 @@ For small-team use, [activate scoped authentication](docs/authentication.md).
 Readers and operators see their own work; admins have global read/cancel access.
 Legacy single-operator mode remains explicit. Local execution still trusts
 workloads as the server's OS identity.
+
+## Finite retries
+
+Tasks default to one attempt. An enabled policy selects failed exit codes and
+bounds total attempts, including the first. This illustrative YAML fragment is
+not a complete task:
+
+```yaml
+retry:
+  max_attempts: 3
+  delay_seconds: 2
+  exit_codes: [7]
+```
+
+The server requires positive stopped evidence before another attempt. Unknown
+execution, an ambiguous Start reply, cancellation, timeout or missing evidence
+does not authorize replacement. Local retry requires Linux pidfd support;
+Darwin rejects enabled retry policies. Kubernetes retry uses one directly owned
+Pod per attempt; tasks without a policy retain the Job path. These guarantees
+cover the owned process group or Pod/container, not arbitrary side effects or
+exactly-once execution.
+
+`run --wait` includes retry backoff. `--json jobs get ID` exposes attempt history
+and the next deadline; `jobs logs ID --attempt N` selects a one-based attempt.
+A log stream opened without this flag fixes the current attempt at open and
+never follows a later attempt. See the [retry contract](docs/contracts.md#finite-retries).
 
 ## Kubernetes
 
@@ -133,23 +160,27 @@ installation, authentication, and rollback.
   never automatically relaunched or killed using an old PID. Orphan processes
   can remain. Process-group cancellation cannot contain programs that escape
   their group. Normal shutdown stops owned local processes.
-- Kubernetes uses native Jobs without application retries. A stable Job name
-  and ownership checks support adoption, but execution is not exactly once.
+- Default Kubernetes tasks use native Jobs without application retries. Enabled
+  retry policies use directly owned Pods with UID fences. A stable default Job
+  name and ownership checks support adoption, but execution is not exactly once.
   Unschedulable jobs remain starting. Placement validates capabilities, not
   live capacity or price.
-- Local logs retain the first 1 MiB per job. Kubernetes logs read at most the
+- Local logs retain the first 1 MiB per execution attempt. Kubernetes logs read
+  at most the
   first 1 MiB currently available from the sole owned Pod; kubelet rotation,
   deletion, and eviction can remove or change that prefix. Offsets are not an
   archival cursor. Truncation is explicit; multiple owned Pods are ambiguous.
 - A single locked store retains at most 10,000 job/request bindings, without
   automatic pruning, with accepted task payloads capped at 16 MiB in aggregate.
   Existing request IDs remain retryable at capacity. Budget local log space up to
-  roughly 10 GiB plus metadata. There is no retention management API.
+  roughly 10 GiB for default jobs plus metadata. Retry jobs reserve bounded
+  history accounting and can retain up to 10 MiB of logs each; there is no global
+  physical log-disk quota or retention management API.
 - The controller admits up to 32 starting/running jobs; further jobs remain
   queued. Unknown executions may still exist outside that accounting. Log
   streaming permits 32 concurrent streams, each lasting at most five minutes.
 - No VM provisioning, uploads, SSH, interactive clusters, DAGs, distributed
-  training, automatic rescheduling, model serving, HA, or rolling overlap.
+  training, failover to another target, model serving, HA, or rolling overlap.
   Scoped control-plane access does not isolate workloads from one another.
 
 See [task and API contracts](docs/contracts.md) and the

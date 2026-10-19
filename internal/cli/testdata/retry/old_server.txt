@@ -1,0 +1,26 @@
+# The archived S04 daemon has no SubmitRetryJob method. The new CLI must refuse
+# without falling back to its real SubmitJob or running the marker workload.
+server start
+retry-task retry.json once 1
+! skygo run -f retry.json --request-id old-retry
+stderr 'unimplemented'
+calls SubmitRetryJob 1
+calls SubmitJob 0
+calls PlanTask 0
+calls GetServerInfo 0
+! exists first second
+# The same old daemon still executes a default task through the legacy method.
+retry-task default.json default 0
+! skygo --json run -f default.json --request-id old-default --wait
+stdout '"state": *"JOB_STATE_FAILED"'
+job-id JOB
+exists first
+! exists second
+calls SubmitJob 1
+skygo jobs logs $JOB
+stdout '^attempt one\n$'
+! skygo jobs logs $JOB --attempt 2
+stderr 'attempt'
+calls StreamJobLogs 1
+server stop
+! stderr .

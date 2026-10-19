@@ -1,0 +1,17 @@
+# A lost accepted response is replayed with one request and one attempt sequence.
+server start
+retry-task task.json once 1
+drop-response /skygo.v1.ControlService/SubmitRetryJob
+! skygo --endpoint $PROXY --json run -f task.json --request-id retry-lost
+stderr 'retry-lost'
+! stdout .
+skygo --json run -f task.json --request-id retry-lost --wait
+job-id JOB
+history failed succeeded
+exists first second
+skygo --json jobs get $JOB
+history failed succeeded
+calls SubmitJob 0
+calls PlanTask 0
+server stop
+! stderr .

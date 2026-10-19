@@ -17,6 +17,7 @@ import (
 	"github.com/spf13/cobra"
 	skyv1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/backend"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
@@ -176,7 +177,11 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 			}
 			return nil
 		}
-		if len(taskCapabilities(task)) != 0 {
+		retrying, err := enabledRetry(task)
+		if err != nil {
+			return err
+		}
+		if !retrying && len(taskCapabilities(task)) != 0 {
 			if _, err := o.planTask(ctx, client, task); err != nil {
 				return err
 			}
@@ -192,7 +197,11 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "request-id: %s\n", id); err != nil {
 			return fmt.Errorf("write request id: %w", err)
 		}
-		r, err := client.SubmitJob(ctx, request(o, &skyv1.SubmitJobRequest{Task: task, RequestId: id}))
+		submit := client.SubmitJob
+		if retrying {
+			submit = client.SubmitRetryJob
+		}
+		r, err := submit(ctx, request(o, &skyv1.SubmitJobRequest{Task: task, RequestId: id}))
 		if err != nil {
 			return fmt.Errorf("submit (retry with --request-id %s): %w", id, err)
 		}
@@ -299,9 +308,13 @@ func (o *options) jobs() *cobra.Command {
 	cancelCmd.Flags().BoolVarP(&yes, "yes", "y", false, "Confirm cancellation")
 	var follow bool
 	var offset int64
+	var attempt uint32
 	logs := &cobra.Command{Use: "logs ID", Short: "Read retained logs; interrupting does not cancel the job", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		if offset < 0 {
 			return errors.New("offset must not be negative")
+		}
+		if cmd.Flags().Changed("attempt") && attempt == 0 {
+			return errors.New("attempt must be positive")
 		}
 		ctx := cmd.Context()
 		if !follow {
@@ -309,7 +322,22 @@ func (o *options) jobs() *cobra.Command {
 			ctx, cancel = context.WithTimeout(ctx, o.timeout)
 			defer cancel()
 		}
-		s, err := o.client().StreamJobLogs(ctx, request(o, &skyv1.StreamJobLogsRequest{Id: args[0], Offset: offset, Follow: follow}))
+		client := o.client()
+		if attempt > 1 {
+			checkctx, cancel := context.WithTimeout(ctx, o.timeout)
+			r, err := client.GetJob(checkctx, request(o, &skyv1.GetJobRequest{Id: args[0]}))
+			cancel()
+			if err != nil {
+				return err
+			}
+			if r.Msg.Job == nil {
+				return errors.New("server returned no job")
+			}
+			if attempt > uint32(len(r.Msg.Job.Attempts)) {
+				return errors.New("server returned no such attempt")
+			}
+		}
+		s, err := client.StreamJobLogs(ctx, request(o, &skyv1.StreamJobLogsRequest{Id: args[0], Offset: offset, Follow: follow, Attempt: attempt}))
 		if err != nil {
 			return err
 		}
@@ -334,26 +362,28 @@ func (o *options) jobs() *cobra.Command {
 	}}
 	logs.Flags().BoolVarP(&follow, "follow", "f", false, "Follow until terminal status or interruption")
 	logs.Flags().Int64Var(&offset, "offset", 0, "Byte offset into retained logs")
+	logs.Flags().Uint32Var(&attempt, "attempt", 0, "Read one attempt (one-based; default selects current once)")
 	c.AddCommand(list, get, cancelCmd, logs)
 	return c
 }
 
 // taskFile deliberately exposes only the portable wire fields.
 type taskFile struct {
-	Argv             []string          `yaml:"argv"`
-	Env              map[string]string `yaml:"env"`
-	Directory        string            `yaml:"directory"`
-	Image            string            `yaml:"image"`
-	CPUMillis        int64             `yaml:"cpu_millis"`
-	MemoryBytes      int64             `yaml:"memory_bytes"`
-	Accelerator      string            `yaml:"accelerator"`
-	AcceleratorCount int32             `yaml:"accelerator_count"`
-	Target           string            `yaml:"target"`
-	TimeoutSeconds   int64             `yaml:"timeout_seconds"`
-	CPULimitMillis   int64             `yaml:"cpu_limit_millis"`
-	MemoryLimitBytes int64             `yaml:"memory_limit_bytes"`
-	TargetLabels     map[string]string `yaml:"target_labels"`
-	NodeSelector     map[string]string `yaml:"node_selector"`
+	Argv             []string             `yaml:"argv"`
+	Env              map[string]string    `yaml:"env"`
+	Directory        string               `yaml:"directory"`
+	Image            string               `yaml:"image"`
+	CPUMillis        int64                `yaml:"cpu_millis"`
+	MemoryBytes      int64                `yaml:"memory_bytes"`
+	Accelerator      string               `yaml:"accelerator"`
+	AcceleratorCount int32                `yaml:"accelerator_count"`
+	Target           string               `yaml:"target"`
+	TimeoutSeconds   int64                `yaml:"timeout_seconds"`
+	CPULimitMillis   int64                `yaml:"cpu_limit_millis"`
+	MemoryLimitBytes int64                `yaml:"memory_limit_bytes"`
+	TargetLabels     map[string]string    `yaml:"target_labels"`
+	NodeSelector     map[string]string    `yaml:"node_selector"`
+	Retry            *backend.RetryPolicy `yaml:"retry"`
 }
 
 func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
@@ -389,5 +419,12 @@ func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
 	if len(f.Argv) == 0 {
 		return nil, errors.New("task argv must not be empty")
 	}
-	return &skyv1.Task{Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
+	if _, err := backend.NormalizeRetry(f.Retry); err != nil {
+		return nil, fmt.Errorf("retry: %w", err)
+	}
+	var retry *skyv1.RetryPolicy
+	if f.Retry != nil {
+		retry = &skyv1.RetryPolicy{MaxAttempts: f.Retry.MaxAttempts, DelaySeconds: f.Retry.DelaySeconds, ExitCodes: f.Retry.ExitCodes}
+	}
+	return &skyv1.Task{Retry: retry, Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
 }

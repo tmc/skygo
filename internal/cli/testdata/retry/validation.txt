@@ -1,0 +1,28 @@
+# Syntax and selection validation do not depend on native retry support.
+server start
+! skygo run -f attempts.yaml
+stderr 'attempt'
+! skygo run -f exit.yaml
+stderr 'exit'
+! skygo run -f delay.yaml
+stderr 'delay'
+! skygo jobs logs nonexistent --attempt -1
+stderr 'attempt'
+calls SubmitRetryJob 0
+calls SubmitJob 0
+calls PlanTask 0
+total-calls 0
+skygo --json jobs list
+! stdout '"id":'
+! exists first second
+server stop
+! stderr .
+-- attempts.yaml --
+argv: [must-not-execute]
+retry: {max_attempts: 11, exit_codes: [7]}
+-- exit.yaml --
+argv: [must-not-execute]
+retry: {max_attempts: 2, exit_codes: [0]}
+-- delay.yaml --
+argv: [must-not-execute]
+retry: {max_attempts: 2, delay_seconds: 3601, exit_codes: [7]}

@@ -1,0 +1,31 @@
+# History and both old/invalid attempt log selections enforce object ownership.
+# Token outputs require an explicitly private fixture parent under any umask.
+private-workdir
+env SKYGO_TOKEN=
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+server start
+retry-task task.json once 1
+skygo --token-file alice.token --json run -f task.json --request-id own-retry --wait
+job-id JOB
+history failed succeeded
+! stdout 'sky(go)?_[0-9a-f]{32}_'
+! stderr 'sky(go)?_[0-9a-f]{32}_'
+! skygo --token-file bob.token --json jobs get $JOB
+stderr '^not_found: '
+cp stderr foreign.err
+! skygo --token-file bob.token --json jobs get 00000000000000000000000000000000
+cmp stderr foreign.err
+! skygo --token-file bob.token jobs logs $JOB --attempt 1
+cmp stderr foreign.err
+! skygo --token-file bob.token jobs logs $JOB --attempt 99
+cmp stderr foreign.err
+skygo --token-file alice.token jobs logs $JOB --attempt 1
+stdout '^attempt one\n$'
+skygo --token-file alice.token jobs logs $JOB --attempt 2
+stdout '^attempt two\n$'
+server stop
+! stderr .

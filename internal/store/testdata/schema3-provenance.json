@@ -1,0 +1,19 @@
+{
+  "commit": "89a2123bd36a47475f4feea9ba80c86a4d39ea41",
+  "archive_sha256": "132e72bbac3b4c92660ebe00276d28d42ded077a9c32f3e65867d35abfe19c5c",
+  "tree": "3ea009086126fc09f7dd53f3d4259ddbad6946a5",
+  "fixtures": {
+    "schema3-legacy.json": "645c3ed8913c451f05dac1c9a363c39d0bf35d25959850c9a3630c2fd8e4f3d6",
+    "schema3-scoped.json": "6e3cda1493beb9cf8183d9e397129698002bf9c0c9bbd3b01ab29f5d1cc46b83"
+  },
+  "producer_source_sha256": "4114ae44e7f3915b829c9a6bd62dcb1e4ed729375112a4d930e4def4c97983ad",
+  "producer_binary_sha256": "d6c60448e099f3155c8a0f59f9f67fb4ff3b4c09e6b81523620306bd52eb8d0a",
+  "go": "go1.24.1",
+  "build_flags": [
+    "CGO_ENABLED=0",
+    "-trimpath",
+    "-buildvcs=false",
+    "-mod=readonly"
+  ],
+  "method": "Unmodified archived S04 store/auth/backend source plus external task-owned caller. Store.Submit/Update/ActivateScoped emit genuine format3 legacy and scoped logical buckets. No execution/native claim."
+}

@@ -232,7 +232,7 @@ func validateScoped(tx *bolt.Tx) error {
 		}
 		return nil
 	}
-	if n != 2 && n != schemaVersion {
+	if n != 2 && n != 3 && n != schemaVersion {
 		return errors.New("scoped mode requires a supported format")
 	}
 	owners, requests, indexes := tx.Bucket(jobPrincipalsBucket), tx.Bucket(principalRequestsBucket), tx.Bucket(principalIndexBucket)

@@ -1,0 +1,29 @@
+# Retry one logical job through two actual Linux helper processes.
+server start
+retry-task task.json once 1
+skygo --json run -f task.json --request-id retry-success --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+job-id JOB
+history failed succeeded
+exists first second
+skygo jobs logs $JOB --attempt 1
+stdout '^attempt one\n$'
+! stdout 'attempt two'
+skygo jobs logs $JOB --attempt 2
+stdout '^attempt two\n$'
+! stdout 'attempt one'
+skygo jobs logs $JOB
+stdout '^attempt two\n$'
+! skygo jobs logs $JOB --attempt 3
+stderr 'attempt'
+# Replaying the original request waits for the same completed job and creates
+# neither another logical job nor another helper process.
+skygo --json run -f task.json --request-id retry-success --wait
+stdout '"id": *"'$JOB'"'
+history failed succeeded
+calls SubmitRetryJob 2
+calls SubmitJob 0
+calls PlanTask 0
+calls GetServerInfo 0
+server stop
+! stderr .

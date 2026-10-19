@@ -95,7 +95,7 @@ func runWorker(ctx context.Context, b backend.Backend, input <-chan operation, r
 			result := operationResult{operation: op}
 			if op.kind == startOperation {
 				call, cancel := context.WithTimeout(ctx, 10*time.Second)
-				result.err = b.Start(call, op.job.ID, cloneTask(op.job.Task))
+				result.err = b.Start(call, op.job.CurrentAttemptID(), cloneTask(op.job.Task))
 				cancel()
 			} else {
 				if op.job.CancelRequested {
@@ -108,6 +108,7 @@ func runWorker(ctx context.Context, b backend.Backend, input <-chan operation, r
 				}
 				call, cancel := context.WithTimeout(ctx, 10*time.Second)
 				result.status, result.err = b.Observe(call, reference(op.job))
+				result.status = cloneStatus(result.status)
 				cancel()
 			}
 			select {
@@ -144,15 +145,17 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 	eligible := make(map[string][]backend.Job, len(s.workers))
 	retained := make(map[string]bool, len(s.due))
 	for _, j := range jobs {
-		if _, ok := s.due[j.ID]; ok {
-			retained[j.ID] = true
+		if j.Status.State == backend.Starting || j.Status.State == backend.Running {
+			if _, ok := s.due[j.CurrentAttemptID()]; ok {
+				retained[j.CurrentAttemptID()] = true
+			}
 		}
 	}
 	now := time.Now()
 	pending := make(map[string]bool, len(s.workers))
 	for _, w := range s.workers {
 		if w.pending != nil && w.pending.kind == observeOperation {
-			pending[w.pending.job.ID] = true
+			pending[w.pending.job.CurrentAttemptID()] = true
 		}
 	}
 	for id, deadline := range s.due {
@@ -171,18 +174,16 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 		if j.Status.State.Terminal() {
 			continue
 		}
-		if j.Status.State == backend.Queued && j.CancelRequested {
-			if _, err := c.store.Update(j.ID, func(current *backend.Job) error {
-				if current.Status.State == backend.Queued {
-					current.Status = backend.Status{State: backend.Canceled, Reason: "canceled before execution"}
-				}
-				return nil
-			}); err != nil {
+		if needsStart(j) && j.CancelRequested {
+			if _, _, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), now.UTC()); err != nil {
 				return err
 			}
 			continue
 		}
-		_, reason := c.boundTarget(j)
+		target, reason := c.boundTarget(j)
+		if reason == "" && needsStart(j) && j.Task.Retry != nil && !target.SupportsRetry {
+			reason = unsupportedRetryTarget
+		}
 		if reason != "" {
 			if j.Status.Reason != reason {
 				if _, err := c.store.Update(j.ID, func(current *backend.Job) error { current.Status.Reason = reason; return nil }); err != nil {
@@ -220,15 +221,6 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 		}
 		for k := 0; k < len(candidates); k++ {
 			j := candidates[(first+k)%len(candidates)]
-			if j.Status.State == backend.Queued && active >= 32 {
-				continue
-			}
-			if j.Status.State != backend.Queued {
-				deadline, tracked := s.due[j.ID]
-				if now.Before(deadline) || (!tracked && len(s.due) >= 32) {
-					continue
-				}
-			}
 			current, err := c.store.Get(j.ID)
 			if err != nil {
 				return err
@@ -237,37 +229,45 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 			if j.Status.State.Terminal() {
 				continue
 			}
-			if _, reason := c.boundTarget(j); reason != "" {
+			// Cancellation is independent of due time, placement and capacity.
+			if needsStart(j) && j.CancelRequested {
+				if _, _, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), now.UTC()); err != nil {
+					return err
+				}
+				continue
+			}
+			target, reason := c.boundTarget(j)
+			if reason != "" {
 				continue
 			}
 			kind := observeOperation
-			if j.Status.State == backend.Queued {
-				transitioned := false
-				j, err = c.store.Update(j.ID, func(current *backend.Job) error {
-					if current.Status.State != backend.Queued {
-						return nil
-					}
-					if current.CancelRequested {
-						current.Status = backend.Status{State: backend.Canceled, Reason: "canceled before execution"}
-					} else {
-						current.Status = backend.Status{State: backend.Starting}
-						transitioned = true
-					}
-					return nil
-				})
+			if needsStart(j) {
+				if active >= 32 || (j.Task.Retry != nil && !target.SupportsRetry) {
+					continue
+				}
+				if j.Status.State == backend.Retrying && (j.NextAttemptAt == nil || now.Before(*j.NextAttemptAt)) {
+					continue
+				}
+				var began bool
+				j, began, err = c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), now.UTC())
 				if err != nil {
 					return err
 				}
-				if !transitioned {
+				if !began {
 					continue
 				}
 				active++
 				kind = startOperation
 				s.nextTarget = (i + 1) % len(s.workers)
+			} else {
+				deadline, tracked := s.due[j.CurrentAttemptID()]
+				if now.Before(deadline) || (!tracked && len(s.due) >= 32) {
+					continue
+				}
 			}
-			op := operation{kind: kind, job: j}
+			op := operation{kind: kind, job: cloneJob(j)}
 			if kind == observeOperation {
-				s.due[j.ID] = now.Add(100 * time.Millisecond)
+				s.due[j.CurrentAttemptID()] = now.Add(100 * time.Millisecond)
 			}
 			w.pending = &op
 			w.after = j.Sequence
@@ -278,7 +278,7 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 	return nil
 }
 func sameExecution(a, b backend.Job) bool {
-	if a.ID != b.ID || a.Target != b.Target || a.TargetBinding != b.TargetBinding {
+	if a.ID != b.ID || a.Target != b.Target || a.TargetBinding != b.TargetBinding || a.CurrentAttemptID() != b.CurrentAttemptID() || currentStatus(a).Instance != currentStatus(b).Instance {
 		return false
 	}
 	x, e1 := backend.TaskBytes(a.Task)
@@ -314,7 +314,7 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 	if s.due == nil {
 		s.due = make(map[string]time.Time)
 	}
-	s.due[j.ID] = time.Now().Add(100 * time.Millisecond)
+	s.due[j.CurrentAttemptID()] = time.Now().Add(100 * time.Millisecond)
 	status := r.status
 	if errors.Is(r.err, backend.ErrIdentityMismatch) {
 		status = backend.Status{State: backend.Unknown, Reason: "execution identity mismatch; conflicting workload left untouched"}
@@ -326,11 +326,12 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 	default:
 		return nil
 	}
-	_, err = c.store.Update(j.ID, func(current *backend.Job) error {
-		if !current.Status.State.Terminal() && sameExecution(*current, r.operation.job) {
-			current.Status = status
-		}
-		return nil
-	})
+	if j.Status.State == backend.Running && status.State == backend.Starting {
+		return nil // An older observation cannot move durable execution backward.
+	}
+	observed, err := c.store.ObserveAttempt(j.ID, j.CurrentAttemptID(), cloneStatus(status), time.Now().UTC())
+	if err == nil && (observed.Status.State != backend.Starting && observed.Status.State != backend.Running) {
+		delete(s.due, j.CurrentAttemptID())
+	}
 	return err
 }

@@ -40,7 +40,7 @@ func TestLogsBeforeBackendStart(t *testing.T) {
 			}); err != nil {
 				t.Fatal(err)
 			}
-			chunk, err := c.Logs(context.Background(), testActor(), j.ID, tt.offset)
+			chunk, err := c.Logs(context.Background(), testActor(), j.ID, j.ID, tt.offset)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("Logs error = %v; want %v", err, tt.want)
 			}

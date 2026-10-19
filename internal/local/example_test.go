@@ -92,3 +92,14 @@ func ExampleBackend_Cancel() {
 	// <nil>
 	// canceled
 }
+
+func ExampleBackend_SupportsRetry() {
+	b, close := exampleLocal()
+	defer close()
+	task := exampleTask("fail")
+	if b.SupportsRetry() {
+		task.Retry = &backend.RetryPolicy{MaxAttempts: 2, ExitCodes: []int32{7}}
+	}
+	fmt.Println(b.Check(task))
+	// Output: <nil>
+}

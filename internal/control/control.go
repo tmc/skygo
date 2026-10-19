@@ -1,12 +1,10 @@
 package control
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"regexp"
 	"sort"
 	"strings"
@@ -60,6 +58,11 @@ func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Contro
 
 // Validate rejects malformed tasks before capability checks or side effects.
 func Validate(t backend.Task) error {
+	var err error
+	t, err = normalizeTask(t)
+	if err != nil {
+		return err
+	}
 	if len(t.Argv) == 0 || t.Argv[0] == "" {
 		return fmt.Errorf("%w: argv requires a program", ErrInvalid)
 	}
@@ -120,6 +123,11 @@ func (c *Control) Plan(actor auth.Actor, t backend.Task) (string, []Rejection, e
 	return c.plan(t)
 }
 func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
+	var err error
+	t, err = normalizeTask(t)
+	if err != nil {
+		return "", nil, err
+	}
 	if err := Validate(t); err != nil {
 		return "", nil, err
 	}
@@ -131,6 +139,8 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 			err = fmt.Errorf("target constraint differs")
 		} else if !matchesLabels(target.Labels, t.TargetLabels) {
 			err = fmt.Errorf("target labels differ")
+		} else if t.Retry != nil && !target.SupportsRetry {
+			err = fmt.Errorf("finite job retries are unsupported")
 		} else if (t.CPULimitMillis != 0 || t.MemoryLimitBytes != 0) && !target.SupportsResourceLimits {
 			err = fmt.Errorf("resource limits are unsupported")
 		} else if len(t.NodeSelector) != 0 && !target.SupportsNodeSelector {
@@ -162,6 +172,10 @@ func (c *Control) Submit(actor auth.Actor, requestID string, t backend.Task) (ba
 	}
 	if !requestName.MatchString(requestID) {
 		return backend.Job{}, fmt.Errorf("%w: request_id must contain 1..128 letters, digits, underscores or hyphens", ErrInvalid)
+	}
+	t, err = normalizeTask(t)
+	if err != nil {
+		return backend.Job{}, err
 	}
 	if err := Validate(t); err != nil {
 		return backend.Job{}, err
@@ -294,52 +308,6 @@ func (c *Control) target(name string) (backend.Target, bool) {
 		}
 	}
 	return backend.Target{}, false
-}
-
-// Logs reads a bounded segment; loss and truncation are explicit.
-func (c *Control) Logs(ctx context.Context, actor auth.Actor, id string, offset int64) (backend.LogChunk, error) {
-	actor, err := c.engine.Check(actor, auth.Read)
-	if err != nil {
-		return backend.LogChunk{}, err
-	}
-	if offset < 0 || offset > backend.MaxLogBytes {
-		return backend.LogChunk{}, fmt.Errorf("%w: invalid log offset", ErrInvalid)
-	}
-	j, err := c.Get(actor, id)
-	if err != nil {
-		return backend.LogChunk{}, err
-	}
-	if j.Status.State == backend.Canceled && j.Status.Reason == "canceled before execution" {
-		if offset != 0 {
-			return backend.LogChunk{}, fmt.Errorf("%w: offset past log end", ErrInvalid)
-		}
-		return backend.LogChunk{Complete: true}, nil
-	}
-	if j.Status.State == backend.Queued {
-		if offset != 0 {
-			return backend.LogChunk{}, fmt.Errorf("%w: offset past log end", ErrInvalid)
-		}
-		return backend.LogChunk{}, nil
-	}
-	target, reason := c.boundTarget(j)
-	if reason != "" {
-		return backend.LogChunk{}, ErrUnavailable
-	}
-	chunk, err := target.Backend.Logs(ctx, reference(j), offset, backend.MaxChunkBytes)
-	if err == nil {
-		return chunk, nil
-	}
-	// Starting intent is durable before Start creates the backend's log stream.
-	if j.Status.State == backend.Starting && offset == 0 && errors.Is(err, fs.ErrNotExist) {
-		return backend.LogChunk{}, nil
-	}
-	if errors.Is(err, fs.ErrInvalid) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-		return chunk, err
-	}
-	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, backend.ErrIdentityMismatch) {
-		return chunk, ErrLogsUnavailable
-	}
-	return chunk, fmt.Errorf("%w: backend log read failed", ErrUnavailable)
 }
 
 // Healthy reports whether durable reconciliation has encountered a store error.

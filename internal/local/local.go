@@ -21,10 +21,12 @@ var validID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // Backend owns programs launched during one server lifetime. Use New to create one.
 type Backend struct {
-	mu        sync.Mutex
-	directory string
-	jobs      map[string]*execution
-	closed    bool
+	mu             sync.Mutex
+	directory      string
+	jobs           map[string]*execution
+	closed         bool
+	retryOps       retryProcessOps
+	retryAvailable bool
 }
 
 type execution struct {
@@ -32,6 +34,7 @@ type execution struct {
 	status backend.Status
 	done   chan struct{}
 	output *output
+	retry  *retryExecution
 }
 
 type output struct {
@@ -54,11 +57,18 @@ func New(directory string) (*Backend, error) {
 	if err := os.Chmod(directory, 0700); err != nil {
 		return nil, fmt.Errorf("protect logs: %w", err)
 	}
-	return &Backend{directory: directory, jobs: make(map[string]*execution)}, nil
+	return &Backend{directory: directory, jobs: make(map[string]*execution), retryOps: systemRetryProcessOps(), retryAvailable: retrySupported()}, nil
 }
 
 // Check rejects requirements that local processes cannot enforce.
 func (b *Backend) Check(t backend.Task) error {
+	policy, err := backend.NormalizeRetry(t.Retry)
+	if err != nil {
+		return err
+	}
+	if policy != nil && !b.SupportsRetry() {
+		return errors.New("local retries require a qualified nonreaping wait")
+	}
 	if len(t.Argv) == 0 || t.Argv[0] == "" {
 		return errors.New("argv must contain a program")
 	}
@@ -128,6 +138,9 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	cmd.Stderr = out
 	cmd.WaitDelay = 250 * time.Millisecond
 	configure(cmd)
+	if t.Retry != nil && t.Retry.MaxAttempts > 1 {
+		return b.startRetry(cmd, out, id, t.TimeoutSeconds)
+	}
 	e := &execution{cmd: cmd, status: backend.Status{State: backend.Starting}, done: make(chan struct{}), output: out}
 	b.jobs[id] = e
 	if err := cmd.Start(); err != nil {
@@ -179,6 +192,14 @@ func (b *Backend) wait(e *execution, seconds int64) {
 func (b *Backend) stop(e *execution, state backend.State, reason string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if e.retry != nil {
+		select {
+		case <-e.done:
+			return nil
+		default:
+		}
+		return b.stopRetry(e, state, reason)
+	}
 	if e.status.State != backend.Running {
 		return nil
 	}
@@ -205,10 +226,13 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 	if e == nil {
 		return backend.Status{State: backend.Unknown, Reason: "execution is not owned by this server"}, nil
 	}
+	if err := checkInstance(e, ref.Instance); err != nil {
+		return backend.Status{}, err
+	}
 	select {
 	case <-e.done:
 	default:
-		return backend.Status{State: backend.Running}, nil
+		return backend.Status{State: backend.Running, Instance: e.status.Instance}, nil
 	}
 	s := e.status
 	if s.ExitCode != nil {
@@ -229,6 +253,12 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	}
 	b.mu.Lock()
 	e := b.jobs[id]
+	if e != nil {
+		if err := checkInstance(e, ref.Instance); err != nil {
+			b.mu.Unlock()
+			return err
+		}
+	}
 	b.mu.Unlock()
 	if e == nil {
 		return errors.New("execution is not owned by this server")
@@ -254,6 +284,13 @@ func (b *Backend) Close() error {
 	for _, e := range jobs {
 		select {
 		case <-e.done:
+			if e.retry != nil {
+				select {
+				case <-e.retry.reaped:
+				default:
+					result = errors.Join(result, errors.New("local process reaping remains uncertain"))
+				}
+			}
 		case <-timer.C:
 			return errors.Join(result, errors.New("timed out waiting for local processes"))
 		}

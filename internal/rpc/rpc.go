@@ -88,16 +88,21 @@ func task(t *v1.Task) backend.Task {
 	if t == nil {
 		return backend.Task{}
 	}
-	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector)}
+	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: retry(t.Retry)}
 }
 func wireTask(t backend.Task) *v1.Task {
-	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector)}
+	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: wireRetry(t.Retry)}
 }
 
-var states = map[backend.State]v1.JobState{backend.Queued: v1.JobState_JOB_STATE_QUEUED, backend.Starting: v1.JobState_JOB_STATE_STARTING, backend.Running: v1.JobState_JOB_STATE_RUNNING, backend.Succeeded: v1.JobState_JOB_STATE_SUCCEEDED, backend.Failed: v1.JobState_JOB_STATE_FAILED, backend.Canceled: v1.JobState_JOB_STATE_CANCELED, backend.Unknown: v1.JobState_JOB_STATE_UNKNOWN}
+var states = map[backend.State]v1.JobState{backend.Queued: v1.JobState_JOB_STATE_QUEUED, backend.Starting: v1.JobState_JOB_STATE_STARTING, backend.Running: v1.JobState_JOB_STATE_RUNNING, backend.Succeeded: v1.JobState_JOB_STATE_SUCCEEDED, backend.Failed: v1.JobState_JOB_STATE_FAILED, backend.Canceled: v1.JobState_JOB_STATE_CANCELED, backend.Unknown: v1.JobState_JOB_STATE_UNKNOWN, backend.Retrying: v1.JobState_JOB_STATE_RETRYING}
 
 func job(j backend.Job) *v1.Job {
-	return &v1.Job{Id: j.ID, Task: wireTask(j.Task), Target: j.Target, State: states[j.Status.State], CancelRequested: j.CancelRequested, Reason: j.Status.Reason, ExitCode: j.Status.ExitCode, CreatedAt: timestamppb.New(j.CreatedAt), UpdatedAt: timestamppb.New(j.UpdatedAt)}
+	out := &v1.Job{Id: j.ID, Task: wireTask(j.Task), Target: j.Target, State: states[j.Status.State], CancelRequested: j.CancelRequested, Reason: j.Status.Reason, ExitCode: exitCode(j.Status.ExitCode), CreatedAt: timestamppb.New(j.CreatedAt), UpdatedAt: timestamppb.New(j.UpdatedAt)}
+	for i, a := range j.Attempts {
+		out.Attempts = append(out.Attempts, &v1.Attempt{Id: a.ID, Ordinal: uint32(i + 1), State: states[a.Status.State], Reason: a.Status.Reason, ExitCode: exitCode(a.Status.ExitCode), CreatedAt: timestamppb.New(a.CreatedAt), StartingAt: timestamp(a.StartingAt), FinishedAt: timestamp(a.FinishedAt)})
+	}
+	out.NextAttemptAt = timestamp(j.NextAttemptAt)
+	return out
 }
 func rpcError(err error) error {
 	if err == nil {
@@ -146,6 +151,12 @@ func (h *handler) PlanTask(ctx context.Context, r *connect.Request[v1.PlanTaskRe
 	return connect.NewResponse(out), nil
 }
 func (h *handler) SubmitJob(ctx context.Context, r *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
+	return h.submit(ctx, r)
+}
+func (h *handler) SubmitRetryJob(ctx context.Context, r *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
+	return h.submit(ctx, r)
+}
+func (h *handler) submit(ctx context.Context, r *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
 	j, err := h.control.Submit(requestActor(ctx), r.Msg.RequestId, task(r.Msg.Task))
 	h.record(ctx, "submit", j.ID, err)
 	if err != nil {
@@ -204,6 +215,9 @@ func wireTarget(t backend.Target) *v1.Target {
 		capabilities = append(capabilities, v1.Capability_CAPABILITY_NODE_SELECTOR_V1)
 	}
 	capabilities = append(capabilities, v1.Capability_CAPABILITY_TARGET_LABELS_V1)
+	if t.SupportsRetry {
+		capabilities = append(capabilities, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1)
+	}
 	return &v1.Target{Name: t.Name, Kind: t.Kind, Capabilities: capabilities, Labels: maps.Clone(t.Labels), AcceleratorNames: slices.Clone(t.AcceleratorNames)}
 }
 

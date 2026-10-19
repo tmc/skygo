@@ -143,19 +143,19 @@ func TestRoutingUpgradePreservesModeAndAllBuckets(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			before := routingState(t, db)
+			before := priorRoutingState(t, db)
 			db.Close()
 			s, err := Open(dir)
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			if s.Scoped() != (name == "schema2") || !bytes.Equal(before, routingState(t, s.db)) {
+			if s.Scoped() != (name == "schema2") || !bytes.Equal(before, priorRoutingState(t, s.db)) {
 				t.Fatal("format upgrade changed mode or non-format bucket contents")
 			}
 			if err := s.db.View(func(tx *bolt.Tx) error {
-				if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(3)) {
-					t.Error("missing format-3 fence")
+				if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(schemaVersion)) {
+					t.Error("missing current format fence")
 				}
 				return nil
 			}); err != nil {
@@ -347,7 +347,7 @@ func TestRoutingScopedActivationAndSnapshot(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := s.db.View(func(tx *bolt.Tx) error {
-				if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(3)) {
+				if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(schemaVersion)) {
 					t.Error("scoped activation downgraded format")
 				}
 				return nil
@@ -421,4 +421,35 @@ func TestRoutingPriorBinaryRefusal(t *testing.T) {
 			t.Logf("prior SHA256 %s refused format3 %s state SHA256 %x unchanged", want, name, sha256.Sum256(before))
 		})
 	}
+}
+
+// priorRoutingState compares the preserved predecessor relations. The new empty
+// attempt index and zero reservation are asserted separately by schema tests.
+func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
+	t.Helper()
+	var buckets []fixtureBucket
+	if err := json.Unmarshal(routingState(t, db), &buckets); err != nil {
+		t.Fatal(err)
+	}
+	var out []fixtureBucket
+	for _, b := range buckets {
+		if bytes.Equal(b.Name, attemptJobsBucket) {
+			continue
+		}
+		if bytes.Equal(b.Name, metadataBucket) {
+			var entries []fixtureEntry
+			for _, e := range b.Entries {
+				if !bytes.Equal(e.Key, retryBytesKey) {
+					entries = append(entries, e)
+				}
+			}
+			b.Entries = entries
+		}
+		out = append(out, b)
+	}
+	data, err := json.Marshal(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }

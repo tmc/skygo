@@ -38,6 +38,9 @@ const (
 	// ControlServiceSubmitJobProcedure is the fully-qualified name of the ControlService's SubmitJob
 	// RPC.
 	ControlServiceSubmitJobProcedure = "/skygo.v1.ControlService/SubmitJob"
+	// ControlServiceSubmitRetryJobProcedure is the fully-qualified name of the ControlService's
+	// SubmitRetryJob RPC.
+	ControlServiceSubmitRetryJobProcedure = "/skygo.v1.ControlService/SubmitRetryJob"
 	// ControlServiceGetJobProcedure is the fully-qualified name of the ControlService's GetJob RPC.
 	ControlServiceGetJobProcedure = "/skygo.v1.ControlService/GetJob"
 	// ControlServiceListJobsProcedure is the fully-qualified name of the ControlService's ListJobs RPC.
@@ -59,7 +62,15 @@ const (
 // ControlServiceClient is a client for the skygo.v1.ControlService service.
 type ControlServiceClient interface {
 	PlanTask(context.Context, *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error)
+	// Both submission methods share the accepted task and request identity shape.
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
 	SubmitJob(context.Context, *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error)
+	// SubmitRetryJob requires retry-aware admission; clients must not fall back to SubmitJob.
+	// Reusing these messages keeps the additive method's acceptance contract identical.
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+	// buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+	SubmitRetryJob(context.Context, *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error)
 	GetJob(context.Context, *connect.Request[v1.GetJobRequest]) (*connect.Response[v1.GetJobResponse], error)
 	ListJobs(context.Context, *connect.Request[v1.ListJobsRequest]) (*connect.Response[v1.ListJobsResponse], error)
 	CancelJob(context.Context, *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error)
@@ -89,6 +100,12 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			httpClient,
 			baseURL+ControlServiceSubmitJobProcedure,
 			connect.WithSchema(controlServiceMethods.ByName("SubmitJob")),
+			connect.WithClientOptions(opts...),
+		),
+		submitRetryJob: connect.NewClient[v1.SubmitJobRequest, v1.SubmitJobResponse](
+			httpClient,
+			baseURL+ControlServiceSubmitRetryJobProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("SubmitRetryJob")),
 			connect.WithClientOptions(opts...),
 		),
 		getJob: connect.NewClient[v1.GetJobRequest, v1.GetJobResponse](
@@ -132,14 +149,15 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // controlServiceClient implements ControlServiceClient.
 type controlServiceClient struct {
-	planTask      *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
-	submitJob     *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
-	getJob        *connect.Client[v1.GetJobRequest, v1.GetJobResponse]
-	listJobs      *connect.Client[v1.ListJobsRequest, v1.ListJobsResponse]
-	cancelJob     *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
-	streamJobLogs *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
-	listTargets   *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
-	getServerInfo *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+	planTask       *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
+	submitJob      *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
+	submitRetryJob *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
+	getJob         *connect.Client[v1.GetJobRequest, v1.GetJobResponse]
+	listJobs       *connect.Client[v1.ListJobsRequest, v1.ListJobsResponse]
+	cancelJob      *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
+	streamJobLogs  *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
+	listTargets    *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
+	getServerInfo  *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
 }
 
 // PlanTask calls skygo.v1.ControlService.PlanTask.
@@ -150,6 +168,11 @@ func (c *controlServiceClient) PlanTask(ctx context.Context, req *connect.Reques
 // SubmitJob calls skygo.v1.ControlService.SubmitJob.
 func (c *controlServiceClient) SubmitJob(ctx context.Context, req *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
 	return c.submitJob.CallUnary(ctx, req)
+}
+
+// SubmitRetryJob calls skygo.v1.ControlService.SubmitRetryJob.
+func (c *controlServiceClient) SubmitRetryJob(ctx context.Context, req *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
+	return c.submitRetryJob.CallUnary(ctx, req)
 }
 
 // GetJob calls skygo.v1.ControlService.GetJob.
@@ -185,7 +208,15 @@ func (c *controlServiceClient) GetServerInfo(ctx context.Context, req *connect.R
 // ControlServiceHandler is an implementation of the skygo.v1.ControlService service.
 type ControlServiceHandler interface {
 	PlanTask(context.Context, *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error)
+	// Both submission methods share the accepted task and request identity shape.
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
 	SubmitJob(context.Context, *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error)
+	// SubmitRetryJob requires retry-aware admission; clients must not fall back to SubmitJob.
+	// Reusing these messages keeps the additive method's acceptance contract identical.
+	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+	// buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+	// buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+	SubmitRetryJob(context.Context, *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error)
 	GetJob(context.Context, *connect.Request[v1.GetJobRequest]) (*connect.Response[v1.GetJobResponse], error)
 	ListJobs(context.Context, *connect.Request[v1.ListJobsRequest]) (*connect.Response[v1.ListJobsResponse], error)
 	CancelJob(context.Context, *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error)
@@ -211,6 +242,12 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		ControlServiceSubmitJobProcedure,
 		svc.SubmitJob,
 		connect.WithSchema(controlServiceMethods.ByName("SubmitJob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceSubmitRetryJobHandler := connect.NewUnaryHandler(
+		ControlServiceSubmitRetryJobProcedure,
+		svc.SubmitRetryJob,
+		connect.WithSchema(controlServiceMethods.ByName("SubmitRetryJob")),
 		connect.WithHandlerOptions(opts...),
 	)
 	controlServiceGetJobHandler := connect.NewUnaryHandler(
@@ -255,6 +292,8 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServicePlanTaskHandler.ServeHTTP(w, r)
 		case ControlServiceSubmitJobProcedure:
 			controlServiceSubmitJobHandler.ServeHTTP(w, r)
+		case ControlServiceSubmitRetryJobProcedure:
+			controlServiceSubmitRetryJobHandler.ServeHTTP(w, r)
 		case ControlServiceGetJobProcedure:
 			controlServiceGetJobHandler.ServeHTTP(w, r)
 		case ControlServiceListJobsProcedure:
@@ -282,6 +321,10 @@ func (UnimplementedControlServiceHandler) PlanTask(context.Context, *connect.Req
 
 func (UnimplementedControlServiceHandler) SubmitJob(context.Context, *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.SubmitJob is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) SubmitRetryJob(context.Context, *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.SubmitRetryJob is not implemented"))
 }
 
 func (UnimplementedControlServiceHandler) GetJob(context.Context, *connect.Request[v1.GetJobRequest]) (*connect.Response[v1.GetJobResponse], error) {

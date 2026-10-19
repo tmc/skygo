@@ -8,16 +8,13 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"maps"
 	"path"
-	"sort"
 	"sync"
 
 	"github.com/tmc/skygo/internal/backend"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -40,10 +37,14 @@ type Backend struct {
 	policy           ResourcePolicy
 	mu               sync.Mutex
 	canceled         map[string]bool
+	retries          map[string]*retryReceipt
 }
 
 // Check validates capability requirements without making network requests.
 func (b *Backend) Check(t backend.Task) error {
+	if err := checkRetry(t); err != nil {
+		return err
+	}
 	if len(t.Argv) == 0 || t.Argv[0] == "" {
 		return errors.New("argv is required")
 	}
@@ -89,7 +90,11 @@ func (b *Backend) owned(j *batchv1.Job, id string) error {
 }
 
 // Start creates a Job or adopts an existing Job with the same owner and task.
+// Enabled retry instead creates one directly owned Pod and never adopts it.
 func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
+	if t.Retry != nil {
+		return b.startRetry(ctx, id, t)
+	}
 	if b.binding == "" {
 		return fmt.Errorf("%w: kubernetes target is unbound", backend.ErrIdentityMismatch)
 	}
@@ -106,37 +111,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(raw))
 	zero := int32(0)
-	automount := false
 	one := int32(1)
-	resources := corev1.ResourceList{}
-	if t.CPUMillis > 0 {
-		resources[corev1.ResourceCPU] = *resource.NewMilliQuantity(t.CPUMillis, resource.DecimalSI)
-	}
-	if t.MemoryBytes > 0 {
-		resources[corev1.ResourceMemory] = *resource.NewQuantity(t.MemoryBytes, resource.BinarySI)
-	}
-	limits := corev1.ResourceList{}
-	if t.CPULimitMillis > 0 {
-		limits[corev1.ResourceCPU] = *resource.NewMilliQuantity(t.CPULimitMillis, resource.DecimalSI)
-	}
-	if t.MemoryLimitBytes > 0 {
-		limits[corev1.ResourceMemory] = *resource.NewQuantity(t.MemoryLimitBytes, resource.BinarySI)
-	}
-	if t.AcceleratorCount > 0 {
-		q := *resource.NewQuantity(int64(t.AcceleratorCount), resource.DecimalSI)
-		name := corev1.ResourceName(b.policy.Accelerators[t.Accelerator].ResourceName)
-		resources[name] = q
-		limits[name] = q
-	}
-	keys := make([]string, 0, len(t.Env))
-	for k := range t.Env {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	env := make([]corev1.EnvVar, 0, len(keys))
-	for _, k := range keys {
-		env = append(env, corev1.EnvVar{Name: k, Value: t.Env[k]})
-	}
 	jobLabels := map[string]string{ownerLabel: b.owner, idLabel: id}
 	j := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -147,16 +122,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 			BackoffLimit: &zero, Parallelism: &one, Completions: &one,
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{Labels: jobLabels},
-				Spec: corev1.PodSpec{
-					AutomountServiceAccountToken: &automount,
-					RestartPolicy:                corev1.RestartPolicyNever,
-					NodeSelector:                 maps.Clone(t.NodeSelector),
-					Containers: []corev1.Container{{
-						Name: "task", Image: t.Image, Command: t.Argv,
-						Env: env, WorkingDir: t.Directory,
-						Resources: corev1.ResourceRequirements{Requests: resources, Limits: limits},
-					}},
-				},
+				Spec:       b.podSpec(t),
 			},
 		},
 	}
@@ -181,6 +147,9 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 }
 
 func (b *Backend) get(ctx context.Context, ref backend.Reference) (*batchv1.Job, error) {
+	if ref.Instance != "" {
+		return nil, fmt.Errorf("%w: unexpected job instance", backend.ErrIdentityMismatch)
+	}
 	if b.binding == "" || ref.Binding != b.binding {
 		return nil, fmt.Errorf("%w: kubernetes target binding differs", backend.ErrIdentityMismatch)
 	}
@@ -231,6 +200,9 @@ func (b *Backend) pods(ctx context.Context, j *batchv1.Job, id string) ([]corev1
 // was successfully delivered for an observed UID through this Backend instance.
 // It never recreates missing Jobs.
 func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	if ref.Task.Retry != nil {
+		return b.observeRetry(ctx, ref)
+	}
 	id := ref.ID
 	j, err := b.get(ctx, ref)
 	if apierrors.IsNotFound(err) {
@@ -277,6 +249,9 @@ func int32ptr(v int32) *int32 { return &v }
 // Cancel requests foreground deletion, using UID preconditions to avoid deleting
 // a replacement Job. Observe confirms cancellation only after disappearance.
 func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
+	if ref.Task.Retry != nil {
+		return b.cancelRetry(ctx, ref)
+	}
 	id := ref.ID
 	j, err := b.get(ctx, ref)
 	if apierrors.IsNotFound(err) {
@@ -308,6 +283,9 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 // Logs reads the bounded output prefix of the sole owned Pod. Multiple Pods are
 // explicitly ambiguous, since native Job execution is not exactly once.
 func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64, limit int) (backend.LogChunk, error) {
+	if ref.Task.Retry != nil {
+		return b.logsRetry(ctx, ref, offset, limit)
+	}
 	id := ref.ID
 	if offset < 0 || limit <= 0 || limit > backend.MaxChunkBytes {
 		return backend.LogChunk{}, fmt.Errorf("invalid log offset or limit: %w", fs.ErrInvalid)

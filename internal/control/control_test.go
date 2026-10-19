@@ -449,7 +449,7 @@ func TestLogErrorClassification(t *testing.T) {
 			if _, err := s.Update(j.ID, func(j *backend.Job) error { j.Status.State = backend.Running; return nil }); err != nil {
 				t.Fatal(err)
 			}
-			_, err := c.Logs(context.Background(), testActor(), j.ID, 0)
+			_, err := c.Logs(context.Background(), testActor(), j.ID, j.ID, 0)
 			if !errors.Is(err, tt.want) {
 				t.Fatalf("log error: %v, want %v", err, tt.want)
 			}

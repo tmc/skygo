@@ -125,7 +125,7 @@ func ExampleControl_Logs() {
 		panic(err)
 	}
 	// Acceptance alone does not start execution or produce output.
-	chunk, err := c.Logs(context.Background(), testActor(), job.ID, 0)
+	chunk, err := c.Logs(context.Background(), testActor(), job.ID, job.ID, 0)
 	fmt.Println(chunk.Complete, len(chunk.Data), err)
 	// Output: false 0 <nil>
 }
@@ -142,4 +142,16 @@ func ExampleControl_AuditHealthy() {
 	defer close()
 	fmt.Println(c.AuditHealthy())
 	// Output: true
+}
+
+func ExampleControl_LogAttempt() {
+	c, close := exampleControl()
+	defer close()
+	job, err := c.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}})
+	if err != nil {
+		panic(err)
+	}
+	selected, err := c.LogAttempt(testActor(), job.ID, 0)
+	fmt.Println(selected == job.ID, err)
+	// Output: true <nil>
 }

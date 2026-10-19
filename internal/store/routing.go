@@ -20,7 +20,7 @@ func validateRouting(tx *bolt.Tx, job backend.Job) error {
 	if raw := tx.Bucket(metadataBucket).Get(schemaKey); len(raw) == 8 {
 		version = binary.BigEndian.Uint64(raw)
 	}
-	if version < schemaVersion {
+	if version < 3 {
 		t := job.Task
 		if job.TargetBinding != "" || t.CPULimitMillis != 0 || t.MemoryLimitBytes != 0 || len(t.TargetLabels) != 0 || len(t.NodeSelector) != 0 {
 			return errors.New("routing fields require schema 3")

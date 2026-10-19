@@ -1,0 +1,14 @@
+# Client forwarding preserves omitted target, zero delay and input code order.
+# The real control plane may normalize policy after receiving the request.
+server start
+retry-task task.json original 0
+skygo --json run -f task.json --request-id retry-original --wait
+job-id JOB
+history failed succeeded
+original-request
+calls SubmitRetryJob 1
+calls SubmitJob 0
+calls PlanTask 0
+calls GetServerInfo 0
+server stop
+! stderr .

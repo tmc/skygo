@@ -115,6 +115,7 @@ func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target
 		Name: t.Name, Kind: "kubernetes", Backend: b, Binding: binding,
 		Labels: maps.Clone(t.Labels), AcceleratorNames: names,
 		SupportsResourceLimits: true, SupportsNodeSelector: len(t.Resources.NodeSelectors) > 0,
+		SupportsRetry: true,
 	}, nil
 }
 

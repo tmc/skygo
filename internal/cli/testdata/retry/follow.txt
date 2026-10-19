@@ -1,0 +1,23 @@
+# A stream opened on attempt one must finish there, without following attempt two.
+server start
+retry-task task.json follow 1
+skygo --json run -f task.json --request-id retry-follow
+job-id JOB
+await-file first
+skygo jobs logs $JOB --follow &
+await-stdout 'attempt one'
+cp release.txt release
+wait
+stdout '^attempt one\n$'
+! stdout 'attempt two'
+await-state $JOB succeeded
+history failed succeeded
+skygo jobs logs $JOB
+stdout '^attempt two\n$'
+skygo --json jobs logs $JOB --attempt 1
+stdout '"attempt_id":'
+! stdout 'attempt two'
+server stop
+! stderr .
+-- release.txt --
+release

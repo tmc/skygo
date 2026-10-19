@@ -263,3 +263,34 @@ func ExampleStore_ValidateAccess() {
 	fmt.Println(s.ValidateAccess(testActor(), "list", "", "allowed"))
 	// Output: <nil>
 }
+
+func ExampleStore_BeginAttempt() {
+	s, close := exampleStore()
+	defer close()
+	job, err := s.Submit(testActor(), "training", backend.Task{Argv: []string{"trainer"}}, "local", "test-binding")
+	if err != nil {
+		panic(err)
+	}
+	job, start, err := s.BeginAttempt(job.ID, job.CurrentAttemptID(), job.CreatedAt)
+	fmt.Println(job.Status.State, start, err)
+	// Output: starting true <nil>
+}
+
+func ExampleStore_ObserveAttempt() {
+	s, close := exampleStore()
+	defer close()
+	task := backend.Task{Argv: []string{"trainer"}, Retry: &backend.RetryPolicy{MaxAttempts: 2, ExitCodes: []int32{7}}}
+	job, err := s.Submit(testActor(), "training", task, "local", "test-binding")
+	if err != nil {
+		panic(err)
+	}
+	job, _, err = s.BeginAttempt(job.ID, job.ID, job.CreatedAt)
+	if err != nil {
+		panic(err)
+	}
+	code := int32(7)
+	status := backend.Status{State: backend.Failed, ExitCode: &code, Termination: backend.StoppedWithExitCode}
+	job, err = s.ObserveAttempt(job.ID, job.CurrentAttemptID(), status, job.CreatedAt)
+	fmt.Println(job.Status.State, len(job.Attempts), job.NextAttemptAt != nil, err)
+	// Output: retrying 1 true <nil>
+}

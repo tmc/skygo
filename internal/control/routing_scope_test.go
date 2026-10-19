@@ -37,7 +37,7 @@ func TestScopedRoutingDoesNotExposeForeignJob(t *testing.T) {
 	if _, err := f.s.Update(job.ID, func(j *backend.Job) error { j.Status.State = backend.Running; return nil }); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.Logs(context.Background(), f.actors["alice"], job.ID, 0); !errors.Is(err, store.ErrNotFound) {
+	if _, err := c.Logs(context.Background(), f.actors["alice"], job.ID, job.ID, 0); !errors.Is(err, store.ErrNotFound) {
 		t.Fatal(err)
 	}
 	if _, err := c.Cancel(f.actors["alice"], job.ID); !errors.Is(err, store.ErrNotFound) {
@@ -50,7 +50,7 @@ func TestScopedRoutingDoesNotExposeForeignJob(t *testing.T) {
 	if err != nil || after.CancelRequested {
 		t.Fatalf("foreign cancel changed intent: %+v %v", after, err)
 	}
-	if _, err := c.Logs(context.Background(), f.actors["bob"], job.ID, 0); err != nil || b.logs != 1 {
+	if _, err := c.Logs(context.Background(), f.actors["bob"], job.ID, job.ID, 0); err != nil || b.logs != 1 {
 		t.Fatalf("owner logs calls=%d err=%v", b.logs, err)
 	}
 }

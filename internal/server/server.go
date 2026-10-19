@@ -73,7 +73,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if err != nil {
 			return fmt.Errorf("local binding: %w", err)
 		}
-		targets = append(targets, backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding})
+		targets = append(targets, backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding, SupportsRetry: localBackend.SupportsRetry()})
 	}
 	if cfg.Targets != nil {
 		extra, err := cfg.Targets(s.Owner())

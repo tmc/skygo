@@ -298,7 +298,7 @@ func TestLogsBindingFenceAndReference(t *testing.T) {
 		for _, binding := range []string{"changed", "original"} {
 			b := &routeBackend{}
 			c := routeControl(t, s, backend.Target{Name: "same", Binding: binding, Backend: b})
-			chunk, err := c.Logs(context.Background(), testActor(), j.ID, 0)
+			chunk, err := c.Logs(context.Background(), testActor(), j.ID, j.ID, 0)
 			if binding != "original" {
 				if !errors.Is(err, ErrUnavailable) || b.logs != 0 {
 					t.Fatal("foreign route read logs")

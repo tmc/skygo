@@ -33,6 +33,7 @@ const (
 	JobState_JOB_STATE_FAILED      JobState = 5
 	JobState_JOB_STATE_CANCELED    JobState = 6
 	JobState_JOB_STATE_UNKNOWN     JobState = 7
+	JobState_JOB_STATE_RETRYING    JobState = 8
 )
 
 // Enum value maps for JobState.
@@ -46,6 +47,7 @@ var (
 		5: "JOB_STATE_FAILED",
 		6: "JOB_STATE_CANCELED",
 		7: "JOB_STATE_UNKNOWN",
+		8: "JOB_STATE_RETRYING",
 	}
 	JobState_value = map[string]int32{
 		"JOB_STATE_UNSPECIFIED": 0,
@@ -56,6 +58,7 @@ var (
 		"JOB_STATE_FAILED":      5,
 		"JOB_STATE_CANCELED":    6,
 		"JOB_STATE_UNKNOWN":     7,
+		"JOB_STATE_RETRYING":    8,
 	}
 )
 
@@ -90,11 +93,12 @@ func (JobState) EnumDescriptor() ([]byte, []int) {
 type Capability int32
 
 const (
-	Capability_CAPABILITY_UNSPECIFIED        Capability = 0
-	Capability_CAPABILITY_FINITE_JOBS_V1     Capability = 1
-	Capability_CAPABILITY_RESOURCE_LIMITS_V1 Capability = 2
-	Capability_CAPABILITY_NODE_SELECTOR_V1   Capability = 3
-	Capability_CAPABILITY_TARGET_LABELS_V1   Capability = 4
+	Capability_CAPABILITY_UNSPECIFIED         Capability = 0
+	Capability_CAPABILITY_FINITE_JOBS_V1      Capability = 1
+	Capability_CAPABILITY_RESOURCE_LIMITS_V1  Capability = 2
+	Capability_CAPABILITY_NODE_SELECTOR_V1    Capability = 3
+	Capability_CAPABILITY_TARGET_LABELS_V1    Capability = 4
+	Capability_CAPABILITY_FINITE_JOB_RETRY_V1 Capability = 5
 )
 
 // Enum value maps for Capability.
@@ -105,13 +109,15 @@ var (
 		2: "CAPABILITY_RESOURCE_LIMITS_V1",
 		3: "CAPABILITY_NODE_SELECTOR_V1",
 		4: "CAPABILITY_TARGET_LABELS_V1",
+		5: "CAPABILITY_FINITE_JOB_RETRY_V1",
 	}
 	Capability_value = map[string]int32{
-		"CAPABILITY_UNSPECIFIED":        0,
-		"CAPABILITY_FINITE_JOBS_V1":     1,
-		"CAPABILITY_RESOURCE_LIMITS_V1": 2,
-		"CAPABILITY_NODE_SELECTOR_V1":   3,
-		"CAPABILITY_TARGET_LABELS_V1":   4,
+		"CAPABILITY_UNSPECIFIED":         0,
+		"CAPABILITY_FINITE_JOBS_V1":      1,
+		"CAPABILITY_RESOURCE_LIMITS_V1":  2,
+		"CAPABILITY_NODE_SELECTOR_V1":    3,
+		"CAPABILITY_TARGET_LABELS_V1":    4,
+		"CAPABILITY_FINITE_JOB_RETRY_V1": 5,
 	}
 )
 
@@ -159,6 +165,7 @@ type Task struct {
 	MemoryLimitBytes int64                  `protobuf:"varint,12,opt,name=memory_limit_bytes,json=memoryLimitBytes,proto3" json:"memory_limit_bytes,omitempty"`
 	TargetLabels     map[string]string      `protobuf:"bytes,13,rep,name=target_labels,json=targetLabels,proto3" json:"target_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	NodeSelector     map[string]string      `protobuf:"bytes,14,rep,name=node_selector,json=nodeSelector,proto3" json:"node_selector,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Retry            *RetryPolicy           `protobuf:"bytes,15,opt,name=retry,proto3" json:"retry,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
@@ -291,6 +298,74 @@ func (x *Task) GetNodeSelector() map[string]string {
 	return nil
 }
 
+func (x *Task) GetRetry() *RetryPolicy {
+	if x != nil {
+		return x.Retry
+	}
+	return nil
+}
+
+// RetryPolicy selects bounded attempts after qualified stopped failures.
+type RetryPolicy struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	MaxAttempts   uint32                 `protobuf:"varint,1,opt,name=max_attempts,json=maxAttempts,proto3" json:"max_attempts,omitempty"`
+	DelaySeconds  uint32                 `protobuf:"varint,2,opt,name=delay_seconds,json=delaySeconds,proto3" json:"delay_seconds,omitempty"`
+	ExitCodes     []int32                `protobuf:"varint,3,rep,packed,name=exit_codes,json=exitCodes,proto3" json:"exit_codes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RetryPolicy) Reset() {
+	*x = RetryPolicy{}
+	mi := &file_skygo_v1_control_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RetryPolicy) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RetryPolicy) ProtoMessage() {}
+
+func (x *RetryPolicy) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RetryPolicy.ProtoReflect.Descriptor instead.
+func (*RetryPolicy) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *RetryPolicy) GetMaxAttempts() uint32 {
+	if x != nil {
+		return x.MaxAttempts
+	}
+	return 0
+}
+
+func (x *RetryPolicy) GetDelaySeconds() uint32 {
+	if x != nil {
+		return x.DelaySeconds
+	}
+	return 0
+}
+
+func (x *RetryPolicy) GetExitCodes() []int32 {
+	if x != nil {
+		return x.ExitCodes
+	}
+	return nil
+}
+
 type Job struct {
 	state           protoimpl.MessageState `protogen:"open.v1"`
 	Id              string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
@@ -302,13 +377,15 @@ type Job struct {
 	ExitCode        *int32                 `protobuf:"varint,7,opt,name=exit_code,json=exitCode,proto3,oneof" json:"exit_code,omitempty"`
 	CreatedAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	UpdatedAt       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
+	Attempts        []*Attempt             `protobuf:"bytes,10,rep,name=attempts,proto3" json:"attempts,omitempty"`
+	NextAttemptAt   *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=next_attempt_at,json=nextAttemptAt,proto3" json:"next_attempt_at,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Job) Reset() {
 	*x = Job{}
-	mi := &file_skygo_v1_control_proto_msgTypes[1]
+	mi := &file_skygo_v1_control_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -320,7 +397,7 @@ func (x *Job) String() string {
 func (*Job) ProtoMessage() {}
 
 func (x *Job) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[1]
+	mi := &file_skygo_v1_control_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -333,7 +410,7 @@ func (x *Job) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Job.ProtoReflect.Descriptor instead.
 func (*Job) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{1}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *Job) GetId() string {
@@ -399,6 +476,122 @@ func (x *Job) GetUpdatedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Job) GetAttempts() []*Attempt {
+	if x != nil {
+		return x.Attempts
+	}
+	return nil
+}
+
+func (x *Job) GetNextAttemptAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NextAttemptAt
+	}
+	return nil
+}
+
+// Attempt describes one execution. Ordinals are one-based; timestamps record
+// durable decisions, not exact native process start or exit times.
+type Attempt struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Ordinal       uint32                 `protobuf:"varint,2,opt,name=ordinal,proto3" json:"ordinal,omitempty"`
+	State         JobState               `protobuf:"varint,3,opt,name=state,proto3,enum=skygo.v1.JobState" json:"state,omitempty"`
+	Reason        string                 `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	ExitCode      *int32                 `protobuf:"varint,5,opt,name=exit_code,json=exitCode,proto3,oneof" json:"exit_code,omitempty"`
+	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	StartingAt    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=starting_at,json=startingAt,proto3" json:"starting_at,omitempty"`
+	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Attempt) Reset() {
+	*x = Attempt{}
+	mi := &file_skygo_v1_control_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Attempt) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Attempt) ProtoMessage() {}
+
+func (x *Attempt) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Attempt.ProtoReflect.Descriptor instead.
+func (*Attempt) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Attempt) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *Attempt) GetOrdinal() uint32 {
+	if x != nil {
+		return x.Ordinal
+	}
+	return 0
+}
+
+func (x *Attempt) GetState() JobState {
+	if x != nil {
+		return x.State
+	}
+	return JobState_JOB_STATE_UNSPECIFIED
+}
+
+func (x *Attempt) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *Attempt) GetExitCode() int32 {
+	if x != nil && x.ExitCode != nil {
+		return *x.ExitCode
+	}
+	return 0
+}
+
+func (x *Attempt) GetCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CreatedAt
+	}
+	return nil
+}
+
+func (x *Attempt) GetStartingAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.StartingAt
+	}
+	return nil
+}
+
+func (x *Attempt) GetFinishedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FinishedAt
+	}
+	return nil
+}
+
 type Target struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
 	Name             string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -412,7 +605,7 @@ type Target struct {
 
 func (x *Target) Reset() {
 	*x = Target{}
-	mi := &file_skygo_v1_control_proto_msgTypes[2]
+	mi := &file_skygo_v1_control_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -424,7 +617,7 @@ func (x *Target) String() string {
 func (*Target) ProtoMessage() {}
 
 func (x *Target) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[2]
+	mi := &file_skygo_v1_control_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -437,7 +630,7 @@ func (x *Target) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Target.ProtoReflect.Descriptor instead.
 func (*Target) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{2}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Target) GetName() string {
@@ -485,7 +678,7 @@ type Rejection struct {
 
 func (x *Rejection) Reset() {
 	*x = Rejection{}
-	mi := &file_skygo_v1_control_proto_msgTypes[3]
+	mi := &file_skygo_v1_control_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -497,7 +690,7 @@ func (x *Rejection) String() string {
 func (*Rejection) ProtoMessage() {}
 
 func (x *Rejection) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[3]
+	mi := &file_skygo_v1_control_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -510,7 +703,7 @@ func (x *Rejection) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Rejection.ProtoReflect.Descriptor instead.
 func (*Rejection) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{3}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Rejection) GetTarget() string {
@@ -536,7 +729,7 @@ type PlanTaskRequest struct {
 
 func (x *PlanTaskRequest) Reset() {
 	*x = PlanTaskRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[4]
+	mi := &file_skygo_v1_control_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -548,7 +741,7 @@ func (x *PlanTaskRequest) String() string {
 func (*PlanTaskRequest) ProtoMessage() {}
 
 func (x *PlanTaskRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[4]
+	mi := &file_skygo_v1_control_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -561,7 +754,7 @@ func (x *PlanTaskRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanTaskRequest.ProtoReflect.Descriptor instead.
 func (*PlanTaskRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{4}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *PlanTaskRequest) GetTask() *Task {
@@ -581,7 +774,7 @@ type PlanTaskResponse struct {
 
 func (x *PlanTaskResponse) Reset() {
 	*x = PlanTaskResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[5]
+	mi := &file_skygo_v1_control_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -593,7 +786,7 @@ func (x *PlanTaskResponse) String() string {
 func (*PlanTaskResponse) ProtoMessage() {}
 
 func (x *PlanTaskResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[5]
+	mi := &file_skygo_v1_control_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -606,7 +799,7 @@ func (x *PlanTaskResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PlanTaskResponse.ProtoReflect.Descriptor instead.
 func (*PlanTaskResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{5}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *PlanTaskResponse) GetTarget() string {
@@ -634,7 +827,7 @@ type SubmitJobRequest struct {
 
 func (x *SubmitJobRequest) Reset() {
 	*x = SubmitJobRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[6]
+	mi := &file_skygo_v1_control_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -646,7 +839,7 @@ func (x *SubmitJobRequest) String() string {
 func (*SubmitJobRequest) ProtoMessage() {}
 
 func (x *SubmitJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[6]
+	mi := &file_skygo_v1_control_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -659,7 +852,7 @@ func (x *SubmitJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitJobRequest.ProtoReflect.Descriptor instead.
 func (*SubmitJobRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{6}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *SubmitJobRequest) GetTask() *Task {
@@ -685,7 +878,7 @@ type SubmitJobResponse struct {
 
 func (x *SubmitJobResponse) Reset() {
 	*x = SubmitJobResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[7]
+	mi := &file_skygo_v1_control_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -697,7 +890,7 @@ func (x *SubmitJobResponse) String() string {
 func (*SubmitJobResponse) ProtoMessage() {}
 
 func (x *SubmitJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[7]
+	mi := &file_skygo_v1_control_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -710,7 +903,7 @@ func (x *SubmitJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SubmitJobResponse.ProtoReflect.Descriptor instead.
 func (*SubmitJobResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{7}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *SubmitJobResponse) GetJob() *Job {
@@ -729,7 +922,7 @@ type GetJobRequest struct {
 
 func (x *GetJobRequest) Reset() {
 	*x = GetJobRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[8]
+	mi := &file_skygo_v1_control_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -741,7 +934,7 @@ func (x *GetJobRequest) String() string {
 func (*GetJobRequest) ProtoMessage() {}
 
 func (x *GetJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[8]
+	mi := &file_skygo_v1_control_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -754,7 +947,7 @@ func (x *GetJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetJobRequest.ProtoReflect.Descriptor instead.
 func (*GetJobRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{8}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *GetJobRequest) GetId() string {
@@ -773,7 +966,7 @@ type GetJobResponse struct {
 
 func (x *GetJobResponse) Reset() {
 	*x = GetJobResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[9]
+	mi := &file_skygo_v1_control_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -785,7 +978,7 @@ func (x *GetJobResponse) String() string {
 func (*GetJobResponse) ProtoMessage() {}
 
 func (x *GetJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[9]
+	mi := &file_skygo_v1_control_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -798,7 +991,7 @@ func (x *GetJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetJobResponse.ProtoReflect.Descriptor instead.
 func (*GetJobResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{9}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *GetJobResponse) GetJob() *Job {
@@ -818,7 +1011,7 @@ type ListJobsRequest struct {
 
 func (x *ListJobsRequest) Reset() {
 	*x = ListJobsRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[10]
+	mi := &file_skygo_v1_control_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -830,7 +1023,7 @@ func (x *ListJobsRequest) String() string {
 func (*ListJobsRequest) ProtoMessage() {}
 
 func (x *ListJobsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[10]
+	mi := &file_skygo_v1_control_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -843,7 +1036,7 @@ func (x *ListJobsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJobsRequest.ProtoReflect.Descriptor instead.
 func (*ListJobsRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{10}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListJobsRequest) GetPageSize() int32 {
@@ -870,7 +1063,7 @@ type ListJobsResponse struct {
 
 func (x *ListJobsResponse) Reset() {
 	*x = ListJobsResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[11]
+	mi := &file_skygo_v1_control_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -882,7 +1075,7 @@ func (x *ListJobsResponse) String() string {
 func (*ListJobsResponse) ProtoMessage() {}
 
 func (x *ListJobsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[11]
+	mi := &file_skygo_v1_control_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -895,7 +1088,7 @@ func (x *ListJobsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListJobsResponse.ProtoReflect.Descriptor instead.
 func (*ListJobsResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{11}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *ListJobsResponse) GetJobs() []*Job {
@@ -921,7 +1114,7 @@ type CancelJobRequest struct {
 
 func (x *CancelJobRequest) Reset() {
 	*x = CancelJobRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[12]
+	mi := &file_skygo_v1_control_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -933,7 +1126,7 @@ func (x *CancelJobRequest) String() string {
 func (*CancelJobRequest) ProtoMessage() {}
 
 func (x *CancelJobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[12]
+	mi := &file_skygo_v1_control_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -946,7 +1139,7 @@ func (x *CancelJobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelJobRequest.ProtoReflect.Descriptor instead.
 func (*CancelJobRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{12}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *CancelJobRequest) GetId() string {
@@ -965,7 +1158,7 @@ type CancelJobResponse struct {
 
 func (x *CancelJobResponse) Reset() {
 	*x = CancelJobResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[13]
+	mi := &file_skygo_v1_control_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -977,7 +1170,7 @@ func (x *CancelJobResponse) String() string {
 func (*CancelJobResponse) ProtoMessage() {}
 
 func (x *CancelJobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[13]
+	mi := &file_skygo_v1_control_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -990,7 +1183,7 @@ func (x *CancelJobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CancelJobResponse.ProtoReflect.Descriptor instead.
 func (*CancelJobResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{13}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CancelJobResponse) GetJob() *Job {
@@ -1001,17 +1194,19 @@ func (x *CancelJobResponse) GetJob() *Job {
 }
 
 type StreamJobLogsRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Offset        int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
-	Follow        bool                   `protobuf:"varint,3,opt,name=follow,proto3" json:"follow,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Offset int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	Follow bool                   `protobuf:"varint,3,opt,name=follow,proto3" json:"follow,omitempty"`
+	// Zero selects the current attempt once when the stream opens.
+	Attempt       uint32 `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StreamJobLogsRequest) Reset() {
 	*x = StreamJobLogsRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[14]
+	mi := &file_skygo_v1_control_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1023,7 +1218,7 @@ func (x *StreamJobLogsRequest) String() string {
 func (*StreamJobLogsRequest) ProtoMessage() {}
 
 func (x *StreamJobLogsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[14]
+	mi := &file_skygo_v1_control_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1036,7 +1231,7 @@ func (x *StreamJobLogsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamJobLogsRequest.ProtoReflect.Descriptor instead.
 func (*StreamJobLogsRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{14}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StreamJobLogsRequest) GetId() string {
@@ -1060,20 +1255,29 @@ func (x *StreamJobLogsRequest) GetFollow() bool {
 	return false
 }
 
+func (x *StreamJobLogsRequest) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
+}
+
 // Offsets address the retained byte stream. Truncation is explicit, never silent.
 type StreamJobLogsResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
-	NextOffset    int64                  `protobuf:"varint,2,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
-	Complete      bool                   `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`
-	Truncated     bool                   `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	Data       []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	NextOffset int64                  `protobuf:"varint,2,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Complete   bool                   `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`
+	Truncated  bool                   `protobuf:"varint,4,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	// Identifies the fixed selected attempt; omitted for an implicit default stream.
+	AttemptId     string `protobuf:"bytes,5,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StreamJobLogsResponse) Reset() {
 	*x = StreamJobLogsResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[15]
+	mi := &file_skygo_v1_control_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1085,7 +1289,7 @@ func (x *StreamJobLogsResponse) String() string {
 func (*StreamJobLogsResponse) ProtoMessage() {}
 
 func (x *StreamJobLogsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[15]
+	mi := &file_skygo_v1_control_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1098,7 +1302,7 @@ func (x *StreamJobLogsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamJobLogsResponse.ProtoReflect.Descriptor instead.
 func (*StreamJobLogsResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{15}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *StreamJobLogsResponse) GetData() []byte {
@@ -1129,6 +1333,13 @@ func (x *StreamJobLogsResponse) GetTruncated() bool {
 	return false
 }
 
+func (x *StreamJobLogsResponse) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
 type ListTargetsRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -1137,7 +1348,7 @@ type ListTargetsRequest struct {
 
 func (x *ListTargetsRequest) Reset() {
 	*x = ListTargetsRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[16]
+	mi := &file_skygo_v1_control_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1149,7 +1360,7 @@ func (x *ListTargetsRequest) String() string {
 func (*ListTargetsRequest) ProtoMessage() {}
 
 func (x *ListTargetsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[16]
+	mi := &file_skygo_v1_control_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1162,7 +1373,7 @@ func (x *ListTargetsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTargetsRequest.ProtoReflect.Descriptor instead.
 func (*ListTargetsRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{16}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{18}
 }
 
 type ListTargetsResponse struct {
@@ -1174,7 +1385,7 @@ type ListTargetsResponse struct {
 
 func (x *ListTargetsResponse) Reset() {
 	*x = ListTargetsResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[17]
+	mi := &file_skygo_v1_control_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +1397,7 @@ func (x *ListTargetsResponse) String() string {
 func (*ListTargetsResponse) ProtoMessage() {}
 
 func (x *ListTargetsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[17]
+	mi := &file_skygo_v1_control_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +1410,7 @@ func (x *ListTargetsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListTargetsResponse.ProtoReflect.Descriptor instead.
 func (*ListTargetsResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{17}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *ListTargetsResponse) GetTargets() []*Target {
@@ -1217,7 +1428,7 @@ type GetServerInfoRequest struct {
 
 func (x *GetServerInfoRequest) Reset() {
 	*x = GetServerInfoRequest{}
-	mi := &file_skygo_v1_control_proto_msgTypes[18]
+	mi := &file_skygo_v1_control_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1229,7 +1440,7 @@ func (x *GetServerInfoRequest) String() string {
 func (*GetServerInfoRequest) ProtoMessage() {}
 
 func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[18]
+	mi := &file_skygo_v1_control_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1242,7 +1453,7 @@ func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServerInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetServerInfoRequest) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{18}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{20}
 }
 
 // Capabilities apply only to their named target at this endpoint.
@@ -1255,7 +1466,7 @@ type GetServerInfoResponse struct {
 
 func (x *GetServerInfoResponse) Reset() {
 	*x = GetServerInfoResponse{}
-	mi := &file_skygo_v1_control_proto_msgTypes[19]
+	mi := &file_skygo_v1_control_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1267,7 +1478,7 @@ func (x *GetServerInfoResponse) String() string {
 func (*GetServerInfoResponse) ProtoMessage() {}
 
 func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_skygo_v1_control_proto_msgTypes[19]
+	mi := &file_skygo_v1_control_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1280,7 +1491,7 @@ func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServerInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetServerInfoResponse) Descriptor() ([]byte, []int) {
-	return file_skygo_v1_control_proto_rawDescGZIP(), []int{19}
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *GetServerInfoResponse) GetTargets() []*Target {
@@ -1294,7 +1505,7 @@ var File_skygo_v1_control_proto protoreflect.FileDescriptor
 
 const file_skygo_v1_control_proto_rawDesc = "" +
 	"\n" +
-	"\x16skygo/v1/control.proto\x12\bskygo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xeb\x05\n" +
+	"\x16skygo/v1/control.proto\x12\bskygo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x98\x06\n" +
 	"\x04Task\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12)\n" +
 	"\x03env\x18\x02 \x03(\v2\x17.skygo.v1.Task.EnvEntryR\x03env\x12\x1c\n" +
@@ -1311,7 +1522,8 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x10cpu_limit_millis\x18\v \x01(\x03R\x0ecpuLimitMillis\x12,\n" +
 	"\x12memory_limit_bytes\x18\f \x01(\x03R\x10memoryLimitBytes\x12E\n" +
 	"\rtarget_labels\x18\r \x03(\v2 .skygo.v1.Task.TargetLabelsEntryR\ftargetLabels\x12E\n" +
-	"\rnode_selector\x18\x0e \x03(\v2 .skygo.v1.Task.NodeSelectorEntryR\fnodeSelector\x1a6\n" +
+	"\rnode_selector\x18\x0e \x03(\v2 .skygo.v1.Task.NodeSelectorEntryR\fnodeSelector\x12+\n" +
+	"\x05retry\x18\x0f \x01(\v2\x15.skygo.v1.RetryPolicyR\x05retry\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
@@ -1320,7 +1532,12 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
 	"\x11NodeSelectorEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xe4\x02\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"t\n" +
+	"\vRetryPolicy\x12!\n" +
+	"\fmax_attempts\x18\x01 \x01(\rR\vmaxAttempts\x12#\n" +
+	"\rdelay_seconds\x18\x02 \x01(\rR\fdelaySeconds\x12\x1d\n" +
+	"\n" +
+	"exit_codes\x18\x03 \x03(\x05R\texitCodes\"\xd7\x03\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\"\n" +
 	"\x04task\x18\x02 \x01(\v2\x0e.skygo.v1.TaskR\x04task\x12\x16\n" +
@@ -1332,7 +1549,24 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"created_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
-	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\f\n" +
+	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12-\n" +
+	"\battempts\x18\n" +
+	" \x03(\v2\x11.skygo.v1.AttemptR\battempts\x12B\n" +
+	"\x0fnext_attempt_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\rnextAttemptAtB\f\n" +
+	"\n" +
+	"_exit_code\"\xda\x02\n" +
+	"\aAttempt\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
+	"\aordinal\x18\x02 \x01(\rR\aordinal\x12(\n" +
+	"\x05state\x18\x03 \x01(\x0e2\x12.skygo.v1.JobStateR\x05state\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\x12 \n" +
+	"\texit_code\x18\x05 \x01(\x05H\x00R\bexitCode\x88\x01\x01\x129\n" +
+	"\n" +
+	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12;\n" +
+	"\vstarting_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"startingAt\x12;\n" +
+	"\vfinished_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"finishedAtB\f\n" +
 	"\n" +
 	"_exit_code\"\x88\x02\n" +
 	"\x06Target\x12\x12\n" +
@@ -1374,23 +1608,26 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x10CancelJobRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\"4\n" +
 	"\x11CancelJobResponse\x12\x1f\n" +
-	"\x03job\x18\x01 \x01(\v2\r.skygo.v1.JobR\x03job\"V\n" +
+	"\x03job\x18\x01 \x01(\v2\r.skygo.v1.JobR\x03job\"p\n" +
 	"\x14StreamJobLogsRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
 	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x16\n" +
-	"\x06follow\x18\x03 \x01(\bR\x06follow\"\x86\x01\n" +
+	"\x06follow\x18\x03 \x01(\bR\x06follow\x12\x18\n" +
+	"\aattempt\x18\x04 \x01(\rR\aattempt\"\xa5\x01\n" +
 	"\x15StreamJobLogsResponse\x12\x12\n" +
 	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1f\n" +
 	"\vnext_offset\x18\x02 \x01(\x03R\n" +
 	"nextOffset\x12\x1a\n" +
 	"\bcomplete\x18\x03 \x01(\bR\bcomplete\x12\x1c\n" +
-	"\ttruncated\x18\x04 \x01(\bR\ttruncated\"\x14\n" +
+	"\ttruncated\x18\x04 \x01(\bR\ttruncated\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x05 \x01(\tR\tattemptId\"\x14\n" +
 	"\x12ListTargetsRequest\"A\n" +
 	"\x13ListTargetsResponse\x12*\n" +
 	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\"\x16\n" +
 	"\x14GetServerInfoRequest\"C\n" +
 	"\x15GetServerInfoResponse\x12*\n" +
-	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets*\xc8\x01\n" +
+	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets*\xe0\x01\n" +
 	"\bJobState\x12\x19\n" +
 	"\x15JOB_STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10JOB_STATE_QUEUED\x10\x01\x12\x16\n" +
@@ -1399,17 +1636,20 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x13JOB_STATE_SUCCEEDED\x10\x04\x12\x14\n" +
 	"\x10JOB_STATE_FAILED\x10\x05\x12\x16\n" +
 	"\x12JOB_STATE_CANCELED\x10\x06\x12\x15\n" +
-	"\x11JOB_STATE_UNKNOWN\x10\a*\xac\x01\n" +
+	"\x11JOB_STATE_UNKNOWN\x10\a\x12\x16\n" +
+	"\x12JOB_STATE_RETRYING\x10\b*\xd0\x01\n" +
 	"\n" +
 	"Capability\x12\x1a\n" +
 	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19CAPABILITY_FINITE_JOBS_V1\x10\x01\x12!\n" +
 	"\x1dCAPABILITY_RESOURCE_LIMITS_V1\x10\x02\x12\x1f\n" +
 	"\x1bCAPABILITY_NODE_SELECTOR_V1\x10\x03\x12\x1f\n" +
-	"\x1bCAPABILITY_TARGET_LABELS_V1\x10\x042\xd1\x04\n" +
+	"\x1bCAPABILITY_TARGET_LABELS_V1\x10\x04\x12\"\n" +
+	"\x1eCAPABILITY_FINITE_JOB_RETRY_V1\x10\x052\x9c\x05\n" +
 	"\x0eControlService\x12A\n" +
 	"\bPlanTask\x12\x19.skygo.v1.PlanTaskRequest\x1a\x1a.skygo.v1.PlanTaskResponse\x12D\n" +
-	"\tSubmitJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12;\n" +
+	"\tSubmitJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12I\n" +
+	"\x0eSubmitRetryJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12;\n" +
 	"\x06GetJob\x12\x17.skygo.v1.GetJobRequest\x1a\x18.skygo.v1.GetJobResponse\x12A\n" +
 	"\bListJobs\x12\x19.skygo.v1.ListJobsRequest\x1a\x1a.skygo.v1.ListJobsResponse\x12D\n" +
 	"\tCancelJob\x12\x1a.skygo.v1.CancelJobRequest\x1a\x1b.skygo.v1.CancelJobResponse\x12R\n" +
@@ -1430,76 +1670,87 @@ func file_skygo_v1_control_proto_rawDescGZIP() []byte {
 }
 
 var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 24)
+var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
 var file_skygo_v1_control_proto_goTypes = []any{
 	(JobState)(0),                 // 0: skygo.v1.JobState
 	(Capability)(0),               // 1: skygo.v1.Capability
 	(*Task)(nil),                  // 2: skygo.v1.Task
-	(*Job)(nil),                   // 3: skygo.v1.Job
-	(*Target)(nil),                // 4: skygo.v1.Target
-	(*Rejection)(nil),             // 5: skygo.v1.Rejection
-	(*PlanTaskRequest)(nil),       // 6: skygo.v1.PlanTaskRequest
-	(*PlanTaskResponse)(nil),      // 7: skygo.v1.PlanTaskResponse
-	(*SubmitJobRequest)(nil),      // 8: skygo.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),     // 9: skygo.v1.SubmitJobResponse
-	(*GetJobRequest)(nil),         // 10: skygo.v1.GetJobRequest
-	(*GetJobResponse)(nil),        // 11: skygo.v1.GetJobResponse
-	(*ListJobsRequest)(nil),       // 12: skygo.v1.ListJobsRequest
-	(*ListJobsResponse)(nil),      // 13: skygo.v1.ListJobsResponse
-	(*CancelJobRequest)(nil),      // 14: skygo.v1.CancelJobRequest
-	(*CancelJobResponse)(nil),     // 15: skygo.v1.CancelJobResponse
-	(*StreamJobLogsRequest)(nil),  // 16: skygo.v1.StreamJobLogsRequest
-	(*StreamJobLogsResponse)(nil), // 17: skygo.v1.StreamJobLogsResponse
-	(*ListTargetsRequest)(nil),    // 18: skygo.v1.ListTargetsRequest
-	(*ListTargetsResponse)(nil),   // 19: skygo.v1.ListTargetsResponse
-	(*GetServerInfoRequest)(nil),  // 20: skygo.v1.GetServerInfoRequest
-	(*GetServerInfoResponse)(nil), // 21: skygo.v1.GetServerInfoResponse
-	nil,                           // 22: skygo.v1.Task.EnvEntry
-	nil,                           // 23: skygo.v1.Task.TargetLabelsEntry
-	nil,                           // 24: skygo.v1.Task.NodeSelectorEntry
-	nil,                           // 25: skygo.v1.Target.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 26: google.protobuf.Timestamp
+	(*RetryPolicy)(nil),           // 3: skygo.v1.RetryPolicy
+	(*Job)(nil),                   // 4: skygo.v1.Job
+	(*Attempt)(nil),               // 5: skygo.v1.Attempt
+	(*Target)(nil),                // 6: skygo.v1.Target
+	(*Rejection)(nil),             // 7: skygo.v1.Rejection
+	(*PlanTaskRequest)(nil),       // 8: skygo.v1.PlanTaskRequest
+	(*PlanTaskResponse)(nil),      // 9: skygo.v1.PlanTaskResponse
+	(*SubmitJobRequest)(nil),      // 10: skygo.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),     // 11: skygo.v1.SubmitJobResponse
+	(*GetJobRequest)(nil),         // 12: skygo.v1.GetJobRequest
+	(*GetJobResponse)(nil),        // 13: skygo.v1.GetJobResponse
+	(*ListJobsRequest)(nil),       // 14: skygo.v1.ListJobsRequest
+	(*ListJobsResponse)(nil),      // 15: skygo.v1.ListJobsResponse
+	(*CancelJobRequest)(nil),      // 16: skygo.v1.CancelJobRequest
+	(*CancelJobResponse)(nil),     // 17: skygo.v1.CancelJobResponse
+	(*StreamJobLogsRequest)(nil),  // 18: skygo.v1.StreamJobLogsRequest
+	(*StreamJobLogsResponse)(nil), // 19: skygo.v1.StreamJobLogsResponse
+	(*ListTargetsRequest)(nil),    // 20: skygo.v1.ListTargetsRequest
+	(*ListTargetsResponse)(nil),   // 21: skygo.v1.ListTargetsResponse
+	(*GetServerInfoRequest)(nil),  // 22: skygo.v1.GetServerInfoRequest
+	(*GetServerInfoResponse)(nil), // 23: skygo.v1.GetServerInfoResponse
+	nil,                           // 24: skygo.v1.Task.EnvEntry
+	nil,                           // 25: skygo.v1.Task.TargetLabelsEntry
+	nil,                           // 26: skygo.v1.Task.NodeSelectorEntry
+	nil,                           // 27: skygo.v1.Target.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 28: google.protobuf.Timestamp
 }
 var file_skygo_v1_control_proto_depIdxs = []int32{
-	22, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
-	23, // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
-	24, // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
-	2,  // 3: skygo.v1.Job.task:type_name -> skygo.v1.Task
-	0,  // 4: skygo.v1.Job.state:type_name -> skygo.v1.JobState
-	26, // 5: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	26, // 6: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
-	1,  // 7: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
-	25, // 8: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
-	2,  // 9: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
-	5,  // 10: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
-	2,  // 11: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
-	3,  // 12: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
-	3,  // 13: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
-	3,  // 14: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
-	3,  // 15: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
-	4,  // 16: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
-	4,  // 17: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
-	6,  // 18: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
-	8,  // 19: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
-	10, // 20: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
-	12, // 21: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
-	14, // 22: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
-	16, // 23: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
-	18, // 24: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
-	20, // 25: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
-	7,  // 26: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
-	9,  // 27: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
-	11, // 28: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
-	13, // 29: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
-	15, // 30: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
-	17, // 31: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
-	19, // 32: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
-	21, // 33: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
-	26, // [26:34] is the sub-list for method output_type
-	18, // [18:26] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	24, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
+	25, // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
+	26, // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
+	3,  // 3: skygo.v1.Task.retry:type_name -> skygo.v1.RetryPolicy
+	2,  // 4: skygo.v1.Job.task:type_name -> skygo.v1.Task
+	0,  // 5: skygo.v1.Job.state:type_name -> skygo.v1.JobState
+	28, // 6: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	28, // 7: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
+	5,  // 8: skygo.v1.Job.attempts:type_name -> skygo.v1.Attempt
+	28, // 9: skygo.v1.Job.next_attempt_at:type_name -> google.protobuf.Timestamp
+	0,  // 10: skygo.v1.Attempt.state:type_name -> skygo.v1.JobState
+	28, // 11: skygo.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
+	28, // 12: skygo.v1.Attempt.starting_at:type_name -> google.protobuf.Timestamp
+	28, // 13: skygo.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
+	1,  // 14: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
+	27, // 15: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
+	2,  // 16: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
+	7,  // 17: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
+	2,  // 18: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
+	4,  // 19: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
+	4,  // 20: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
+	4,  // 21: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
+	4,  // 22: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
+	6,  // 23: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
+	6,  // 24: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
+	8,  // 25: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
+	10, // 26: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
+	10, // 27: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
+	12, // 28: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
+	14, // 29: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
+	16, // 30: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
+	18, // 31: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
+	20, // 32: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
+	22, // 33: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
+	9,  // 34: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
+	11, // 35: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
+	11, // 36: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
+	13, // 37: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
+	15, // 38: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
+	17, // 39: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
+	19, // 40: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
+	21, // 41: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
+	23, // 42: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
+	34, // [34:43] is the sub-list for method output_type
+	25, // [25:34] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_skygo_v1_control_proto_init() }
@@ -1507,14 +1758,15 @@ func file_skygo_v1_control_proto_init() {
 	if File_skygo_v1_control_proto != nil {
 		return
 	}
-	file_skygo_v1_control_proto_msgTypes[1].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[2].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[3].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skygo_v1_control_proto_rawDesc), len(file_skygo_v1_control_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   24,
+			NumMessages:   26,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

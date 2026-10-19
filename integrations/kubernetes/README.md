@@ -1,7 +1,8 @@
 # Kubernetes integration
 
 This Go module builds `skygo-kubernetes`, the skygo CLI and server with a native
-Kubernetes Job backend. The root `skygo` binary remains a portable client and
+Kubernetes backend: native Jobs by default and directly owned Pods for enabled
+finite retry policies. The root `skygo` binary remains a portable client and
 local server without Kubernetes dependencies. Both binaries speak the same
 Connect API and provide the same client commands.
 
@@ -53,6 +54,23 @@ do not request or reserve capacity. Selector allowlists do not supply defaults.
 A model alias such as `A100` needs `required_node_selector` entries that appear
 in its target's allowlist; tasks must request those exact selectors. The generic
 `nvidia` name retains its vendor resource meaning.
+
+Targets implementing retry advertise `finite-job-retry-v1`; enabled tasks use
+one restartNever Pod
+per attempt. Each attempt pins its Create response UID and requires matching
+ownership/task/binding identity on later calls. Missing or ambiguous Create does
+not authorize adoption or replacement. Another attempt needs positive stopped
+container evidence and an explicitly selected reported exit code. Kubernetes
+exit codes do not establish ordinary-exit or signal provenance. Cancellation,
+deadline, disappearance and incomplete evidence do not authorize retry.
+
+This path needs namespaced Pod `create`, `get`, and `delete` permissions in
+addition to existing Job `create/get/delete`, Pod `list`, and Pod log `get`.
+Keep the Role scoped to each configured workload namespace. No cluster-wide
+permission or new target configuration key is required. Default jobs retain the
+Job backend and its existing adoption behavior. See the
+[retry contract](../../docs/contracts.md#finite-retries) and the native
+checks in the [verification plan](../../docs/testing.md#finite-retry-checks).
 
 The local `replace github.com/tmc/skygo => ../..` supports development from this
 checkout. This is not an independently released module: publishing it requires

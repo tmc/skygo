@@ -27,6 +27,8 @@ func (o *options) infoCommand() *cobra.Command {
 				capability = v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1
 			case "node-selector-v1":
 				capability = v1.Capability_CAPABILITY_NODE_SELECTOR_V1
+			case "finite-job-retry-v1":
+				capability = v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1
 			case "target-labels-v1":
 				capability = v1.Capability_CAPABILITY_TARGET_LABELS_V1
 			default:
@@ -63,7 +65,7 @@ func (o *options) infoCommand() *cobra.Command {
 		return w.Flush()
 	}}
 	cmd.Flags().StringVar(&target, "target", "", "Select one named target")
-	cmd.Flags().StringSliceVar(&names, "require", nil, "Require capabilities on --target (finite-jobs-v1, resource-limits-v1, node-selector-v1, target-labels-v1)")
+	cmd.Flags().StringSliceVar(&names, "require", nil, "Require capabilities on --target (finite-jobs-v1, resource-limits-v1, node-selector-v1, target-labels-v1, finite-job-retry-v1)")
 	return cmd
 }
 
@@ -75,6 +77,8 @@ func capabilityName(capability v1.Capability) string {
 		return "resource-limits-v1"
 	case v1.Capability_CAPABILITY_NODE_SELECTOR_V1:
 		return "node-selector-v1"
+	case v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1:
+		return "finite-job-retry-v1"
 	case v1.Capability_CAPABILITY_TARGET_LABELS_V1:
 		return "target-labels-v1"
 	}
@@ -89,7 +93,7 @@ func (o *options) requireCapabilities(ctx context.Context, target string, requir
 	}
 	for _, capability := range required {
 		switch capability {
-		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1:
+		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1:
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown required capability %d", capability))
 		}
@@ -142,6 +146,9 @@ func taskCapabilities(task *v1.Task) []v1.Capability {
 	}
 	if len(task.TargetLabels) != 0 {
 		required = append(required, v1.Capability_CAPABILITY_TARGET_LABELS_V1)
+	}
+	if enabled, _ := enabledRetry(task); enabled {
+		required = append(required, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1)
 	}
 	return required
 }

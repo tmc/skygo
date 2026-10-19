@@ -11,7 +11,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 3
+const schemaVersion = 4
 
 var schemaKey = []byte("schema_version")
 
@@ -29,7 +29,7 @@ func inspect(tx *bolt.Tx) error {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != 2 && n != schemaVersion {
+			if n != 1 && n != 2 && n != 3 && n != schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
@@ -50,10 +50,10 @@ func inspect(tx *bolt.Tx) error {
 	if count != 4 {
 		return errors.New("invalid database bucket layout")
 	}
-	if data := m.Get(taskBytesKey); data != nil && len(data) != 8 {
+	if data := m.Get(taskBytesKey); m.Bucket(taskBytesKey) != nil || data != nil && len(data) != 8 {
 		return errors.New("invalid task byte counter")
 	}
-	if bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) && m.Get(taskBytesKey) == nil {
+	if schemaNumber(tx) >= 3 && m.Get(taskBytesKey) == nil {
 		return errors.New("missing task byte counter")
 	}
 	if len(m.Get([]byte("owner"))) == 0 && tx.Bucket(jobsBucket).Stats().KeyN != 0 {
@@ -107,6 +107,14 @@ func initialize(tx *bolt.Tx, owner string) error {
 	}
 	if len(m.Get([]byte("owner"))) == 0 {
 		if err := m.Put([]byte("owner"), []byte(owner)); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.CreateBucketIfNotExists(attemptJobsBucket); err != nil {
+		return err
+	}
+	if m.Get(retryBytesKey) == nil {
+		if err := m.Put(retryBytesKey, sequenceKey(0)); err != nil {
 			return err
 		}
 	}
@@ -169,5 +177,8 @@ func validateSnapshot(tx *bolt.Tx) error {
 	}); err != nil {
 		return err
 	}
-	return validateScoped(tx)
+	if err := validateScoped(tx); err != nil {
+		return err
+	}
+	return validateAttempts(tx)
 }

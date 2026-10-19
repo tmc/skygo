@@ -22,6 +22,7 @@ type Task struct {
 	MemoryLimitBytes int64             `json:"memory_limit_bytes,omitempty" yaml:"memory_limit_bytes,omitempty"`
 	TargetLabels     map[string]string `json:"target_labels,omitempty" yaml:"target_labels,omitempty"`
 	NodeSelector     map[string]string `json:"node_selector,omitempty" yaml:"node_selector,omitempty"`
+	Retry            *RetryPolicy      `json:"retry,omitempty" yaml:"retry,omitempty"`
 }
 
 // State records an observed execution state. Unknown does not imply termination.
@@ -31,6 +32,7 @@ const (
 	Queued    State = "queued"
 	Starting  State = "starting"
 	Running   State = "running"
+	Retrying  State = "retrying"
 	Succeeded State = "succeeded"
 	Failed    State = "failed"
 	Canceled  State = "canceled"
@@ -40,24 +42,51 @@ const (
 // Terminal reports whether the control plane will stop reconciling this state.
 func (s State) Terminal() bool { return s == Succeeded || s == Failed || s == Canceled || s == Unknown }
 
+// Termination records positive stopped evidence within a backend's documented
+// ownership unit. It does not establish signal provenance or whole-tree cleanup.
+type Termination uint8
+
+const (
+	UnknownTermination Termination = iota
+	StoppedWithExitCode
+)
+
 // Status describes the last observed state; ExitCode is nil unless observed.
+// Instance is an opaque execution identity: empty, or 1..128 printable ASCII bytes.
+// StoppedWithExitCode requires both an exit code and backend stopped evidence.
 type Status struct {
-	State    State  `json:"state"`
-	Reason   string `json:"reason,omitempty"`
-	ExitCode *int32 `json:"exit_code,omitempty"`
+	State       State       `json:"state"`
+	Reason      string      `json:"reason,omitempty"`
+	ExitCode    *int32      `json:"exit_code,omitempty"`
+	Termination Termination `json:"termination,omitempty"`
+	Instance    string      `json:"instance,omitempty"`
+}
+
+// Attempt records one execution of an accepted retry task. ID is immutable.
+// StartingAt records committed launch intent, not an exact process start time.
+// FinishedAt records a committed terminal decision, including cancellation before
+// execution. A retry job retains at most its policy's MaxAttempts entries.
+type Attempt struct {
+	ID         string     `json:"id"`
+	Status     Status     `json:"status"`
+	CreatedAt  time.Time  `json:"created_at"`
+	StartingAt *time.Time `json:"starting_at,omitempty"`
+	FinishedAt *time.Time `json:"finished_at,omitempty"`
 }
 
 // Job is a durable accepted task. Task, Target and TargetBinding never change.
 type Job struct {
-	ID              string    `json:"id"`
-	Task            Task      `json:"task"`
-	Target          string    `json:"target"`
-	Status          Status    `json:"status"`
-	CancelRequested bool      `json:"cancel_requested"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
-	Sequence        uint64    `json:"sequence"`
-	TargetBinding   string    `json:"target_binding,omitempty"`
+	ID              string     `json:"id"`
+	Task            Task       `json:"task"`
+	Target          string     `json:"target"`
+	Status          Status     `json:"status"`
+	CancelRequested bool       `json:"cancel_requested"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
+	Sequence        uint64     `json:"sequence"`
+	TargetBinding   string     `json:"target_binding,omitempty"`
+	Attempts        []Attempt  `json:"attempts,omitempty"`
+	NextAttemptAt   *time.Time `json:"next_attempt_at,omitempty"`
 }
 
 // LogChunk is a bounded segment of the retained combined output prefix.
@@ -74,10 +103,12 @@ const MaxChunkBytes = 64 << 10
 
 // Reference binds execution identity to the immutable accepted task.
 // Task lets recovering backends verify execution against durable state.
+// Instance is empty or an opaque identity of 1..128 printable ASCII bytes.
 type Reference struct {
-	ID      string
-	Task    Task
-	Binding string
+	ID       string
+	Task     Task
+	Binding  string
+	Instance string
 }
 
 // ErrIdentityMismatch means an execution does not match its durable reference.
@@ -108,4 +139,5 @@ type Target struct {
 	AcceleratorNames       []string
 	SupportsResourceLimits bool
 	SupportsNodeSelector   bool
+	SupportsRetry          bool
 }

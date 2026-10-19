@@ -1,4 +1,4 @@
-// Package kube executes finite workloads as native Kubernetes Jobs.
+// Package kube executes finite workloads as native Kubernetes Jobs or Pods.
 //
 // FromTarget constructs a named target with explicit connection settings and
 // resource policy. FromConfig preserves the legacy single-target loading rules.
@@ -18,6 +18,17 @@
 // if cancellation is replayed. Absence alone does not establish termination.
 // Ownership uses stable operator/id labels, task and target-binding annotations,
 // and controller Job UID references. Other namespace writers must be trusted.
+//
+// Tasks with an enabled retry policy instead create one directly owned Pod per
+// attempt. A successful HTTP201 response pins its UID in a bounded private
+// receipt; subsequent references require that receipt or the durable Instance.
+// Ambiguous creation never authorizes adoption, replacement or native effects.
+// Retry evidence requires the same UID and current single-container runtime
+// identity and ordered timestamps on two reads, with a selected reported exit
+// code. This trusts the API/kubelet report for that container, and does not claim
+// signal provenance, whole-process-tree termination or native qualification.
+// Cancellation and Pod disappearance do not establish retry eligibility.
+//
 // Pod log reads have no atomic UID precondition; metadata checks do not eliminate
 // the race with a privileged writer replacing a Pod before its log request.
 package kube

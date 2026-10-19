@@ -1,0 +1,20 @@
+# Cancellation settles before a 3600-second backoff, without waiting for due time.
+server start
+retry-task task.json once 3600
+skygo --json run -f task.json --request-id retry-cancel
+job-id JOB
+await-state $JOB retrying
+history failed
+skygo jobs cancel $JOB --yes
+await-state $JOB canceled
+history failed
+exists first
+! exists second
+server stop
+server start
+skygo --json jobs get $JOB
+stdout '"state": *"JOB_STATE_CANCELED"'
+history failed
+! exists second
+server stop
+! stderr .

@@ -16,7 +16,7 @@ rules:
     verbs: [create, get, delete]
   - apiGroups: ['']
     resources: [pods]
-    verbs: [list]
+    verbs: [create, get, list, delete]
   - apiGroups: ['']
     resources: [pods/log]
     verbs: [get]

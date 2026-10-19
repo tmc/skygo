@@ -5,7 +5,15 @@ import "google/protobuf/timestamp.proto";
 // ControlService manages finite, single-node jobs on configured targets.
 service ControlService {
   rpc PlanTask(PlanTaskRequest) returns (PlanTaskResponse);
+  // Both submission methods share the accepted task and request identity shape.
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
   rpc SubmitJob(SubmitJobRequest) returns (SubmitJobResponse);
+  // SubmitRetryJob requires retry-aware admission; clients must not fall back to SubmitJob.
+  // Reusing these messages keeps the additive method's acceptance contract identical.
+  // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
+  // buf:lint:ignore RPC_REQUEST_STANDARD_NAME
+  // buf:lint:ignore RPC_RESPONSE_STANDARD_NAME
+  rpc SubmitRetryJob(SubmitJobRequest) returns (SubmitJobResponse);
   rpc GetJob(GetJobRequest) returns (GetJobResponse);
   rpc ListJobs(ListJobsRequest) returns (ListJobsResponse);
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
@@ -29,6 +37,13 @@ message Task {
   int64 memory_limit_bytes = 12;
   map<string, string> target_labels = 13;
   map<string, string> node_selector = 14;
+  RetryPolicy retry = 15;
+}
+// RetryPolicy selects bounded attempts after qualified stopped failures.
+message RetryPolicy {
+  uint32 max_attempts = 1;
+  uint32 delay_seconds = 2;
+  repeated int32 exit_codes = 3;
 }
 enum JobState {
   JOB_STATE_UNSPECIFIED = 0;
@@ -39,6 +54,7 @@ enum JobState {
   JOB_STATE_FAILED = 5;
   JOB_STATE_CANCELED = 6;
   JOB_STATE_UNKNOWN = 7;
+  JOB_STATE_RETRYING = 8;
 }
 message Job {
   string id = 1;
@@ -50,6 +66,20 @@ message Job {
   optional int32 exit_code = 7;
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
+  repeated Attempt attempts = 10;
+  google.protobuf.Timestamp next_attempt_at = 11;
+}
+// Attempt describes one execution. Ordinals are one-based; timestamps record
+// durable decisions, not exact native process start or exit times.
+message Attempt {
+  string id = 1;
+  uint32 ordinal = 2;
+  JobState state = 3;
+  string reason = 4;
+  optional int32 exit_code = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp starting_at = 7;
+  google.protobuf.Timestamp finished_at = 8;
 }
 // Capability identifies implemented execution semantics, not available capacity.
 enum Capability {
@@ -58,6 +88,7 @@ enum Capability {
   CAPABILITY_RESOURCE_LIMITS_V1 = 2;
   CAPABILITY_NODE_SELECTOR_V1 = 3;
   CAPABILITY_TARGET_LABELS_V1 = 4;
+  CAPABILITY_FINITE_JOB_RETRY_V1 = 5;
 }
 message Target {
   string name = 1;
@@ -97,6 +128,8 @@ message StreamJobLogsRequest {
   string id = 1;
   int64 offset = 2;
   bool follow = 3;
+  // Zero selects the current attempt once when the stream opens.
+  uint32 attempt = 4;
 }
 // Offsets address the retained byte stream. Truncation is explicit, never silent.
 message StreamJobLogsResponse {
@@ -104,6 +137,8 @@ message StreamJobLogsResponse {
   int64 next_offset = 2;
   bool complete = 3;
   bool truncated = 4;
+  // Identifies the fixed selected attempt; omitted for an implicit default stream.
+  string attempt_id = 5;
 }
 message ListTargetsRequest {}
 message ListTargetsResponse { repeated Target targets = 1; }

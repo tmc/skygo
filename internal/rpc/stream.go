@@ -67,6 +67,15 @@ func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.St
 		h.record(parent, "logs", "", err)
 		return rpcError(err)
 	}
+	attemptID, err := h.control.LogAttempt(actor, job.ID, r.Msg.Attempt)
+	if err != nil {
+		h.record(parent, "logs", "", err)
+		return rpcError(err)
+	}
+	wireAttemptID := ""
+	if len(job.Attempts) != 0 || r.Msg.Attempt != 0 {
+		wireAttemptID = attemptID
+	}
 	select {
 	case h.streams <- struct{}{}:
 	default:
@@ -107,7 +116,7 @@ func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.St
 		defer func() { <-response.done; <-h.streams }()
 		offset := r.Msg.Offset
 		for {
-			chunk, err := h.control.Logs(ctx, actor, r.Msg.Id, offset)
+			chunk, err := h.control.Logs(ctx, actor, r.Msg.Id, attemptID, offset)
 			select {
 			case results <- result{chunk, err}:
 			case <-ctx.Done():
@@ -158,7 +167,7 @@ func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.St
 			if ctx.Err() != nil {
 				return rpcError(context.Cause(ctx))
 			}
-			if err := stream.Send(&v1.StreamJobLogsResponse{Data: chunk.Data, NextOffset: chunk.NextOffset, Complete: chunk.Complete, Truncated: chunk.Truncated}); err != nil {
+			if err := stream.Send(&v1.StreamJobLogsResponse{Data: chunk.Data, NextOffset: chunk.NextOffset, Complete: chunk.Complete, Truncated: chunk.Truncated, AttemptId: wireAttemptID}); err != nil {
 				return err
 			}
 			if chunk.Complete || (!r.Msg.Follow && len(chunk.Data) == 0) {

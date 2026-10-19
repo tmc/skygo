@@ -93,7 +93,7 @@ func TestScopedControlRejectsForgedAndForeign(t *testing.T) {
 	if _, err := f.c.Cancel(f.actors["alice"], b.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("foreign cancel: %v", err)
 	}
-	if _, err := f.c.Logs(context.Background(), f.actors["alice"], b.ID, 0); !errors.Is(err, store.ErrNotFound) {
+	if _, err := f.c.Logs(context.Background(), f.actors["alice"], b.ID, b.ID, 0); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("foreign logs: %v", err)
 	}
 	for _, call := range []func() error{
@@ -223,7 +223,7 @@ func TestZeroActorDeniedAtEveryControlEntrypoint(t *testing.T) {
 		"list":    func() error { _, _, err := f.c.List(zero, 1, ""); return err },
 		"cancel":  func() error { _, err := f.c.Cancel(zero, "00000000000000000000000000000000"); return err },
 		"logs": func() error {
-			_, err := f.c.Logs(context.Background(), zero, "00000000000000000000000000000000", 0)
+			_, err := f.c.Logs(context.Background(), zero, "00000000000000000000000000000000", "00000000000000000000000000000000", 0)
 			return err
 		},
 	}
@@ -233,5 +233,44 @@ func TestZeroActorDeniedAtEveryControlEntrypoint(t *testing.T) {
 				t.Fatalf("zero actor: %v", err)
 			}
 		})
+	}
+}
+
+func TestLogSelectionRechecksRevokedActor(t *testing.T) {
+	f := newScopedControl(t)
+	actor := f.actors["alice"]
+	job, err := f.c.Submit(actor, "logs", backend.Task{Argv: []string{"work"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := f.c.LogAttempt(actor, job.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.c.LogAttempt(f.actors["bob"], job.ID, 99); !errors.Is(err, store.ErrNotFound) {
+		t.Fatal("ordinal disclosed foreign job", err)
+	}
+	if err := auth.Revoke(f.config, actor.TokenID()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.NewTimer(3 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		if _, err := f.e.Check(actor, auth.Read); errors.Is(err, auth.ErrUnauthenticated) {
+			break
+		}
+		select {
+		case <-deadline.C:
+			t.Fatal("revocation refresh did not arrive")
+		case <-tick.C:
+		}
+	}
+	if _, err := f.c.LogAttempt(actor, job.ID, 0); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatal("revoked actor selected logs", err)
+	}
+	if _, err := f.c.Logs(context.Background(), actor, job.ID, selected, 0); !errors.Is(err, auth.ErrUnauthenticated) {
+		t.Fatal("selected stream retained revoked authority", err)
 	}
 }

@@ -142,6 +142,10 @@ func (s *Store) Lookup(actor auth.Actor, requestID string, task backend.Task) (j
 	if err = s.authorize(actor, auth.Read); err != nil {
 		return
 	}
+	task.Retry, err = backend.NormalizeRetry(task.Retry)
+	if err != nil {
+		return
+	}
 	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, found, e = lookup(tx, actor, requestID, task); return e })
 	return
 }
@@ -153,6 +157,10 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 	if err = s.authorize(actor, auth.Mutate); err != nil {
 		return
 	}
+	task.Retry, err = backend.NormalizeRetry(task.Retry)
+	if err != nil {
+		return
+	}
 	existing, found, err := s.Lookup(actor, requestID, task)
 	if err != nil || found {
 		return existing, err
@@ -161,6 +169,7 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 	if err != nil {
 		return backend.Job{}, err
 	}
+	now := time.Now().UTC()
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		existing, found, e := lookup(tx, actor, requestID, task)
 		if e != nil {
@@ -191,15 +200,17 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 		if seq.Sequence() >= maxJobs {
 			return ErrFull
 		}
-		if jobs.Get([]byte(id)) != nil {
+		if jobs.Get([]byte(id)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(id)) != nil {
 			return errors.New("random job identity collision")
 		}
 		n, e := seq.NextSequence()
 		if e != nil {
 			return e
 		}
-		now := time.Now().UTC()
 		accepted := backend.Job{ID: id, Task: task, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
+		if e = acceptAttempts(tx, &accepted); e != nil {
+			return e
+		}
 		data, e = json.Marshal(accepted)
 		if e != nil {
 			return e
@@ -298,7 +309,10 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	if e != nil {
 		return j, e
 	}
-	j = before
+	j, e = get(tx, id)
+	if e != nil {
+		return j, e
+	}
 	if e = fn(&j); e != nil {
 		return j, e
 	}
@@ -309,12 +323,18 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	if j.ID != before.ID || j.Target != before.Target || j.TargetBinding != before.TargetBinding || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
 		return j, errors.New("cannot change immutable job fields")
 	}
+	if e = validateUpdate(before, j); e != nil {
+		return j, e
+	}
 	j.UpdatedAt = time.Now().UTC()
 	data, e := json.Marshal(j)
 	if e != nil {
 		return j, e
 	}
-	return j, tx.Bucket(jobsBucket).Put([]byte(id), data)
+	if e = tx.Bucket(jobsBucket).Put([]byte(id), data); e != nil {
+		return j, e
+	}
+	return get(tx, id)
 }
 
 // Active reads all nonterminal jobs in acceptance order.

@@ -9,8 +9,8 @@ make check
 make build
 ```
 
-These targets test both modules with `GOWORK=off`; root `go test ./...` alone
-does not visit the nested integration module. `make check` also needs Buf
+These targets test all three modules with `GOWORK=off`; root `go test ./...` alone
+does not visit the nested integration modules. `make check` also needs Buf
 (install the pinned tools with `make tools`).
 
 The suite includes real local subprocesses and generated Connect clients over
@@ -237,3 +237,61 @@ stopped pre-upgrade snapshot and external-work reconciliation.
 These manual checks do not establish production capacity, GPU model scheduling,
 HA or workload isolation. Native receipts must identify the exact binary,
 configuration, Job/Pod UIDs and unrun cases separately from unit-test results.
+
+
+## Finite retry checks
+
+Use a fresh private directory and a local Linux server with runtime pidfd
+support. Record source/binary hashes, kernel and results. A cross-build does not
+qualify process-group cleanup or output EOF. Check admission first:
+
+```sh
+./bin/skygo info --target local --require finite-job-retry-v1
+```
+
+Local Darwin must reject this requirement and enabled retry submission while
+default tasks continue to work. Create retry.yaml in the private directory:
+
+```yaml
+argv: [/bin/sh, -c, 'echo attempt; exit 7']
+target: local
+retry:
+  max_attempts: 2
+  delay_seconds: 1
+  exit_codes: [7]
+```
+
+```sh
+./bin/skygo run -f retry.yaml --wait --request-id manual-retry
+./bin/skygo --json jobs get JOB_ID
+./bin/skygo jobs logs JOB_ID --attempt 1
+./bin/skygo jobs logs JOB_ID --attempt 2
+./bin/skygo run -f retry.yaml --wait --request-id manual-retry
+```
+
+Expect final failure and CLI exit 2, two distinct attempt IDs under one logical
+job, and attempt in both selected outputs. The first attempt ID equals JOB_ID;
+replay must reuse that job without another launch. Changing the policy under the
+same request ID must conflict. Removing retry with a fresh request ID must yield
+one implicit execution. Repeat with delay_seconds 3600; cancel during retrying
+and verify prompt settlement with unchanged failed history and no new attempt.
+Restart during backoff and verify the original deadline survives.
+
+Run the controlled controller/RPC tests for stale results, fixed streams,
+revocation, missing/rebound routes and full32-slot cancellation. Keep native
+termination qualification separate from those fake backend/HTTP fixtures.
+For Kubernetes use only an approved disposable context/image and configured
+target. Enabled tasks must create distinct directly owned restartNever Pods;
+default tasks must still create Jobs. Verify the prior exact container stopped
+before another Pod appears. Lost Create responses, replaced UIDs, missing Pods,
+cancellation and timeout must never authorize replacement from uncertainty.
+
+Stop the server and exercise snapshot/restore as above; compare history,
+deadline, owner/request identity and authentication mode. The dedicated
+TestAttemptPriorS04BinaryRefusesFormat4 gate in internal/store/attempt_schema_test.go
+requires SKYGO_S04_BINARY and its verified digest in SKYGO_S04_SHA256; without
+them it skips. It checks fenced S04 refusal of both legacy and scoped format4
+state without changing bytes. Never point an unfenced binary at migrated state.
+Rollback requires a stopped pre-upgrade snapshot and external-work reconciliation.
+The archived-server compatibility fixture must also prove retry submission is
+unimplemented with zero legacy SubmitJob calls and zero native launches.

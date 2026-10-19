@@ -26,4 +26,10 @@
 // counters. Target bindings are immutable server metadata outside task equality.
 // Unbound historical remote work requires separate operator recovery; it is
 // never assigned a route from a current target alias.
+//
+// BeginAttempt and ObserveAttempt are trusted coordinator transactions. Retry
+// policies reserve bounded history at admission; attempts never consume another
+// submission sequence or change the accepted task. Generic updates cannot alter
+// attempt history, deadlines or execution evidence. Backups include this state;
+// log retention remains separate.
 package store

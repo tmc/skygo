@@ -1,18 +1,21 @@
 package control
 
 import (
+	"fmt"
 	"maps"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/tmc/skygo/internal/backend"
 )
 
 const (
-	missingTarget = "target is not configured"
-	unboundTarget = "target binding is unavailable; execution held"
-	changedTarget = "target binding has changed; execution held"
+	missingTarget          = "target is not configured"
+	unboundTarget          = "target binding is unavailable; execution held"
+	changedTarget          = "target binding has changed; execution held"
+	unsupportedRetryTarget = "retry execution is unsupported; execution held"
 )
 
 func validText(s string, max int, empty bool) bool {
@@ -53,6 +56,11 @@ func cloneTask(t backend.Task) backend.Task {
 	t.Env = maps.Clone(t.Env)
 	t.TargetLabels = maps.Clone(t.TargetLabels)
 	t.NodeSelector = maps.Clone(t.NodeSelector)
+	if t.Retry != nil {
+		p := *t.Retry
+		p.ExitCodes = slices.Clone(p.ExitCodes)
+		t.Retry = &p
+	}
 	return t
 }
 func matchesLabels(have, want map[string]string) bool {
@@ -81,8 +89,53 @@ func (c *Control) boundTarget(j backend.Job) (backend.Target, string) {
 	return t, ""
 }
 func routingHeld(reason string) bool {
-	return reason == missingTarget || reason == unboundTarget || reason == changedTarget
+	return reason == missingTarget || reason == unboundTarget || reason == changedTarget || reason == unsupportedRetryTarget
 }
 func reference(j backend.Job) backend.Reference {
-	return backend.Reference{ID: j.ID, Task: cloneTask(j.Task), Binding: j.TargetBinding}
+	return backend.Reference{ID: j.CurrentAttemptID(), Task: cloneTask(j.Task), Binding: j.TargetBinding, Instance: currentStatus(j).Instance}
+}
+
+func normalizeTask(t backend.Task) (backend.Task, error) {
+	retry, err := backend.NormalizeRetry(t.Retry)
+	if err != nil {
+		return backend.Task{}, fmt.Errorf("%w: invalid retry policy", ErrInvalid)
+	}
+	t.Retry = retry
+	return t, nil
+}
+func currentStatus(j backend.Job) backend.Status {
+	if len(j.Attempts) != 0 {
+		return j.Attempts[len(j.Attempts)-1].Status
+	}
+	return j.Status
+}
+func cloneStatus(s backend.Status) backend.Status {
+	if s.ExitCode != nil {
+		code := *s.ExitCode
+		s.ExitCode = &code
+	}
+	return s
+}
+func cloneTime(t *time.Time) *time.Time {
+	if t == nil {
+		return nil
+	}
+	copy := *t
+	return &copy
+}
+func cloneJob(j backend.Job) backend.Job {
+	j.Task = cloneTask(j.Task)
+	j.Status = cloneStatus(j.Status)
+	j.NextAttemptAt = cloneTime(j.NextAttemptAt)
+	j.Attempts = slices.Clone(j.Attempts)
+	for i := range j.Attempts {
+		a := &j.Attempts[i]
+		a.Status = cloneStatus(a.Status)
+		a.StartingAt = cloneTime(a.StartingAt)
+		a.FinishedAt = cloneTime(a.FinishedAt)
+	}
+	return j
+}
+func needsStart(j backend.Job) bool {
+	return j.Status.State == backend.Queued || j.Status.State == backend.Retrying
 }
