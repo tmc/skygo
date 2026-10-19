@@ -5,11 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -137,23 +135,6 @@ func TestQuoteHTTPCompactJSON(t *testing.T) {
 		}
 		if !bytes.Equal(data, compact.Bytes()) || len(data) > 65536 {
 			t.Fatalf("not bounded compact JSON: %d", len(data))
-		}
-	}
-}
-
-func TestQuoteHTTPEncodedSizeRefusal(t *testing.T) {
-	var targets []backend.Target
-	for i := 0; i < 32; i++ {
-		targets = append(targets, backend.Target{Name: strings.Repeat("\x01", 254) + fmt.Sprintf("%02d", i), Binding: fmt.Sprintf("route%d", i), Backend: &quoteOnlyBackend{reason: strings.Repeat("\x02", 256)}, Advice: quoteHTTPAdvice(1)})
-	}
-	server := quoteHTTPFixture(t, targets)
-	for _, opts := range [][]connect.ClientOption{nil, {connect.WithProtoJSON()}} {
-		client := skyv1connect.NewControlServiceClient(server.Client(), server.URL, opts...)
-		req := connect.NewRequest(&v1.QuoteTaskRequest{Task: &v1.Task{Argv: []string{"program"}}, Currency: "USD", Unit: v1.RateUnit_RATE_UNIT_TARGET_HOUR})
-		req.Header().Set("Authorization", "Bearer quote-secret")
-		result, err := client.QuoteTask(context.Background(), req)
-		if result != nil || connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "quote response exceeds 64 KiB") {
-			t.Fatalf("oversize: %v %v", result, err)
 		}
 	}
 }

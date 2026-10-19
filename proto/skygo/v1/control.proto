@@ -22,6 +22,13 @@ service ControlService {
   rpc StreamJobLogs(StreamJobLogsRequest) returns (stream StreamJobLogsResponse);
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+  // Retained submission/log methods never fall back. Read-only discovery may
+  // select legacy default submission only when GetRetention is unimplemented.
+  rpc GetRetention(GetRetentionRequest) returns (GetRetentionResponse);
+  rpc SubmitRetainedJob(SubmitRetainedJobRequest) returns (SubmitRetainedJobResponse);
+  rpc PruneJobs(PruneJobsRequest) returns (PruneJobsResponse);
+  rpc StreamRetainedJobLogs(StreamRetainedJobLogsRequest) returns (stream StreamRetainedJobLogsResponse);
+
 }
 // Task is immutable after acceptance. Resource requests and limits are not capacity promises.
 message Task {
@@ -148,6 +155,161 @@ message ListTargetsResponse { repeated Target targets = 1; }
 message GetServerInfoRequest {}
 // Capabilities apply only to their named target at this endpoint.
 message GetServerInfoResponse { repeated Target targets = 1; }
+
+// RequestDomain is separate from Task and does not grant authority.
+message RequestDomain {
+  string lineage = 1;
+  uint64 epoch = 2;
+}
+message GetRetentionRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+message GetRetentionResponse {
+  bool enabled = 1;
+  RequestDomain domain = 2;
+  google.protobuf.Timestamp accept_until = 3;
+  google.protobuf.Timestamp retry_until = 4;
+  google.protobuf.Timestamp epoch_zero_cutoff = 5;
+  bool legacy_replay_open = 6;
+  repeated RetentionTarget targets = 7;
+  // Present only after fresh Admin authorization; contains no Task or environment.
+  RetentionAdmin admin = 8;
+}
+enum OutputStorage {
+  OUTPUT_STORAGE_UNSPECIFIED = 0;
+  OUTPUT_STORAGE_LOCAL = 1;
+  OUTPUT_STORAGE_REMOTE = 2;
+}
+message RetentionTarget {
+  string target = 1;
+  OutputStorage output_storage = 2;
+  bool output_cleanup = 3;
+  bool execution_cleanup = 4;
+  uint64 output_reservation_bytes = 5;
+}
+enum RetentionQuotaDomain {
+  RETENTION_QUOTA_DOMAIN_UNSPECIFIED = 0;
+  RETENTION_QUOTA_DOMAIN_JOBS = 1;
+  RETENTION_QUOTA_DOMAIN_TASK_BYTES = 2;
+  RETENTION_QUOTA_DOMAIN_RETRY_BYTES = 3;
+  RETENTION_QUOTA_DOMAIN_METADATA_BYTES = 4;
+  RETENTION_QUOTA_DOMAIN_REQUEST_RECORDS = 5;
+  RETENTION_QUOTA_DOMAIN_REQUEST_BYTES = 6;
+  RETENTION_QUOTA_DOMAIN_CLEANUP_RECORDS = 7;
+  RETENTION_QUOTA_DOMAIN_CLEANUP_BYTES = 8;
+  RETENTION_QUOTA_DOMAIN_OUTPUT_BYTES = 9;
+  RETENTION_QUOTA_DOMAIN_OUTPUT_DOMAINS = 10;
+  RETENTION_QUOTA_DOMAIN_OUTPUT_FILES = 11;
+  RETENTION_QUOTA_DOMAIN_PRINCIPAL_SCOPES = 12;
+}
+message RetentionUsage {
+  RetentionQuotaDomain domain = 1;
+  uint64 used = 2;
+  uint64 limit = 3;
+}
+message RetentionAdmin {
+  repeated RetentionUsage usage = 1;
+  repeated RetentionObligation obligations = 2;
+  string next_page_token = 3;
+  optional uint64 database_file_bytes = 4;
+  optional uint64 database_allocated_bytes = 5;
+  optional uint64 filesystem_free_bytes = 6;
+  optional uint64 output_allocated_bytes = 7;
+  optional uint64 output_file_count = 8;
+  uint64 reusable_database_bytes = 9;
+  uint64 pending_cleanup_records = 10;
+  // Bounded diagnostic codes, not workload or filesystem error text.
+  repeated string conditions = 11;
+  google.protobuf.Timestamp observed_at = 12;
+}
+message RetentionObligation {
+  string id = 1;
+  string job_id = 2;
+  repeated string execution_ids = 3;
+  string target = 4;
+  string binding = 5;
+  bool needs_manual = 6;
+  bool output_pending = 7;
+  bool execution_pending = 8;
+  string reason = 9;
+  google.protobuf.Timestamp created_at = 10;
+}
+message SubmitRetainedJobRequest {
+  Task task = 1;
+  string request_id = 2;
+  RequestDomain domain = 3;
+}
+message SubmitRetainedJobResponse { Job job = 1; }
+enum PruneMode {
+  PRUNE_MODE_UNSPECIFIED = 0;
+  PRUNE_MODE_WHOLE = 1;
+  PRUNE_MODE_METADATA_ONLY = 2;
+  PRUNE_MODE_OUTPUT_ONLY = 3;
+}
+message PruneJobsRequest {
+  google.protobuf.Timestamp before = 1;
+  PruneMode mode = 2;
+  bool acknowledge_unverified_terminal = 3;
+  bool execute = 4;
+  string obligation_id = 5;
+  int32 page_size = 6;
+  string page_token = 7;
+}
+message PruneJobsResponse {
+  uint32 inspected = 1;
+  uint32 selected = 2;
+  uint32 marked = 3;
+  uint32 skipped = 4;
+  repeated PruneSkip skips = 5;
+  repeated RetentionChargeTransfer transfers = 6;
+  string next_page_token = 7;
+  bool executed = 8;
+}
+message PruneSkip {
+  string reason = 1;
+  uint32 count = 2;
+}
+message RetentionChargeTransfer {
+  RetentionQuotaDomain domain = 1;
+  uint64 added = 2;
+  uint64 released = 3;
+}
+message StreamRetainedJobLogsRequest {
+  string id = 1;
+  int64 offset = 2;
+  bool follow = 3;
+  uint32 attempt = 4;
+  string cursor = 5;
+}
+message StreamRetainedJobLogsResponse {
+  bytes data = 1;
+  int64 next_offset = 2;
+  bool complete = 3;
+  bool truncated = 4;
+  string attempt_id = 5;
+  string cursor = 6;
+}
+enum RetentionExpiryReason {
+  RETENTION_EXPIRY_REASON_UNSPECIFIED = 0;
+  RETENTION_EXPIRY_REASON_RESULT_EXPIRED = 1;
+  RETENTION_EXPIRY_REASON_REQUEST_EPOCH_EXPIRED = 2;
+  RETENTION_EXPIRY_REASON_REQUEST_DOMAIN_REQUIRED = 3;
+  RETENTION_EXPIRY_REASON_REQUEST_LINEAGE_CHANGED = 4;
+  RETENTION_EXPIRY_REASON_LOGS_EXPIRED = 5;
+}
+// RetentionExpiry is carried in a Connect failed_precondition error detail.
+message RetentionExpiry {
+  RetentionExpiryReason reason = 1;
+  // Only for an authorized RESULT_EXPIRED lookup with retained identity evidence.
+  string job_id = 2;
+}
+// RetentionCapacity is carried in a Connect resource_exhausted error detail.
+message RetentionCapacity {
+  RetentionQuotaDomain domain = 1;
+  uint64 used = 2;
+  uint64 limit = 3;
+}
 
 // Money is a fixed-point amount. Presence distinguishes explicit zero from unknown.
 message Money {

@@ -1,0 +1,23 @@
+skygo --json state retention enable --data-dir $DATA --request-window 1h --max-jobs 1
+retention-domain DOMAIN
+server start
+taskfile task.json success
+skygo --json run -f task.json --request-domain $DOMAIN --request-id first --wait
+job-id FIRST
+! skygo run -f task.json --request-domain $DOMAIN --request-id second
+stderr 'retention capacity RETENTION_QUOTA_DOMAIN_JOBS used=1 limit=1'
+event-count 1
+skygo --json jobs retention
+retention-usage JOBS 1
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *1'
+! stdout 'private-task-value'
+await-usage JOBS 0
+skygo --json run -f task.json --request-domain $DOMAIN --request-id second --wait
+job-id SECOND
+event-count 2
+! skygo run -f task.json --request-domain $DOMAIN --request-id first
+stderr 'result expired'
+event-count 2
+server stop
+! stderr .

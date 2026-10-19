@@ -86,6 +86,10 @@ func (b *Backend) startRetry(ctx context.Context, id string, t backend.Task) err
 	if !ok || client == nil {
 		return errors.New("kubernetes retry requires a REST client")
 	}
+	if err := b.claimRetry(id, false); err != nil {
+		return err
+	}
+	defer b.releaseRetry(id)
 	b.mu.Lock()
 	if b.retries == nil {
 		b.retries = make(map[string]*retryReceipt)
@@ -235,6 +239,10 @@ func sameTermination(a, b *corev1.Pod) bool {
 }
 
 func (b *Backend) observeRetry(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	if err := b.claimRetryReference(ref); err != nil {
+		return backend.Status{}, err
+	}
+	defer b.releaseRetry(ref.ID)
 	p, uid, err := b.getRetry(ctx, ref)
 	if apierrors.IsNotFound(err) {
 		return backend.Status{State: backend.Unknown, Instance: uid, Reason: "kubernetes retry pod missing"}, nil
@@ -280,6 +288,10 @@ func (b *Backend) observeRetry(ctx context.Context, ref backend.Reference) (back
 }
 
 func (b *Backend) cancelRetry(ctx context.Context, ref backend.Reference) error {
+	if err := b.claimRetryReference(ref); err != nil {
+		return err
+	}
+	defer b.releaseRetry(ref.ID)
 	p, uid, err := b.getRetry(ctx, ref)
 	if apierrors.IsNotFound(err) {
 		return nil
@@ -326,6 +338,10 @@ func (b *Backend) logsRetry(ctx context.Context, ref backend.Reference, offset i
 	if offset < 0 || limit <= 0 || limit > backend.MaxChunkBytes {
 		return backend.LogChunk{}, fmt.Errorf("invalid log offset or limit: %w", fs.ErrInvalid)
 	}
+	if err := b.claimRetryReference(ref); err != nil {
+		return backend.LogChunk{}, err
+	}
+	defer b.releaseRetry(ref.ID)
 	p, _, err := b.getRetry(ctx, ref)
 	if apierrors.IsNotFound(err) {
 		return backend.LogChunk{}, fmt.Errorf("retry pod logs are no longer retained: %w", fs.ErrNotExist)

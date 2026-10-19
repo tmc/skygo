@@ -1,0 +1,28 @@
+# Cross-platform real local output closure; native termination proof is not assumed.
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json success
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id retry --wait
+json-value id JOB
+skygo --json jobs logs $JOB --attempt 1
+cursor CURSOR
+log-reads save READS
+! skygo jobs logs $JOB --attempt 2 --cursor $CURSOR
+stderr .
+! skygo jobs logs $JOB --cursor $CURSOR --offset 1
+stderr 'conflicting offset'
+! skygo jobs logs $JOB --cursor not-a-canonical-cursor
+stderr .
+log-reads unchanged READS
+skygo --json jobs get $JOB
+cp stdout history.json
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --logs-only --yes
+stdout '"marked": *1'
+! skygo jobs logs $JOB --cursor $CURSOR
+stderr 'logs expired'
+log-reads unchanged READS
+skygo --json jobs get $JOB
+same-json history.json
+await-output-usage 0
+assert-native 0

@@ -1,14 +1,13 @@
 package control
 
 import (
-	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
 	"sort"
 	"strings"
 	"sync/atomic"
+	"unicode/utf8"
 
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
@@ -38,10 +37,17 @@ type Control struct {
 	auditLost   atomic.Bool
 	access      chan pendingAccess
 	started     atomic.Bool
+	retention   retentionState
 }
 
 // New validates targets and orders selection by name.
 func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Control, error) {
+	return NewWithLocalOutput(s, targets, engine, LocalOutputConfig{})
+}
+
+// NewWithLocalOutput installs the actual built-in local output binder and sampler.
+// Configuration is immutable after construction; callbacks run outside control locks.
+func NewWithLocalOutput(s *store.Store, targets []backend.Target, engine *auth.Engine, local LocalOutputConfig) (*Control, error) {
 	if s == nil || len(targets) == 0 || len(targets) > 32 || engine == nil {
 		return nil, fmt.Errorf("store, targets and authentication required")
 	}
@@ -51,12 +57,45 @@ func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Contro
 		if t.Name == "" || t.Backend == nil || (i > 0 && targets[i-1].Name == t.Name) || !validText(t.Binding, 256, false) || !validLabels(t.Labels, 32) || !validAcceleratorNames(t.AcceleratorNames) {
 			return nil, fmt.Errorf("invalid target configuration")
 		}
+		if !validRetentionTarget(t) {
+			return nil, fmt.Errorf("invalid retention target configuration")
+		}
 		if err := backend.ValidateAdvice(t.Advice); err != nil {
 			return nil, fmt.Errorf("invalid target facts: %w", err)
 		}
 		targets[i] = cloneTarget(t)
 	}
-	return &Control{store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess)}, nil
+	policy, enabled, err := s.RetentionPolicy()
+	if err != nil {
+		return nil, err
+	}
+	if enabled {
+		for _, t := range targets {
+			if t.OutputStorage == backend.LocalOutput && (!policy.LocalOutputEnabled || local.Target != t.Name || local.Binding != t.Binding || local.BindOutput == nil || local.OutputUsage == nil) {
+				return nil, fmt.Errorf("enabled local output requires its actual binder and storage policy")
+			}
+			if t.OutputStorage == backend.LocalOutput && t.OutputReservation != uint64(backend.MaxLogBytes)+4*policy.OutputUnit {
+				return nil, fmt.Errorf("local output reservation differs from enabled policy")
+			}
+		}
+	}
+	if local.BindOutput != nil || local.OutputUsage != nil || local.Target != "" || local.Binding != "" {
+		if local.BindOutput == nil || local.OutputUsage == nil {
+			return nil, fmt.Errorf("local output binder and sampler required together")
+		}
+		found := false
+		for _, t := range targets {
+			if t.Name == local.Target && t.Binding == local.Binding && t.OutputStorage == backend.LocalOutput {
+				found = true
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("local output configuration has no matching route")
+		}
+	}
+	control := &Control{store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess), retention: retentionState{leases: make(map[*LogLease]struct{}), pending: make(map[string]struct{}), local: local, enabled: enabled}}
+	control.retention.wantSample.Store(enabled)
+	return control, nil
 }
 
 // Validate rejects malformed tasks before capability checks or side effects.
@@ -70,14 +109,23 @@ func Validate(t backend.Task) error {
 		return fmt.Errorf("%w: argv requires a program", ErrInvalid)
 	}
 	for _, arg := range t.Argv {
+		if !utf8.ValidString(arg) {
+			return fmt.Errorf("%w: invalid UTF8 in argv", ErrInvalid)
+		}
 		if strings.ContainsRune(arg, 0) {
 			return fmt.Errorf("%w: NUL in argv", ErrInvalid)
 		}
 	}
 	for k, v := range t.Env {
+		if !utf8.ValidString(k) || !utf8.ValidString(v) {
+			return fmt.Errorf("%w: invalid UTF8 in environment", ErrInvalid)
+		}
 		if !envName.MatchString(k) || strings.ContainsRune(v, 0) {
 			return fmt.Errorf("%w: invalid environment key or value", ErrInvalid)
 		}
+	}
+	if !utf8.ValidString(t.Directory) || !utf8.ValidString(t.Image) || !utf8.ValidString(t.Target) || !utf8.ValidString(t.Accelerator) {
+		return fmt.Errorf("%w: invalid UTF8 in task text", ErrInvalid)
 	}
 	if strings.ContainsRune(t.Directory, 0) || strings.ContainsRune(t.Image, 0) {
 		return fmt.Errorf("%w: NUL in path or image", ErrInvalid)
@@ -137,7 +185,7 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 	var selected string
 	var rejected []Rejection
 	for _, target := range c.targets {
-		err := checkTarget(t, target)
+		err := checkTarget(t, target, c.retention.enabled)
 		if err != nil {
 			rejected = append(rejected, Rejection{target.Name, err.Error()})
 		} else if selected == "" {
@@ -156,6 +204,14 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 
 // Submit durably accepts a task or returns the job already bound to requestID.
 func (c *Control) Submit(actor auth.Actor, requestID string, t backend.Task) (backend.Job, error) {
+	return c.submit(actor, nil, requestID, t)
+}
+
+// SubmitRetained accepts or replays the exact supplied request domain.
+func (c *Control) SubmitRetained(actor auth.Actor, domain store.RequestDomain, requestID string, t backend.Task) (backend.Job, error) {
+	return c.submit(actor, &domain, requestID, t)
+}
+func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestID string, t backend.Task) (backend.Job, error) {
 	actor, err := c.engine.Check(actor, auth.Mutate)
 	if err != nil {
 		return backend.Job{}, err
@@ -173,18 +229,40 @@ func (c *Control) Submit(actor auth.Actor, requestID string, t backend.Task) (ba
 	if len(t.Env) == 0 {
 		t.Env = nil
 	}
-	job, found, err := c.store.Lookup(actor, requestID, t)
+	var job backend.Job
+	var found bool
+	if domain == nil {
+		job, found, err = c.store.Lookup(actor, requestID, t)
+	} else {
+		job, found, err = c.store.LookupRetained(actor, *domain, requestID, t)
+	}
 	if err != nil || found {
 		return job, err
 	}
+	if domain == nil && c.retention.enabled {
+		return backend.Job{}, &store.ExpiryError{Reason: store.RequestDomainRequired}
+	}
 	if c.failed.Load() {
 		return backend.Job{}, ErrUnavailable
+	}
+	if err := c.storageGuard(false, false); err != nil {
+		return backend.Job{}, err
 	}
 	target, _, err := c.plan(t)
 	if err != nil {
 		return backend.Job{}, err
 	}
+	if err = c.storageGuard(false, false); err != nil {
+		return backend.Job{}, err
+	}
 	configured, _ := c.target(target)
+	if domain != nil {
+		job, err := c.store.SubmitRetained(actor, *domain, requestID, t, target, configured.Binding, configured.OutputStorage, configured.OutputReservation)
+		if err == nil {
+			c.retention.wantSample.Store(true)
+		}
+		return job, err
+	}
 	return c.store.Submit(actor, requestID, t, target, configured.Binding)
 }
 
@@ -197,17 +275,19 @@ func (c *Control) Get(actor auth.Actor, id string) (backend.Job, error) {
 	if !jobName.MatchString(id) {
 		return backend.Job{}, fmt.Errorf("%w: invalid job id", ErrInvalid)
 	}
-	return c.store.GetFor(actor, id)
+	j, err := c.store.GetFor(actor, id)
+	if errors.Is(err, store.ErrNotFound) {
+		if domainErr := c.store.CheckLogDomain(actor, id, ""); domainErr != nil {
+			var expired *store.ExpiryError
+			if errors.As(domainErr, &expired) && expired.Reason == store.ResultExpired {
+				return backend.Job{}, domainErr
+			}
+		}
+	}
+	return j, err
 }
 
-type cursor struct {
-	After     uint64 `json:"a"`
-	Max       uint64 `json:"m"`
-	Principal string `json:"p,omitempty"`
-	Global    bool   `json:"g,omitempty"`
-}
-
-// List uses a snapshot high-water mark; later inserts do not shift pages.
+// List uses an installation- and scope-bound sparse snapshot cursor.
 func (c *Control) List(actor auth.Actor, size int, token string) ([]backend.Job, string, error) {
 	actor, err := c.engine.Check(actor, auth.Read)
 	if err != nil {
@@ -219,59 +299,45 @@ func (c *Control) List(actor auth.Actor, size int, token string) ([]backend.Job,
 	if size == 0 {
 		size = 50
 	}
-	var cur cursor
-	if c.store.Scoped() {
-		cur.Principal = actor.Principal()
-		cur.Global = actor.Role() == auth.Admin
+	info, err := c.store.RetentionInfo(actor)
+	if err != nil {
+		return nil, "", err
 	}
-	expectedPrincipal, expectedGlobal := cur.Principal, cur.Global
+	if !info.Enabled {
+		return c.listLegacy(actor, size, token)
+	}
+	cur := c.scopeCursor(actor, "list", info.Domain.Lineage)
+	max, err := c.store.LastSequenceFor(actor)
+	if err != nil {
+		return nil, "", err
+	}
 	if token == "" {
-		var err error
-		cur.Max, err = c.store.LastSequenceFor(actor)
-		if err != nil {
-			return nil, "", err
-		}
+		cur.Max = max
 	} else {
-		raw, err := base64.RawURLEncoding.DecodeString(token)
-		if err != nil || len(raw) > 256 {
-			return nil, "", fmt.Errorf("%w: invalid page token", ErrInvalid)
+		parsed, e := decodeRetentionCursor(token)
+		if e != nil {
+			return nil, "", e
 		}
-		cur = cursor{}
-		if err = json.Unmarshal(raw, &cur); err != nil || cur.After == 0 || cur.After >= cur.Max {
-			return nil, "", fmt.Errorf("%w: invalid page token", ErrInvalid)
+		expected := cur
+		expected.After, expected.Max = parsed.After, parsed.Max
+		if parsed != expected || parsed.After == 0 || parsed.After >= parsed.Max || parsed.Max > max {
+			return nil, "", fmt.Errorf("%w: page token scope or bounds differ", ErrInvalid)
 		}
-		if cur.Principal != expectedPrincipal || cur.Global != expectedGlobal {
-			return nil, "", fmt.Errorf("%w: page token scope changed or expired during activation", ErrInvalid)
-		}
-		canonical, _ := json.Marshal(cur)
-		if string(canonical) != string(raw) {
-			return nil, "", fmt.Errorf("%w: invalid page token", ErrInvalid)
-		}
-		max, err := c.store.LastSequenceFor(actor)
-		if err != nil {
-			return nil, "", err
-		}
-		if cur.Max > max {
-			return nil, "", fmt.Errorf("%w: page token exceeds snapshot", ErrInvalid)
-		}
+		cur = parsed
 	}
-	jobs, err := c.store.ListFor(actor, cur.After, cur.Max, size)
+	page, err := c.store.ListFor(actor, cur.After, cur.Max, size)
 	if err != nil {
 		return nil, "", err
 	}
 	next := ""
-	if len(jobs) > 0 {
-		if c.store.Scoped() && actor.Role() != auth.Admin {
-			cur.After += uint64(len(jobs))
-		} else {
-			cur.After = jobs[len(jobs)-1].Sequence
-		}
-		if cur.After < cur.Max {
-			raw, _ := json.Marshal(cur)
-			next = base64.RawURLEncoding.EncodeToString(raw)
+	if page.More {
+		cur.After = page.After
+		next, err = encodeRetentionCursor(cur)
+		if err != nil {
+			return nil, "", err
 		}
 	}
-	return jobs, next, nil
+	return page.Jobs, next, nil
 }
 
 // Cancel persists cancellation intent. Terminal outcomes never change.
@@ -302,3 +368,37 @@ func (c *Control) target(name string) (backend.Target, bool) {
 
 // Healthy reports whether durable reconciliation has encountered a store error.
 func (c *Control) Healthy() bool { return !c.failed.Load() }
+
+func (c *Control) listLegacy(actor auth.Actor, size int, token string) ([]backend.Job, string, error) {
+	cur := legacyCursor{}
+	if c.store.Scoped() {
+		cur.Principal = actor.Principal()
+		cur.Global = actor.Role() == auth.Admin
+	}
+	max, err := c.store.LastSequenceFor(actor)
+	if err != nil {
+		return nil, "", err
+	}
+	if token == "" {
+		cur.Max = max
+	} else {
+		var parsed legacyCursor
+		if err = decodeCursor(token, &parsed, 256); err != nil {
+			return nil, "", err
+		}
+		if parsed.Principal != cur.Principal || parsed.Global != cur.Global || parsed.After == 0 || parsed.After >= parsed.Max || parsed.Max > max {
+			return nil, "", fmt.Errorf("%w: page token scope or bounds differ", ErrInvalid)
+		}
+		cur = parsed
+	}
+	page, err := c.store.ListFor(actor, cur.After, cur.Max, size)
+	if err != nil {
+		return nil, "", err
+	}
+	next := ""
+	if page.More {
+		cur.After = page.After
+		next, err = encodeCursor(cur, 256)
+	}
+	return page.Jobs, next, err
+}

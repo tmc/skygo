@@ -38,6 +38,7 @@ type Backend struct {
 	mu               sync.Mutex
 	canceled         map[string]bool
 	retries          map[string]*retryReceipt
+	retryOwners      map[string]int
 }
 
 // Check validates capability requirements without making network requests.

@@ -116,6 +116,8 @@ func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target
 		Labels: maps.Clone(t.Labels), AcceleratorNames: names,
 		SupportsResourceLimits: true, SupportsNodeSelector: len(t.Resources.NodeSelectors) > 0,
 		SupportsRetry: true,
+		OutputStorage: backend.RemoteOutput,
+		Retention:     &backend.Retention{RemoveExecution: b.removeExecution},
 	}, nil
 }
 

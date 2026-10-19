@@ -1,0 +1,36 @@
+# Linux: two real immutable attempt domains, one logical job.
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json failonce
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id retry --wait
+json-value id JOB
+skygo --json jobs get $JOB
+history-attempts $JOB FIRST_ATTEMPT SECOND_ATTEMPT
+cp stdout history.json
+skygo --json jobs logs $JOB --attempt 1
+attempt-logs $FIRST_ATTEMPT 'first attempt only' 'second attempt only'
+cursor FIRST_CURSOR
+skygo --json jobs logs $JOB --attempt 2
+attempt-logs $SECOND_ATTEMPT 'second attempt only' 'first attempt only'
+cursor SECOND_CURSOR
+# Actual returned cursors stay pinned to the selected IDs even at EOF.
+skygo --json jobs logs $JOB --cursor $FIRST_CURSOR
+attempt-logs $FIRST_ATTEMPT
+skygo --json jobs logs $JOB --cursor $SECOND_CURSOR
+attempt-logs $SECOND_ATTEMPT
+cmp starts two-starts.txt
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --logs-only --yes
+stdout '"marked": *1'
+! skygo jobs logs $JOB --attempt 1
+stderr 'logs expired'
+! skygo jobs logs $JOB --attempt 2
+stderr 'logs expired'
+skygo --json jobs get $JOB
+same-json history.json
+await-output-usage 0
+assert-native 0
+
+-- two-starts.txt --
+start
+start

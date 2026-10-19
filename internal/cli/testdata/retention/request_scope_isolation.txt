@@ -1,0 +1,38 @@
+private-workdir
+env SKYGO_TOKEN=
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth principal add reader --role reader --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+skygo auth token issue reader --auth-file $AUTH --output reader.token --expires-in 24h
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+server start
+taskfile task.json success
+skygo --token-file alice.token --json run -f task.json --request-domain $DOMAIN --request-id shared --wait
+job-id ALICE
+skygo --token-file bob.token --json run -f task.json --request-domain $DOMAIN --request-id shared --wait
+job-id BOB
+event-count 2
+! skygo --token-file alice.token jobs get $BOB
+stderr '^not_found: '
+cp stderr foreign.err
+! skygo --token-file alice.token jobs logs $BOB
+cmp stderr foreign.err
+skygo --token-file reader.token --json jobs retention
+! stdout '"admin"'
+! stdout 'private-task-value'
+! skygo --token-file reader.token jobs retention --page-size 1
+stderr 'permission_denied'
+! skygo --token-file alice.token jobs prune --before 9999-12-31T23:59:59Z --yes
+stderr 'permission_denied'
+skygo --token-file admin.token --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+! stdout 'private-task-value'
+! skygo --token-file alice.token run -f task.json --request-domain $DOMAIN --request-id shared
+stderr 'result expired'
+! stderr $BOB
+event-count 2
+server stop
+! stderr .

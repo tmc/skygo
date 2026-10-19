@@ -81,7 +81,7 @@ func TestQuoteSelection(t *testing.T) {
 			}
 			before := targets[0].Name
 			for i := 0; i < 3; i++ {
-				got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{targets[1], targets[0]}, quoteTestTime())
+				got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{targets[1], targets[0]}, quoteTestTime(), false)
 				if err != nil || got.SelectedTarget != tc.want || got.Outcome != tc.outcome || got.ComparisonCount != tc.comparable || got.UnpricedEligibleCount != tc.unpriced {
 					t.Fatalf("plan=%+v err=%v", got, err)
 				}
@@ -116,18 +116,18 @@ func TestQuoteComputeEstimates(t *testing.T) {
 	target := quoteTestTarget("a", 0)
 	task := backend.Task{Argv: []string{"program"}, TimeoutSeconds: 100, Retry: &backend.RetryPolicy{MaxAttempts: 10, ExitCodes: []int32{7}}}
 	target.SupportsRetry = true
-	got, err := quoteAt(task, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime())
+	got, err := quoteAt(task, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime(), false)
 	if err != nil || got.Candidates[0].EstimatedComputeCost != nil || got.Candidates[0].EstimateStatus != EstimateDurationUnspecified {
 		t.Fatalf("invented duration: %+v,%v", got, err)
 	}
 	seconds := int64(1)
-	got, err = quoteAt(task, "USD", backend.TargetHour, &seconds, []backend.Target{target}, quoteTestTime())
+	got, err = quoteAt(task, "USD", backend.TargetHour, &seconds, []backend.Target{target}, quoteTestTime(), false)
 	if err != nil || got.Candidates[0].EstimatedComputeCost == nil || *got.Candidates[0].EstimatedComputeCost.AmountMicros != 0 {
 		t.Fatalf("free estimate not present: %+v,%v", got, err)
 	}
 	target.Advice.Quote.Unit = backend.CPUHour
 	task.CPUMillis = 1000
-	got, err = quoteAt(task, "USD", backend.CPUHour, &seconds, []backend.Target{target}, quoteTestTime())
+	got, err = quoteAt(task, "USD", backend.CPUHour, &seconds, []backend.Target{target}, quoteTestTime(), false)
 	if err != nil || got.Candidates[0].EstimatedComputeCost != nil || got.Candidates[0].EstimateStatus != EstimateQuantityUnspecified {
 		t.Fatalf("request invented billed quantity: %+v,%v", got, err)
 	}
@@ -223,7 +223,7 @@ func TestQuoteInputAndResultIndependence(t *testing.T) {
 		return nil
 	}}
 	seconds := int64(3600)
-	got, err := quoteAt(task, "USD", backend.TargetHour, &seconds, []backend.Target{target}, quoteTestTime())
+	got, err := quoteAt(task, "USD", backend.TargetHour, &seconds, []backend.Target{target}, quoteTestTime(), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,14 +246,14 @@ func TestQuoteTargetValidationAndDiagnostics(t *testing.T) {
 	for _, name := range []string{strings.Repeat("x", 257), string([]byte{0xff})} {
 		target := quoteTestTarget(name, 1)
 		target.Backend = b
-		if _, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime()); !errors.Is(err, ErrQuoteMetadata) || b.calls != 0 {
+		if _, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime(), false); !errors.Is(err, ErrQuoteMetadata) || b.calls != 0 {
 			t.Fatalf("invalid name side effect/error: %v calls%d", err, b.calls)
 		}
 	}
 	for _, text := range []string{"", string([]byte{0xff}), strings.Repeat("雪", 100), strings.Repeat("\x01", 256)} {
 		target := quoteTestTarget("a", 1)
 		target.Backend = &quoteCheckBackend{check: func(backend.Task) error { return errors.New(text) }}
-		got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime())
+		got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime(), false)
 		if err != nil || got.Outcome != QuoteNoEligibleTarget || got.Candidates[0].Eligible || !utf8.ValidString(got.Candidates[0].Rejection) || len(got.Candidates[0].Rejection) > 256 || got.Candidates[0].Rejection == "" {
 			t.Fatalf("diagnostic=%+v,%v", got, err)
 		}
@@ -296,7 +296,7 @@ func TestQuoteHardConstraintsMatchPlan(t *testing.T) {
 		{Argv: []string{"program"}, Retry: &backend.RetryPolicy{MaxAttempts: 2, ExitCodes: []int32{7}}},
 	} {
 		_, _, oldErr := c.Plan(actor, task)
-		got, newErr := quoteAt(task, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime())
+		got, newErr := quoteAt(task, "USD", backend.TargetHour, nil, []backend.Target{target}, quoteTestTime(), false)
 		if newErr != nil {
 			t.Fatal(newErr)
 		}
@@ -316,7 +316,7 @@ func TestQuoteRequestAndTargetBounds(t *testing.T) {
 		{"usd", backend.TargetHour, nil}, {"US", backend.TargetHour, nil}, {"USD", 0, nil}, {"USD", 255, nil},
 		{"USD", backend.TargetHour, quoteInt(0)}, {"USD", backend.TargetHour, quoteInt(-1)}, {"USD", backend.TargetHour, quoteInt(maxQuoteDuration + 1)},
 	} {
-		if _, err := quoteAt(backend.Task{Argv: []string{"program"}}, tc.currency, tc.unit, tc.seconds, []backend.Target{target}, quoteTestTime()); !errors.Is(err, ErrInvalid) {
+		if _, err := quoteAt(backend.Task{Argv: []string{"program"}}, tc.currency, tc.unit, tc.seconds, []backend.Target{target}, quoteTestTime(), false); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("invalid request accepted: %+v,%v", tc, err)
 		}
 	}
@@ -324,12 +324,12 @@ func TestQuoteRequestAndTargetBounds(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		targets = append(targets, quoteTestTarget(fmt.Sprintf("t%02d", i), int64(32-i)))
 	}
-	got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, targets, quoteTestTime())
+	got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, targets, quoteTestTime(), false)
 	if err != nil || got.SelectedTarget != "t31" || got.ComparisonCount != 32 || len(got.Candidates) != 32 {
 		t.Fatalf("maximum targets: %+v,%v", got, err)
 	}
 	targets = append(targets, quoteTestTarget("extra", 0))
-	if _, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, targets, quoteTestTime()); !errors.Is(err, ErrInvalid) {
+	if _, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, targets, quoteTestTime(), false); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("33 targets accepted: %v", err)
 	}
 }
@@ -338,7 +338,7 @@ func TestQuoteCapacityCopyAndStatus(t *testing.T) {
 	now := quoteTestTime()
 	target := quoteTestTarget("a", 1)
 	target.Advice.Capacity = &backend.CapacitySnapshot{Origin: backend.Configured, State: backend.CapacityAvailable, AvailableSlots: quoteSlots(3), Source: "operator:cap", ObservedAt: now.Add(-time.Second), ValidUntil: now.Add(time.Hour)}
-	got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, now)
+	got, err := quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, now, false)
 	if err != nil || got.Candidates[0].CapacityWarning || got.Candidates[0].CapacityFreshness != FreshnessFresh {
 		t.Fatalf("capacity=%+v,%v", got, err)
 	}
@@ -347,7 +347,7 @@ func TestQuoteCapacityCopyAndStatus(t *testing.T) {
 		t.Fatal("capacity pointer alias retained")
 	}
 	target.Advice.Capacity.ValidUntil = now
-	got, err = quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, now)
+	got, err = quoteAt(backend.Task{Argv: []string{"program"}}, "USD", backend.TargetHour, nil, []backend.Target{target}, now, false)
 	if err != nil || got.Candidates[0].CapacityFreshness != FreshnessStale || !got.Candidates[0].CapacityWarning || got.SelectedTarget != "a" {
 		t.Fatalf("stale capacity changed objective: %+v,%v", got, err)
 	}

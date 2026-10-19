@@ -1,0 +1,21 @@
+# Actual production daemon: default retains S05 lifetime request deduplication.
+server start
+skygo jobs retention
+stdout '^enabled: false\n'
+taskfile task.json success
+skygo --json run -f task.json --request-id disabled --wait
+job-id JOB
+event-count 1
+skygo --json run -f task.json --request-id disabled --wait
+stdout '"id": *"'$JOB'"'
+event-count 1
+skygo jobs logs $JOB
+stdout '^retained workload output\n$'
+! skygo run -f task.json --request-domain 11111111111111111111111111111111:1 --request-id forbidden
+stderr 'retention is disabled'
+event-count 1
+# Offline activation cannot take a live writer or silently change its policy.
+! skygo state retention enable --data-dir $DATA --request-window 1h
+stderr 'timeout'
+server stop
+! stderr .

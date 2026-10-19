@@ -1,0 +1,30 @@
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json hold
+controller start
+barrier start arm
+skygo --json run -f task.json --request-domain $DOMAIN --request-id active
+json-value id JOB
+barrier start await
+await-state $JOB starting
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *0'
+stdout 'operation_pending'
+assert-native 0
+assert-output 0
+barrier start release
+await-state $JOB running
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *0'
+stdout 'active'
+# Log-only cannot expire the active current output domain either.
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --logs-only --yes
+stdout '"marked": *0'
+stdout 'current_output'
+cp released.txt release
+await-state $JOB succeeded
+assert-native 0
+assert-output 0
+
+-- released.txt --
+released

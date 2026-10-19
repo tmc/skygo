@@ -1,0 +1,55 @@
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+server start
+taskfile task.json success
+# Dropped actual discovery cannot trigger compatibility submission.
+drop-response /skygo.v1.ControlService/GetRetention
+! skygo --endpoint $PROXY run -f task.json
+stderr 'unavailable'
+event-count 0
+calls SubmitJob 0
+calls SubmitRetainedJob 0
+# Auth failures and actual-reply corruption cannot authorize fallback either.
+env SKYGO_TOKEN=
+! skygo --token wrong run -f task.json
+stderr 'unauthenticated'
+env SKYGO_TOKEN=coverage-token
+discovery-fault malformed
+! skygo run -f task.json
+stderr .
+discovery-fault permission
+! skygo run -f task.json
+stderr 'permission_denied'
+calls SubmitJob 0
+calls SubmitRetryJob 0
+calls SubmitRetainedJob 0
+event-count 0
+# A supplied ID never silently becomes fresh current-domain work.
+! skygo run -f task.json --request-id possible-old-retry
+stderr 'explicit request domain required'
+calls SubmitJob 1
+calls PlanTask 0
+event-count 0
+# Lose an accepted explicit submission, then replay exactly the original hint.
+drop-response /skygo.v1.ControlService/SubmitRetainedJob
+! skygo --endpoint $PROXY run -f task.json --request-domain $DOMAIN --request-id lost
+stderr '^request-domain: '$DOMAIN'\nrequest-id: lost\ntask-file: "task.json"\n'
+skygo --json run -f task.json --request-domain $DOMAIN --request-id lost --wait
+job-id JOB
+event-count 1
+# Fresh path: no caller-supplied ID or domain. Lose the accepted actual response.
+drop-response /skygo.v1.ControlService/SubmitRetainedJob
+! fresh-run
+fresh-order
+save-fresh-hint $DOMAIN fresh.hint
+skygo --json run -f $FRESH_TASK --request-domain $FRESH_DOMAIN --request-id $FRESH_ID --wait
+same-hint fresh.hint
+job-id FRESH_JOB
+event-count 2
+calls GetRetention 6
+calls SubmitRetainedJob 4
+calls SubmitJob 1
+calls SubmitRetryJob 0
+calls PlanTask 0
+server stop
+! stderr .

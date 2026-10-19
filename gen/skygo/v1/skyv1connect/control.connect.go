@@ -60,6 +60,18 @@ const (
 	// ControlServiceGetServerInfoProcedure is the fully-qualified name of the ControlService's
 	// GetServerInfo RPC.
 	ControlServiceGetServerInfoProcedure = "/skygo.v1.ControlService/GetServerInfo"
+	// ControlServiceGetRetentionProcedure is the fully-qualified name of the ControlService's
+	// GetRetention RPC.
+	ControlServiceGetRetentionProcedure = "/skygo.v1.ControlService/GetRetention"
+	// ControlServiceSubmitRetainedJobProcedure is the fully-qualified name of the ControlService's
+	// SubmitRetainedJob RPC.
+	ControlServiceSubmitRetainedJobProcedure = "/skygo.v1.ControlService/SubmitRetainedJob"
+	// ControlServicePruneJobsProcedure is the fully-qualified name of the ControlService's PruneJobs
+	// RPC.
+	ControlServicePruneJobsProcedure = "/skygo.v1.ControlService/PruneJobs"
+	// ControlServiceStreamRetainedJobLogsProcedure is the fully-qualified name of the ControlService's
+	// StreamRetainedJobLogs RPC.
+	ControlServiceStreamRetainedJobLogsProcedure = "/skygo.v1.ControlService/StreamRetainedJobLogs"
 )
 
 // ControlServiceClient is a client for the skygo.v1.ControlService service.
@@ -82,6 +94,12 @@ type ControlServiceClient interface {
 	StreamJobLogs(context.Context, *connect.Request[v1.StreamJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamJobLogsResponse], error)
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
 	GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error)
+	// Retained submission/log methods never fall back. Read-only discovery may
+	// select legacy default submission only when GetRetention is unimplemented.
+	GetRetention(context.Context, *connect.Request[v1.GetRetentionRequest]) (*connect.Response[v1.GetRetentionResponse], error)
+	SubmitRetainedJob(context.Context, *connect.Request[v1.SubmitRetainedJobRequest]) (*connect.Response[v1.SubmitRetainedJobResponse], error)
+	PruneJobs(context.Context, *connect.Request[v1.PruneJobsRequest]) (*connect.Response[v1.PruneJobsResponse], error)
+	StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamRetainedJobLogsResponse], error)
 }
 
 // NewControlServiceClient constructs a client for the skygo.v1.ControlService service. By default,
@@ -155,21 +173,49 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(controlServiceMethods.ByName("GetServerInfo")),
 			connect.WithClientOptions(opts...),
 		),
+		getRetention: connect.NewClient[v1.GetRetentionRequest, v1.GetRetentionResponse](
+			httpClient,
+			baseURL+ControlServiceGetRetentionProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("GetRetention")),
+			connect.WithClientOptions(opts...),
+		),
+		submitRetainedJob: connect.NewClient[v1.SubmitRetainedJobRequest, v1.SubmitRetainedJobResponse](
+			httpClient,
+			baseURL+ControlServiceSubmitRetainedJobProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("SubmitRetainedJob")),
+			connect.WithClientOptions(opts...),
+		),
+		pruneJobs: connect.NewClient[v1.PruneJobsRequest, v1.PruneJobsResponse](
+			httpClient,
+			baseURL+ControlServicePruneJobsProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("PruneJobs")),
+			connect.WithClientOptions(opts...),
+		),
+		streamRetainedJobLogs: connect.NewClient[v1.StreamRetainedJobLogsRequest, v1.StreamRetainedJobLogsResponse](
+			httpClient,
+			baseURL+ControlServiceStreamRetainedJobLogsProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("StreamRetainedJobLogs")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // controlServiceClient implements ControlServiceClient.
 type controlServiceClient struct {
-	quoteTask      *connect.Client[v1.QuoteTaskRequest, v1.QuoteTaskResponse]
-	planTask       *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
-	submitJob      *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
-	submitRetryJob *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
-	getJob         *connect.Client[v1.GetJobRequest, v1.GetJobResponse]
-	listJobs       *connect.Client[v1.ListJobsRequest, v1.ListJobsResponse]
-	cancelJob      *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
-	streamJobLogs  *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
-	listTargets    *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
-	getServerInfo  *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+	quoteTask             *connect.Client[v1.QuoteTaskRequest, v1.QuoteTaskResponse]
+	planTask              *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
+	submitJob             *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
+	submitRetryJob        *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
+	getJob                *connect.Client[v1.GetJobRequest, v1.GetJobResponse]
+	listJobs              *connect.Client[v1.ListJobsRequest, v1.ListJobsResponse]
+	cancelJob             *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
+	streamJobLogs         *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
+	listTargets           *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
+	getServerInfo         *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+	getRetention          *connect.Client[v1.GetRetentionRequest, v1.GetRetentionResponse]
+	submitRetainedJob     *connect.Client[v1.SubmitRetainedJobRequest, v1.SubmitRetainedJobResponse]
+	pruneJobs             *connect.Client[v1.PruneJobsRequest, v1.PruneJobsResponse]
+	streamRetainedJobLogs *connect.Client[v1.StreamRetainedJobLogsRequest, v1.StreamRetainedJobLogsResponse]
 }
 
 // QuoteTask calls skygo.v1.ControlService.QuoteTask.
@@ -222,6 +268,26 @@ func (c *controlServiceClient) GetServerInfo(ctx context.Context, req *connect.R
 	return c.getServerInfo.CallUnary(ctx, req)
 }
 
+// GetRetention calls skygo.v1.ControlService.GetRetention.
+func (c *controlServiceClient) GetRetention(ctx context.Context, req *connect.Request[v1.GetRetentionRequest]) (*connect.Response[v1.GetRetentionResponse], error) {
+	return c.getRetention.CallUnary(ctx, req)
+}
+
+// SubmitRetainedJob calls skygo.v1.ControlService.SubmitRetainedJob.
+func (c *controlServiceClient) SubmitRetainedJob(ctx context.Context, req *connect.Request[v1.SubmitRetainedJobRequest]) (*connect.Response[v1.SubmitRetainedJobResponse], error) {
+	return c.submitRetainedJob.CallUnary(ctx, req)
+}
+
+// PruneJobs calls skygo.v1.ControlService.PruneJobs.
+func (c *controlServiceClient) PruneJobs(ctx context.Context, req *connect.Request[v1.PruneJobsRequest]) (*connect.Response[v1.PruneJobsResponse], error) {
+	return c.pruneJobs.CallUnary(ctx, req)
+}
+
+// StreamRetainedJobLogs calls skygo.v1.ControlService.StreamRetainedJobLogs.
+func (c *controlServiceClient) StreamRetainedJobLogs(ctx context.Context, req *connect.Request[v1.StreamRetainedJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamRetainedJobLogsResponse], error) {
+	return c.streamRetainedJobLogs.CallServerStream(ctx, req)
+}
+
 // ControlServiceHandler is an implementation of the skygo.v1.ControlService service.
 type ControlServiceHandler interface {
 	// QuoteTask returns advisory configured rates; it never changes submission placement.
@@ -242,6 +308,12 @@ type ControlServiceHandler interface {
 	StreamJobLogs(context.Context, *connect.Request[v1.StreamJobLogsRequest], *connect.ServerStream[v1.StreamJobLogsResponse]) error
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
 	GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error)
+	// Retained submission/log methods never fall back. Read-only discovery may
+	// select legacy default submission only when GetRetention is unimplemented.
+	GetRetention(context.Context, *connect.Request[v1.GetRetentionRequest]) (*connect.Response[v1.GetRetentionResponse], error)
+	SubmitRetainedJob(context.Context, *connect.Request[v1.SubmitRetainedJobRequest]) (*connect.Response[v1.SubmitRetainedJobResponse], error)
+	PruneJobs(context.Context, *connect.Request[v1.PruneJobsRequest]) (*connect.Response[v1.PruneJobsResponse], error)
+	StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest], *connect.ServerStream[v1.StreamRetainedJobLogsResponse]) error
 }
 
 // NewControlServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -311,6 +383,30 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		connect.WithSchema(controlServiceMethods.ByName("GetServerInfo")),
 		connect.WithHandlerOptions(opts...),
 	)
+	controlServiceGetRetentionHandler := connect.NewUnaryHandler(
+		ControlServiceGetRetentionProcedure,
+		svc.GetRetention,
+		connect.WithSchema(controlServiceMethods.ByName("GetRetention")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceSubmitRetainedJobHandler := connect.NewUnaryHandler(
+		ControlServiceSubmitRetainedJobProcedure,
+		svc.SubmitRetainedJob,
+		connect.WithSchema(controlServiceMethods.ByName("SubmitRetainedJob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServicePruneJobsHandler := connect.NewUnaryHandler(
+		ControlServicePruneJobsProcedure,
+		svc.PruneJobs,
+		connect.WithSchema(controlServiceMethods.ByName("PruneJobs")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceStreamRetainedJobLogsHandler := connect.NewServerStreamHandler(
+		ControlServiceStreamRetainedJobLogsProcedure,
+		svc.StreamRetainedJobLogs,
+		connect.WithSchema(controlServiceMethods.ByName("StreamRetainedJobLogs")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/skygo.v1.ControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ControlServiceQuoteTaskProcedure:
@@ -333,6 +429,14 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServiceListTargetsHandler.ServeHTTP(w, r)
 		case ControlServiceGetServerInfoProcedure:
 			controlServiceGetServerInfoHandler.ServeHTTP(w, r)
+		case ControlServiceGetRetentionProcedure:
+			controlServiceGetRetentionHandler.ServeHTTP(w, r)
+		case ControlServiceSubmitRetainedJobProcedure:
+			controlServiceSubmitRetainedJobHandler.ServeHTTP(w, r)
+		case ControlServicePruneJobsProcedure:
+			controlServicePruneJobsHandler.ServeHTTP(w, r)
+		case ControlServiceStreamRetainedJobLogsProcedure:
+			controlServiceStreamRetainedJobLogsHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -380,4 +484,20 @@ func (UnimplementedControlServiceHandler) ListTargets(context.Context, *connect.
 
 func (UnimplementedControlServiceHandler) GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.GetServerInfo is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) GetRetention(context.Context, *connect.Request[v1.GetRetentionRequest]) (*connect.Response[v1.GetRetentionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.GetRetention is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) SubmitRetainedJob(context.Context, *connect.Request[v1.SubmitRetainedJobRequest]) (*connect.Response[v1.SubmitRetainedJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.SubmitRetainedJob is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) PruneJobs(context.Context, *connect.Request[v1.PruneJobsRequest]) (*connect.Response[v1.PruneJobsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.PruneJobs is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest], *connect.ServerStream[v1.StreamRetainedJobLogsResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.StreamRetainedJobLogs is not implemented"))
 }

@@ -1,0 +1,47 @@
+# The real coordinator has fully stopped before the SAME OPEN DB baseline.
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json success
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id one --wait
+skygo --json run -f task.json --request-domain $DOMAIN --request-id two --wait
+controller quiesce
+db-save before.db
+skygo --json jobs retention
+db-unchanged before.db
+skygo --json jobs prune --before 9999-12-31T23:59:59Z
+stdout '"inspected": *2'
+stdout '"selected": *0'
+stdout '"marked": *0'
+stdout '"skipped": *2'
+stdout '"executed": *false'
+stdout 'proof_required'
+db-unchanged before.db
+# The one-record cleanup budget is simulated across the entire page.
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal
+stdout '"inspected": *2'
+stdout '"selected": *1'
+stdout '"marked": *0'
+stdout '"skipped": *1'
+stdout 'cleanup_full'
+stdout '"executed": *false'
+! stdout 'must-not-appear'
+db-unchanged before.db
+assert-native 0
+assert-output 0
+# Materialize a real taskless manual header, then rejoin ALL writers.
+controller start
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --page-size 1 --yes
+stdout '"marked": *1'
+controller quiesce
+skygo --json jobs retention
+json-value admin.obligations.0.id OBLIGATION
+db-save manual.db
+skygo --json jobs prune --logs-only --obligation $OBLIGATION
+stdout '"marked": *0'
+stdout '"selected": *0'
+stdout 'cleanup_full'
+stdout '"executed": *false'
+db-unchanged manual.db
+assert-native 0
+assert-output 0

@@ -2,9 +2,15 @@
 // exclusively locked database.
 //
 // Open requires a private data directory on a filesystem supporting file locks
-// and mmap. Identical request retries return the original job. Records are kept
-// until the operator removes the directory; a full store refuses new submissions
-// without forgetting previous request bindings.
+// and mmap. With retention disabled, identical request retries return the original
+// job and records remain until the operator removes the directory. A full store
+// refuses new submissions without forgetting previous request bindings.
+//
+// [EnableRetention] explicitly enables bounded request epochs on a stopped
+// installation. Retained requests use a [RequestDomain]; replay can report expiry
+// instead of creating another job. Pruning separates job metadata, output closure
+// and proved execution cleanup. An unknown execution is never stopped proof,
+// and acknowledged metadata removal can leave a manual cleanup obligation.
 //
 // Backup and Restore operate on stopped installations. Snapshots preserve the
 // installation owner, accepted tasks, request bindings, and active job intent;

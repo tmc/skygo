@@ -1,0 +1,13 @@
+# Disabled and enabled successor DBs must both survive old-daemon refusal exactly.
+server start
+server stop
+old-state-refusal
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+old-state-refusal
+server start
+taskfile task.json success
+skygo --json run -f task.json --request-domain $DOMAIN --request-id still-valid --wait
+event-count 1
+server stop
+! stderr .

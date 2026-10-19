@@ -19,7 +19,7 @@ func configureRetry(*exec.Cmd) {}
 func abortRetry(*exec.Cmd) error {
 	return errors.New("original process handles are not qualified on this platform")
 }
-func releaseRetry(*exec.Cmd) {}
+func releaseRetry(*exec.Cmd) error { return nil }
 
 func retryHandleReady(*exec.Cmd) bool { return false }
 func recoverRetryHandle(*exec.Cmd) error {

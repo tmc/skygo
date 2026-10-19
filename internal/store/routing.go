@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -65,6 +66,12 @@ func bindLegacyLocal(tx *bolt.Tx, binding string) error {
 			continue
 		}
 		job.TargetBinding = binding
+		if retentionRoot(tx) != nil {
+			if err := putLegacyLocalBinding(tx, job, binding); err != nil {
+				return err
+			}
+			continue
+		}
 		data, err := json.Marshal(job)
 		if err != nil {
 			return err
@@ -74,4 +81,72 @@ func bindLegacyLocal(tx *bolt.Tx, binding string) error {
 		}
 	}
 	return nil
+}
+
+// putLegacyLocalBinding is the finite one-time legacy identity migration. It
+// charges exact growth even for an already over-quota installation; no other
+// mutation receives this allowance and a pinned binding cannot enter it again.
+func putLegacyLocalBinding(tx *bolt.Tx, job backend.Job, binding string) error {
+	before, e := get(tx, job.ID)
+	if e != nil {
+		return e
+	}
+	want, e := backend.LocalBinding(string(tx.Bucket(metadataBucket).Get([]byte("owner"))))
+	if e != nil || want != binding || before.Target != "local" || before.TargetBinding != "" || job.TargetBinding != binding {
+		return errors.New("invalid legacy local binding migration")
+	}
+	expected := before
+	expected.TargetBinding = binding
+	wantData, e := json.Marshal(expected)
+	if e != nil {
+		return e
+	}
+	gotData, e := json.Marshal(job)
+	if e != nil {
+		return e
+	}
+	if !bytes.Equal(wantData, gotData) {
+		return errors.New("legacy binding changed accepted payload")
+	}
+	var m retainedJob
+	if e = loadJSON(retentionTable(tx, retainedJobsBucket), []byte(job.ID), &m); e != nil {
+		return e
+	}
+	if !m.Legacy {
+		return errors.New("local binding migration requires legacy work")
+	}
+	n, e := jobOverhead(job)
+	if e != nil {
+		return e
+	}
+	old := m.Overhead
+	oldRecord := retentionTable(tx, retainedJobsBucket).Get([]byte(job.ID))
+	m.Overhead = n
+	data, e := json.Marshal(m)
+	if e != nil {
+		return e
+	}
+	u, e := usage(tx)
+	if e != nil {
+		return e
+	}
+	for _, v := range []uint64{old, recordCharge(retainedJobsBucket, []byte(job.ID), oldRecord)} {
+		if u[MetadataBytesQuota] < v {
+			return errors.New("legacy binding metadata underflow")
+		}
+		u[MetadataBytesQuota] -= v
+	}
+	for _, v := range []uint64{n, recordCharge(retainedJobsBucket, []byte(job.ID), data)} {
+		u[MetadataBytesQuota], e = addChecked(u[MetadataBytesQuota], v)
+		if e != nil {
+			return e
+		}
+	}
+	if e = retentionTable(tx, retainedJobsBucket).Put([]byte(job.ID), data); e != nil {
+		return e
+	}
+	if e = putJSON(retentionRoot(tx), retentionUsageKey, u); e != nil {
+		return e
+	}
+	return putJSON(tx.Bucket(jobsBucket), []byte(job.ID), job)
 }

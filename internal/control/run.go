@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/internal/store"
 )
 
 type operationKind uint8
@@ -18,19 +19,22 @@ const (
 )
 
 type operation struct {
-	kind operationKind
-	job  backend.Job
+	kind   operationKind
+	job    backend.Job
+	output *backend.OutputReference
 }
 type operationResult struct {
-	operation operation
-	status    backend.Status
-	err       error
+	operation  operation
+	status     backend.Status
+	err        error
+	notStarted bool
 }
 type targetWorker struct {
-	target  backend.Target
-	input   chan operation
-	pending *operation
-	after   uint64
+	target     backend.Target
+	input      chan operation
+	pending    *operation
+	after      uint64
+	bindOutput func(backend.OutputReference) error
 }
 type loopState struct {
 	workers    []targetWorker
@@ -49,6 +53,7 @@ func (c *Control) Run(ctx context.Context) error {
 	lifetime, cancel := context.WithCancel(ctx)
 	defer cancel()
 	state := c.newLoop(lifetime)
+	maintenance := newMaintenance(lifetime)
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -59,10 +64,22 @@ func (c *Control) Run(ctx context.Context) error {
 			c.failed.Store(true)
 			return err
 		}
+		if err := c.maintain(ctx, maintenance); err != nil {
+			c.failed.Store(true)
+			return err
+		}
 		c.drainAccess(ctx)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
+		case result := <-maintenance.results:
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err := c.integrateMaintenance(maintenance, result); err != nil {
+				c.failed.Store(true)
+				return err
+			}
 		case result := <-state.results:
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -79,11 +96,17 @@ func (c *Control) newLoop(ctx context.Context) *loopState {
 	s := &loopState{workers: make([]targetWorker, len(c.targets)), results: make(chan operationResult, len(c.targets)), due: make(map[string]time.Time)}
 	for i, t := range c.targets {
 		s.workers[i] = targetWorker{target: t, input: make(chan operation, 1)}
-		go runWorker(ctx, t.Backend, s.workers[i].input, s.results)
+		if t.Name == c.retention.local.Target && t.Binding == c.retention.local.Binding && t.OutputStorage == backend.LocalOutput {
+			s.workers[i].bindOutput = c.retention.local.BindOutput
+		}
+		go runWorkerWithOutput(ctx, t.Backend, s.workers[i].bindOutput, s.workers[i].input, s.results)
 	}
 	return s
 }
 func runWorker(ctx context.Context, b backend.Backend, input <-chan operation, results chan<- operationResult) {
+	runWorkerWithOutput(ctx, b, nil, input, results)
+}
+func runWorkerWithOutput(ctx context.Context, b backend.Backend, bind func(backend.OutputReference) error, input <-chan operation, results chan<- operationResult) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -95,7 +118,21 @@ func runWorker(ctx context.Context, b backend.Backend, input <-chan operation, r
 			result := operationResult{operation: op}
 			if op.kind == startOperation {
 				call, cancel := context.WithTimeout(ctx, 10*time.Second)
-				result.err = b.Start(call, op.job.CurrentAttemptID(), cloneTask(op.job.Task))
+				if op.output != nil {
+					if bind == nil {
+						result.err = errors.New("local output binding unavailable")
+					} else {
+						result.err = bind(*op.output)
+					}
+					result.notStarted = result.err != nil
+				}
+				if result.err == nil && call.Err() != nil {
+					result.err = call.Err()
+					result.notStarted = true
+				}
+				if result.err == nil {
+					result.err = b.Start(call, op.job.CurrentAttemptID(), cloneTask(op.job.Task))
+				}
 				cancel()
 			} else {
 				if op.job.CancelRequested {
@@ -168,6 +205,9 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 			return nil
 		}
 		j, err := c.store.Get(snapshot.ID)
+		if errors.Is(err, store.ErrNotFound) {
+			continue
+		}
 		if err != nil {
 			return err
 		}
@@ -175,7 +215,7 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 			continue
 		}
 		if needsStart(j) && j.CancelRequested {
-			if _, _, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), now.UTC()); err != nil {
+			if _, _, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), 0, now.UTC()); err != nil {
 				return err
 			}
 			continue
@@ -183,6 +223,9 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 		target, reason := c.boundTarget(j)
 		if reason == "" && needsStart(j) && j.Task.Retry != nil && !target.SupportsRetry {
 			reason = unsupportedRetryTarget
+		}
+		if reason == "" && needsStart(j) && c.retention.enabled && target.OutputStorage == backend.UnspecifiedOutput {
+			reason = unspecifiedOutputTarget
 		}
 		if reason != "" {
 			if j.Status.Reason != reason {
@@ -231,7 +274,7 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 			}
 			// Cancellation is independent of due time, placement and capacity.
 			if needsStart(j) && j.CancelRequested {
-				if _, _, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), now.UTC()); err != nil {
+				if _, _, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), 0, now.UTC()); err != nil {
 					return err
 				}
 				continue
@@ -248,15 +291,45 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				if j.Status.State == backend.Retrying && (j.NextAttemptAt == nil || now.Before(*j.NextAttemptAt)) {
 					continue
 				}
+				if c.retention.enabled && target.OutputStorage == backend.UnspecifiedOutput {
+					continue
+				}
+				if err := c.storageGuard(false, target.OutputStorage == backend.LocalOutput); err != nil {
+					const held = "storage observation unavailable; execution held"
+					if j.Status.Reason != held {
+						if _, e := c.store.Update(j.ID, func(current *backend.Job) error { current.Status.Reason = held; return nil }); e != nil && !errors.Is(e, store.ErrNotFound) {
+							return e
+						}
+					}
+					continue
+				}
+				reserve := uint64(0)
+				if c.retention.enabled {
+					reserve = target.OutputReservation
+				}
+				previousReason := j.Status.Reason
 				var began bool
-				j, began, err = c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), now.UTC())
+				j, began, err = c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), reserve, now.UTC())
 				if err != nil {
+					var capacity *store.CapacityError
+					if errors.As(err, &capacity) {
+						const held = "retention capacity unavailable; execution held"
+						if previousReason != held {
+							if _, e := c.store.Update(j.ID, func(current *backend.Job) error { current.Status.Reason = held; return nil }); e != nil && !errors.Is(e, store.ErrNotFound) {
+								return e
+							}
+						}
+						continue
+					}
 					return err
 				}
 				if !began {
 					continue
 				}
 				active++
+				if c.retention.enabled {
+					c.retention.wantSample.Store(true)
+				}
 				kind = startOperation
 				s.nextTarget = (i + 1) % len(s.workers)
 			} else {
@@ -266,10 +339,20 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				}
 			}
 			op := operation{kind: kind, job: cloneJob(j)}
+			if kind == startOperation && c.retention.enabled && target.OutputStorage == backend.LocalOutput {
+				ref, e := c.store.OutputReference(j.ID, j.CurrentAttemptID())
+				if e != nil {
+					return e
+				}
+				op.output = &ref
+			}
 			if kind == observeOperation {
 				s.due[j.CurrentAttemptID()] = now.Add(100 * time.Millisecond)
 			}
+			c.retention.mu.Lock()
 			w.pending = &op
+			c.retention.pending[j.CurrentAttemptID()] = struct{}{}
+			c.retention.mu.Unlock()
 			w.after = j.Sequence
 			w.input <- op // One pending operation per worker; its one-slot queue is empty.
 			break
@@ -297,8 +380,14 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 	if worker == nil || worker.pending == nil || worker.pending.kind != r.operation.kind || !sameExecution(worker.pending.job, r.operation.job) {
 		return nil
 	}
+	c.retention.mu.Lock()
 	worker.pending = nil
+	delete(c.retention.pending, r.operation.job.CurrentAttemptID())
+	c.retention.mu.Unlock()
 	j, err := c.store.Get(r.operation.job.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -309,6 +398,10 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 		return nil
 	}
 	if r.operation.kind == startOperation {
+		if r.notStarted {
+			_, err = c.store.ObserveAttempt(j.ID, j.CurrentAttemptID(), backend.Status{State: backend.Unknown, Reason: "local output binding unavailable; execution not started"}, time.Now().UTC())
+			return err
+		}
 		return nil
 	} // Ambiguity never retries Start.
 	if s.due == nil {

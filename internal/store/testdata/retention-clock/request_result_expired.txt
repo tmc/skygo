@@ -1,0 +1,35 @@
+# Actual replay and tombstone decisions precede current quota and placement.
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json success
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id first --wait
+json-value id FIRST
+! skygo run -f task.json --request-domain $DOMAIN --request-id second
+stderr 'retention capacity RETENTION_QUOTA_DOMAIN_JOBS'
+skygo --json run -f task.json --request-domain $DOMAIN --request-id first
+json-value id REPLAY
+equal-env FIRST REPLAY
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *1'
+skygo --json run -f task.json --request-domain $DOMAIN --request-id second --wait
+json-value id SECOND
+! skygo run -f task.json --request-domain $DOMAIN --request-id first
+stderr 'result expired'
+controller quiesce
+replace-target
+! skygo run -f task.json --request-domain $DOMAIN --request-id first
+stderr 'result expired'
+skygo --json run -f task.json --request-domain $DOMAIN --request-id second
+json-value id REPLAY
+equal-env SECOND REPLAY
+taskfile changed.json hold
+! skygo run -f changed.json --request-domain $DOMAIN --request-id first
+stderr 'already_exists'
+cmp starts two-starts.txt
+assert-native 0
+assert-output 0
+
+-- two-starts.txt --
+start
+start

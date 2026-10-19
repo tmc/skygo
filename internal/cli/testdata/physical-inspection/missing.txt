@@ -1,0 +1,9 @@
+# Failed local inspection is explicit and never creates the source or parent.
+! skygo --token-file never-created-token --json state retention inspect --data-dir absent/state
+stdout '"geometry_status":"incomplete"'
+stdout '"reason":"missing"'
+! stdout '"jobs":'
+! stdout '"file_bytes":'
+stderr 'physical inspection unavailable or incomplete'
+! exists absent
+! exists never-created-token

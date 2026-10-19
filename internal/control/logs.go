@@ -46,9 +46,8 @@ func logStatus(j backend.Job, attemptID string) (backend.Status, bool, error) {
 	return backend.Status{}, false, fmt.Errorf("%w: invalid attempt selection", ErrInvalid)
 }
 
-// Logs reads the fixed selected attempt, rechecking authorization and membership
-// on every call. The selected ID never follows a newer current attempt.
-func (c *Control) Logs(ctx context.Context, actor auth.Actor, id, attemptID string, offset int64) (backend.LogChunk, error) {
+// readLogs reads the selected immutable attempt after lease admission.
+func (c *Control) readLogs(ctx context.Context, actor auth.Actor, id, attemptID string, offset int64) (backend.LogChunk, error) {
 	actor, err := c.engine.Check(actor, auth.Read)
 	if err != nil {
 		return backend.LogChunk{}, err

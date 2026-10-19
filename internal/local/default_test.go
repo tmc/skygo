@@ -361,10 +361,10 @@ func TestDefaultCancellationRedelivery(t *testing.T) {
 			}
 			e := ownedExecution(t, b, id)
 			b.mu.Lock()
-			requested, intent := e.owned.requested, e.owned.intent
+			intent, deliveries := e.owned.intent, calls
 			b.mu.Unlock()
-			if !requested || intent {
-				t.Fatal("failed delivery lost request or selected a winning intent")
+			if intent || deliveries != 1 {
+				t.Fatalf("failed delivery intent=%v calls=%d", intent, deliveries)
 			}
 			if mode == "cancel" {
 				if err := b.Cancel(context.Background(), backend.Reference{ID: id}); err != nil {

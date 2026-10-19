@@ -72,12 +72,14 @@ func abortRetry(cmd *exec.Cmd) error {
 	return err
 }
 
-func releaseRetry(cmd *exec.Cmd) {
+func releaseRetry(cmd *exec.Cmd) error {
 	fd := cmd.SysProcAttr.PidFD
 	if fd != nil && *fd >= 0 {
-		unix.Close(*fd)
+		err := unix.Close(*fd)
 		*fd = -1
+		return err
 	}
+	return nil
 }
 
 func retryHandleReady(cmd *exec.Cmd) bool {

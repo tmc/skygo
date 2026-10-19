@@ -113,6 +113,9 @@ func rpcError(err error) error {
 	if err == nil {
 		return nil
 	}
+	if retained := retentionError(err); retained != nil {
+		return retained
+	}
 	code := connect.CodeInternal
 	switch {
 	case errors.Is(err, auth.ErrUnauthenticated):
@@ -127,7 +130,7 @@ func rpcError(err error) error {
 		code = connect.CodeDeadlineExceeded
 	case errors.Is(err, control.ErrInvalid), errors.Is(err, fs.ErrInvalid):
 		code = connect.CodeInvalidArgument
-	case errors.Is(err, control.ErrQuoteMetadata), errors.Is(err, control.ErrUnsupported), errors.Is(err, control.ErrLogsUnavailable):
+	case errors.Is(err, control.ErrQuoteMetadata), errors.Is(err, control.ErrUnsupported), errors.Is(err, control.ErrLogsUnavailable), errors.Is(err, store.ErrRetentionDisabled):
 		code = connect.CodeFailedPrecondition
 	case errors.Is(err, control.ErrUnavailable):
 		code = connect.CodeUnavailable

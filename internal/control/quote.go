@@ -88,10 +88,12 @@ const maxQuoteRate = int64(1_000_000_000_000)
 const maxQuoteDuration = int64(604800)
 
 // checkTarget applies the same hard constraints to ordinary and advisory plans.
-func checkTarget(t backend.Task, target backend.Target) error {
+func checkTarget(t backend.Task, target backend.Target, requireOutputStorage bool) error {
 	switch {
 	case t.Target != "" && t.Target != target.Name:
 		return errors.New("target constraint differs")
+	case requireOutputStorage && target.OutputStorage == backend.UnspecifiedOutput:
+		return errors.New("output storage is unspecified")
 	case !matchesLabels(target.Labels, t.TargetLabels):
 		return errors.New("target labels differ")
 	case t.Retry != nil && !target.SupportsRetry:
@@ -168,7 +170,7 @@ func quoteComputeEstimate(rate, seconds int64) (int64, error) {
 // quoteAt consumes validated configured facts and a caller-owned clock value.
 // Control.QuoteTask supplies fresh auth and time.Now().UTC().
 // It has no store, filesystem, provider, submission or scheduling side effect.
-func quoteAt(task backend.Task, currency string, unit backend.RateUnit, seconds *int64, targets []backend.Target, now time.Time) (QuotePlan, error) {
+func quoteAt(task backend.Task, currency string, unit backend.RateUnit, seconds *int64, targets []backend.Target, now time.Time, requireOutputStorage bool) (QuotePlan, error) {
 	var result QuotePlan
 	if !backend.ValidQuoteCurrency(currency) || !backend.ValidRateUnit(unit) || seconds != nil && (*seconds <= 0 || *seconds > maxQuoteDuration) || !validQuoteNow(now) {
 		return result, fmt.Errorf("%w: invalid quote request", ErrInvalid)
@@ -208,7 +210,7 @@ func quoteAt(task backend.Task, currency string, unit backend.RateUnit, seconds 
 	for _, target := range targets {
 		c := QuoteCandidate{Target: target.Name, EstimateStatus: EstimateQuoteNotComparable}
 		advice := backend.CloneAdvice(target.Advice)
-		checkErr := checkTarget(task, target)
+		checkErr := checkTarget(task, target, requireOutputStorage)
 		c.Rejection = quoteDiagnostic(checkErr)
 		c.Eligible = checkErr == nil
 		var price *backend.Quote
@@ -266,5 +268,5 @@ func (c *Control) QuoteTask(actor auth.Actor, task backend.Task, currency string
 	if _, err := c.engine.Check(actor, auth.Read); err != nil {
 		return QuotePlan{}, err
 	}
-	return quoteAt(task, currency, unit, billableSeconds, c.targets, time.Now().UTC())
+	return quoteAt(task, currency, unit, billableSeconds, c.targets, time.Now().UTC(), c.retention.enabled)
 }

@@ -70,17 +70,55 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	}
 	var targets []backend.Target
 	var localBinding string
+	var localOutput control.LocalOutputConfig
+	policy, retentionEnabled, err := s.RetentionPolicy()
+	if err != nil {
+		return fmt.Errorf("read retention policy: %w", err)
+	}
+	if retentionEnabled && !policy.LocalOutputEnabled && !cfg.DisableLocal {
+		return errors.New("local output is disabled by retention policy; use --disable-local with remote targets")
+	}
 	if !cfg.DisableLocal {
-		localBackend, err := local.New(filepath.Join(cfg.DataDir, "logs"))
-		if err != nil {
-			return err
-		}
-		defer func() { result = errors.Join(result, localBackend.Close()) }()
 		localBinding, err = backend.LocalBinding(s.Owner())
 		if err != nil {
 			return fmt.Errorf("local binding: %w", err)
 		}
-		targets = append(targets, backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding, SupportsRetry: localBackend.SupportsRetry()})
+		logs := filepath.Join(cfg.DataDir, "logs")
+		var localBackend *local.Backend
+		if retentionEnabled {
+			outputs, err := retainedOutputs(s)
+			if err != nil {
+				return fmt.Errorf("load local output reservations: %w", err)
+			}
+			localBackend, err = local.NewRetained(logs, local.RetentionConfig{
+				Owner: s.Owner(), OutputUnit: policy.OutputUnit, Volume: policy.Volume,
+				OutputBytes: policy.OutputBytes, OutputDomains: policy.OutputDomains,
+				OutputFiles: policy.OutputFiles, Outputs: outputs,
+			})
+			if err != nil {
+				return fmt.Errorf("configure local retention: %w", err)
+			}
+			localOutput = control.LocalOutputConfig{
+				Target: "local", Binding: localBinding, BindOutput: localBackend.BindOutput,
+				OutputUsage: func(ctx context.Context) (uint64, uint64, error) {
+					usage, err := localBackend.OutputUsage(ctx)
+					return usage.AllocatedBytes, usage.Files, err
+				},
+			}
+		} else {
+			localBackend, err = local.New(logs)
+			if err != nil {
+				return err
+			}
+		}
+		defer func() { result = errors.Join(result, localBackend.Close()) }()
+		target := backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding, SupportsRetry: localBackend.SupportsRetry()}
+		if retentionEnabled {
+			target.OutputStorage = backend.LocalOutput
+			target.OutputReservation = localBackend.OutputReservation()
+			target.Retention = localBackend.Retention()
+		}
+		targets = append(targets, target)
 	}
 	if cfg.Targets != nil {
 		extra, err := cfg.Targets(s.Owner())
@@ -92,7 +130,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err := attachTargetFacts(facts, targets); err != nil {
 		return err
 	}
-	c, err := control.New(s, targets, engine)
+	c, err := control.NewWithLocalOutput(s, targets, engine, localOutput)
 	if err != nil {
 		return err
 	}
@@ -100,6 +138,16 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if localBinding != "" {
 		if err := s.BindLegacyLocal(localBinding); err != nil {
 			return fmt.Errorf("bind legacy local jobs: %w", err)
+		}
+	}
+	if retentionEnabled {
+		for _, target := range targets {
+			if target.OutputStorage == backend.UnspecifiedOutput {
+				continue
+			}
+			if err := s.BindOutputStorage(target.Name, target.Binding, target.OutputStorage, target.OutputReservation); err != nil {
+				return fmt.Errorf("bind output storage for %s: %w", target.Name, err)
+			}
 		}
 	}
 	listener, err := net.Listen("tcp", cfg.Listen)
@@ -120,7 +168,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if !c.AuditHealthy() {
 			w.Header().Set("Skygo-Audit", "unavailable")
 		}
-		if !ready.Load() || !c.Healthy() || !engine.Ready() {
+		if !ready.Load() || !c.Healthy() || !engine.Ready() || !c.StorageReady() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -186,4 +234,28 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 	}
 	return result
+}
+
+// retainedOutputs transfers only store-validated identities. File names never
+// grant ownership or closure, and the absolute domain bound also limits startup.
+func retainedOutputs(s *store.Store) ([]backend.OutputReference, error) {
+	var outputs []backend.OutputReference
+	var after string
+	for {
+		page, next, err := s.ListOutputReferences(after, 100)
+		if err != nil {
+			return nil, err
+		}
+		if len(outputs)+len(page) > 256 {
+			return nil, errors.New("local output inventory exceeds domain limit")
+		}
+		outputs = append(outputs, page...)
+		if next == "" {
+			return outputs, nil
+		}
+		if len(page) == 0 || next <= after || next != page[len(page)-1].AttemptID {
+			return nil, errors.New("local output inventory did not advance")
+		}
+		after = next
+	}
 }

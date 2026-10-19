@@ -2,8 +2,6 @@ package cli
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -82,6 +80,7 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 		if server == nil {
 			return errors.New("server startup unavailable")
 		}
+		warnPhysicalState(cmd, s.DataDir)
 		return server(cmd.Context(), s)
 	}}
 	srv.Flags().StringVar(&s.DataDir, "data-dir", "skygo-data", "Durable state directory")
@@ -148,7 +147,7 @@ func (o *options) job(w io.Writer, j *skyv1.Job) error {
 }
 
 func (o *options) taskCommand(run bool) *cobra.Command {
-	var file, id string
+	var file, id, domain string
 	var wait bool
 	var quote quoteFlags
 	name, short := "plan", "Validate a task and select an eligible target"
@@ -187,37 +186,9 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 			}
 			return nil
 		}
-		retrying, err := enabledRetry(task)
+		j, err := o.submitTask(cmd, ctx, client, task, id, domain, file, cmd.Flags().Changed("request-domain"), cmd.Flags().Changed("request-id"))
 		if err != nil {
 			return err
-		}
-		if !retrying && len(taskCapabilities(task)) != 0 {
-			if _, err := o.planTask(ctx, client, task); err != nil {
-				return err
-			}
-		}
-		if id == "" {
-			var b [16]byte
-			if _, err := rand.Read(b[:]); err != nil {
-				return err
-			}
-			id = hex.EncodeToString(b[:])
-		}
-		// Print before sending: even a lost response can be retried safely.
-		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "request-id: %s\n", id); err != nil {
-			return fmt.Errorf("write request id: %w", err)
-		}
-		submit := client.SubmitJob
-		if retrying {
-			submit = client.SubmitRetryJob
-		}
-		r, err := submit(ctx, request(o, &skyv1.SubmitJobRequest{Task: task, RequestId: id}))
-		if err != nil {
-			return fmt.Errorf("submit (retry with --request-id %s): %w", id, err)
-		}
-		j := r.Msg.Job
-		if j == nil {
-			return errors.New("server returned no job")
 		}
 		if wait {
 			fmt.Fprintf(cmd.ErrOrStderr(), "job: %s\n", j.Id)
@@ -240,6 +211,7 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 	}
 	if run {
 		c.Flags().StringVar(&id, "request-id", "", "Stable request ID to reuse when retrying submission")
+		c.Flags().StringVar(&domain, "request-domain", "", "Explicit retained request domain LINEAGE:EPOCH; reuse with the request ID")
 		c.Flags().BoolVar(&wait, "wait", false, "Wait for terminal status; unsuccessful jobs exit 2")
 	}
 	return c
@@ -258,7 +230,7 @@ func (o *options) wait(ctx context.Context, c skyv1connect.ControlServiceClient,
 		r, err := c.GetJob(rpcctx, request(o, &skyv1.GetJobRequest{Id: j.Id}))
 		cancel()
 		if err != nil {
-			return nil, err
+			return nil, retentionDiagnostic(err)
 		}
 		j = r.Msg.Job
 		if j == nil {
@@ -301,7 +273,7 @@ func (o *options) jobs() *cobra.Command {
 		defer cancel()
 		r, err := o.client().GetJob(ctx, request(o, &skyv1.GetJobRequest{Id: args[0]}))
 		if err != nil {
-			return err
+			return retentionDiagnostic(err)
 		}
 		return o.job(cmd.OutOrStdout(), r.Msg.Job)
 	}}
@@ -322,61 +294,15 @@ func (o *options) jobs() *cobra.Command {
 	var follow bool
 	var offset int64
 	var attempt uint32
+	var cursor string
 	logs := &cobra.Command{Use: "logs ID", Short: "Read retained logs; interrupting does not cancel the job", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-		if offset < 0 {
-			return errors.New("offset must not be negative")
-		}
-		if cmd.Flags().Changed("attempt") && attempt == 0 {
-			return errors.New("attempt must be positive")
-		}
-		ctx := cmd.Context()
-		if !follow {
-			var cancel context.CancelFunc
-			ctx, cancel = context.WithTimeout(ctx, o.timeout)
-			defer cancel()
-		}
-		client := o.client()
-		if attempt > 1 {
-			checkctx, cancel := context.WithTimeout(ctx, o.timeout)
-			r, err := client.GetJob(checkctx, request(o, &skyv1.GetJobRequest{Id: args[0]}))
-			cancel()
-			if err != nil {
-				return err
-			}
-			if r.Msg.Job == nil {
-				return errors.New("server returned no job")
-			}
-			if attempt > uint32(len(r.Msg.Job.Attempts)) {
-				return errors.New("server returned no such attempt")
-			}
-		}
-		s, err := client.StreamJobLogs(ctx, request(o, &skyv1.StreamJobLogsRequest{Id: args[0], Offset: offset, Follow: follow, Attempt: attempt}))
-		if err != nil {
-			return err
-		}
-		defer s.Close()
-		warned := false
-		for s.Receive() {
-			m := s.Msg()
-			if m.Truncated && !warned {
-				fmt.Fprintln(cmd.ErrOrStderr(), "logs truncated: retained output limit reached")
-				warned = true
-			}
-			if o.json {
-				err = writeJSON(cmd.OutOrStdout(), m)
-			} else {
-				_, err = cmd.OutOrStdout().Write(m.Data)
-			}
-			if err != nil {
-				return err
-			}
-		}
-		return s.Err()
+		return o.readLogs(cmd, args[0], offset, attempt, follow, cursor, cmd.Flags().Changed("cursor"))
 	}}
 	logs.Flags().BoolVarP(&follow, "follow", "f", false, "Follow until terminal status or interruption")
 	logs.Flags().Int64Var(&offset, "offset", 0, "Byte offset into retained logs")
 	logs.Flags().Uint32Var(&attempt, "attempt", 0, "Read one attempt (one-based; default selects current once)")
-	c.AddCommand(list, get, cancelCmd, logs)
+	logs.Flags().StringVar(&cursor, "cursor", "", "Read a retained cursor stream; empty starts a new fixed cursor")
+	c.AddCommand(list, get, cancelCmd, logs, o.retentionInfoCommand(), o.pruneCommand())
 	return c
 }
 

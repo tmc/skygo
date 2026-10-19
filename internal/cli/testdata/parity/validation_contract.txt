@@ -41,7 +41,7 @@ stderr 'accepts 1 arg'
 stderr 'unknown command'
 ! stdout .
 ! skygo jobs logs id --offset -1
-stderr 'offset must not be negative'
+stderr 'offset must be between 0 and 1048576'
 ! stdout .
 ! skygo --timeout 0s targets list
 stderr 'timeout must be positive'

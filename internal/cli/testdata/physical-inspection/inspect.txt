@@ -1,0 +1,16 @@
+# Local inspection reads the real stopped database, not endpoint credentials.
+physical-init data
+physical-snapshot data
+skygo --token-file never-created-token --json state retention inspect --data-dir data
+! stderr .
+stdout '"geometry_status":"complete"'
+physical-json
+physical-unchanged data
+! exists never-created-token
+
+# Human output keeps the qualification boundary visible.
+skygo state retention inspect --data-dir data
+! stderr .
+stdout 'schema and binding geometry only; not a migration safety certificate'
+stdout 'jobs: 0'
+physical-unchanged data

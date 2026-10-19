@@ -103,6 +103,7 @@ func (o *options) authCommand() *cobra.Command {
 	_ = root.MarkPersistentFlagRequired("auth-file")
 	var dir, tokenOutput string
 	initialize := &cobra.Command{Use: "init", Short: "Activate scoped authentication on stopped server state", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		warnPhysicalState(cmd, dir)
 		if err := initializeAuth(dir, path, tokenOutput); err != nil {
 			return err
 		}

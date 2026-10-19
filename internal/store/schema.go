@@ -11,7 +11,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 4
+const schemaVersion = 5
 
 var schemaKey = []byte("schema_version")
 
@@ -22,6 +22,9 @@ var ErrUnsupportedSchema = errors.New("unsupported database schema")
 // inspect checks the refusal fence before inspecting any records. An empty
 // database is initialized by Open; a partly missing layout is corruption.
 func inspect(tx *bolt.Tx) error {
+	if schemaNumber(tx) < 5 && retentionRoot(tx) != nil {
+		return errors.New("retention metadata requires schema 5")
+	}
 	m := tx.Bucket(metadataBucket)
 	if m != nil {
 		if v := m.Get(schemaKey); v != nil {
@@ -29,7 +32,7 @@ func inspect(tx *bolt.Tx) error {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != 2 && n != 3 && n != schemaVersion {
+			if n != 1 && n != 2 && n != 3 && n != 4 && n != schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
@@ -118,6 +121,9 @@ func initialize(tx *bolt.Tx, owner string) error {
 			return err
 		}
 	}
+	if err := initializeRetention(tx); err != nil {
+		return err
+	}
 	if !bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) {
 		if err := m.Put(schemaKey, sequenceKey(schemaVersion)); err != nil {
 			return err
@@ -180,5 +186,11 @@ func validateSnapshot(tx *bolt.Tx) error {
 	if err := validateScoped(tx); err != nil {
 		return err
 	}
-	return validateAttempts(tx)
+	if err := validateAttempts(tx); err != nil {
+		return err
+	}
+	if schemaNumber(tx) >= 5 {
+		return validateRetention(tx)
+	}
+	return nil
 }

@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	missingTarget          = "target is not configured"
-	unboundTarget          = "target binding is unavailable; execution held"
-	changedTarget          = "target binding has changed; execution held"
-	unsupportedRetryTarget = "retry execution is unsupported; execution held"
+	missingTarget           = "target is not configured"
+	unboundTarget           = "target binding is unavailable; execution held"
+	changedTarget           = "target binding has changed; execution held"
+	unsupportedRetryTarget  = "retry execution is unsupported; execution held"
+	unspecifiedOutputTarget = "output storage is unspecified; execution held"
 )
 
 func validText(s string, max int, empty bool) bool {
@@ -46,6 +47,10 @@ func validAcceleratorNames(names []string) bool {
 	return true
 }
 func cloneTarget(t backend.Target) backend.Target {
+	if t.Retention != nil {
+		copy := *t.Retention
+		t.Retention = &copy
+	}
 	t.Advice = backend.CloneAdvice(t.Advice)
 	t.Labels = maps.Clone(t.Labels)
 	t.AcceleratorNames = slices.Clone(t.AcceleratorNames)
@@ -90,7 +95,7 @@ func (c *Control) boundTarget(j backend.Job) (backend.Target, string) {
 	return t, ""
 }
 func routingHeld(reason string) bool {
-	return reason == missingTarget || reason == unboundTarget || reason == changedTarget || reason == unsupportedRetryTarget
+	return reason == missingTarget || reason == unboundTarget || reason == changedTarget || reason == unsupportedRetryTarget || reason == unspecifiedOutputTarget
 }
 func reference(j backend.Job) backend.Reference {
 	return backend.Reference{ID: j.CurrentAttemptID(), Task: cloneTask(j.Task), Binding: j.TargetBinding, Instance: currentStatus(j).Instance}

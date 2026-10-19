@@ -39,8 +39,9 @@ price model runs during planning. A shell is used only when explicitly in argv.
 
 The public protocol is `skygo.v1.ControlService` in
 [`control.proto`](../proto/skygo/v1/control.proto). The methods are
-PlanTask, SubmitJob, SubmitRetryJob, GetJob, ListJobs, CancelJob, StreamJobLogs, ListTargets, and
-GetServerInfo. Discovery reports typed capabilities for each configured target.
+QuoteTask, PlanTask, SubmitJob, SubmitRetryJob, GetJob, ListJobs, CancelJob,
+StreamJobLogs, ListTargets, GetServerInfo, GetRetention, SubmitRetainedJob,
+PruneJobs, and StreamRetainedJobLogs. Discovery reports typed capabilities for each configured target.
 The capabilities are `FINITE_JOBS_V1`, `RESOURCE_LIMITS_V1`, `NODE_SELECTOR_V1`
 and `TARGET_LABELS_V1`, plus `FINITE_JOB_RETRY_V1` for targets implementing
 the enforced retry path. Finite jobs and target-label matching are core semantics;
@@ -49,31 +50,36 @@ support them. `Target.labels` and `Target.accelerator_names` report declared
 metadata. Kind/name does not imply support, and discovery does not report capacity
 or expose execution bindings, kubeconfigs or credentials.
 
-For a task using limits or placement maps without enabled retry, CLI `plan` and `run` first call
-PlanTask with the original task, then check required capabilities on that exact
-chosen target through GetServerInfo. A failed check produces no successful plan
-and prevents submission. `run` then submits the original task and request ID,
-without inserting the chosen target into the payload. Default tasks need no new
-capability check and remain usable on old servers. Explicit inspection uses, for
-example, `info --target batch --require resource-limits-v1,node-selector-v1`.
-Missing discovery is unsupported, not implicit support. Existing servers cannot
-be made to reject unknown newer protobuf fields retroactively.
+Ordinary CLI `plan` uses PlanTask with the original task, then checks required
+capabilities on that selected target through GetServerInfo. The separate
+`plan --objective lowest-rate` path calls QuoteTask instead. For `run`, that
+extension preflight applies only without a selected retention domain, with
+retention disabled or unavailable on an older server, and without enabled retry.
+A selected domain uses SubmitRetainedJob directly for both default and retry
+tasks; enabled legacy lookup also precedes current placement. The original task
+is submitted without inserting a newly chosen target. Missing discovery is not
+implicit support. Existing servers cannot be made to reject unknown newer
+protobuf fields retroactively.
 
-Target configuration is immutable for a server lifetime. The preflight sequence
-is not a reservation or an atomic handshake across replacement of an endpoint
-with a different server. CLI preflight can refuse a retry when today's route no
-longer qualifies; the SubmitJob API still replays an already accepted identical
-request before considering today's route. Do not edit a task to force a retry
-onto a new target.
+Target configuration is immutable for a server lifetime. Explicit planning and
+legacy CLI preflight are not reservations or atomic handshakes across endpoint
+replacement. Legacy preflight can refuse a retry when today's route no longer
+qualifies. Server submission checks retained replay before current route and
+capacity; selected-domain CLI submission does not perform that legacy preflight.
+Do not edit the original task or substitute a fresh domain to force replay onto
+another target. See [retention requests](retention.md#requests-results-and-logs).
 Generated clients live in `gen/skygo/v1/skyv1connect`. Both executable
 entrypoints use this protocol; a client does not need Kubernetes dependencies
 to submit tasks to a server configured with the Kubernetes integration.
 
-A submission requires a request ID. Scoped mode namespaces IDs by the
-authenticated principal; legacy mode has one global namespace. The server
-persists the ID, original task, selected target binding,
-and resulting job atomically before acknowledging acceptance. Identical retries
-return the same job; different tasks with the same ID return `already_exists`.
+A submission requires a request ID. Scoped mode namespaces IDs by authenticated
+principal; legacy mode has one global namespace. Enabled retained requests also
+include the exact lineage/epoch domain. The server persists request identity,
+original task, selected target binding and job atomically before acknowledging
+acceptance. Within a valid live binding, identical replay returns the same job
+and a different task conflicts. Enabled retention can instead return typed
+request/result expiry; restoring enabled state invalidates the prior lineage.
+For a lost reply, reuse the exact domain, ID and original task, not ID alone.
 Acceptance does not guarantee execution. Default tasks have one implicit attempt.
 
 ## Finite retries
@@ -87,11 +93,13 @@ Maximum attempts includes the first execution.
 
 The normalized policy is part of accepted task identity. Every attempt reuses
 that task and the original target binding; only its execution ID changes. Retry
-CLI submission calls the additive SubmitRetryJob RPC directly with the original
-wire task, without placement preflight or fallback to SubmitJob. An old server
-returns unimplemented. An accepted request replays before current route,
-capability or capacity checks. Changing a policy under the same request ID is a
-conflict. Explicit `plan` still describes current placement, not a replay.
+CLI submission without a selected retention domain calls SubmitRetryJob directly
+with the original wire task, without placement preflight or fallback to SubmitJob.
+An old server returns unimplemented. With a selected domain it instead calls
+SubmitRetainedJob directly; neither retained submission failure nor expiry causes
+fallback. An accepted request in a valid replay domain is looked up before current
+route, capability or capacity checks. Changing the policy conflicts with that
+live binding. Explicit `plan` describes current placement, not a replay.
 
 Only a failed attempt with positive backend stopped evidence, an explicitly
 selected exit code, remaining budget and no cancellation schedules another
@@ -136,9 +144,11 @@ win a race with cancellation.
 
 ListJobs returns a bounded page and an opaque continuation token. Pass that token
 unchanged under the same principal/read scope. Foreign and missing records are
-indistinguishable in scoped mode. Records and request bindings persist until the
-operator removes the
-store; removing it destroys retry protection and ownership identity.
+indistinguishable in scoped mode. With retention disabled, records and request
+bindings persist across restart without retention expiry. Enabled retention
+bounds request replay by domain/window and permits explicit result pruning;
+result expiry can remain recorded while the replay binding is live. Removing the
+store destroys its retry protection and ownership identity.
 
 Log offsets count bytes in a bounded combined output prefix. The JSON stream
 reports `next_offset`, `complete`, and `truncated` in protobuf JSON. For retry
@@ -147,9 +157,13 @@ jobs or explicit new selection it also includes `attempt_id`. `jobs logs ID
 is resolved once when the stream opens; reads never switch to a later attempt.
 Every read checks current authorization and selected-attempt membership. Complete
 refers to that selected output, not the logical job's completion. Each execution
-retains or reads at most 1 MiB, so an enabled job permits at most 10 MiB of log
-prefixes. There is no aggregate physical log-disk reservation. Local logs survive server
-restart. Kubernetes logs are read from Kubernetes, not copied into durable
+retains or reads at most 1 MiB; ten attempts bound the sum of those prefixes,
+not simultaneous availability. With retention disabled there is no aggregate
+local output reservation. With retention enabled, local attempts reserve against
+a shared byte/domain/file pool before starting: each domain charges the prefix
+limit plus allocation-unit overhead, one domain and two files. Those coupled
+limits can prevent a later attempt from starting. Local logs survive ordinary
+restart only while their retained output remains present and unexpired. Kubernetes logs are read from Kubernetes, not copied into durable
 storage; rotation can invalidate offsets without making a stable archive.
 Kubernetes log polling re-reads this bounded prefix; it is not an incremental
 log transport and can generate repeated API traffic for quiet workloads.
@@ -160,13 +174,16 @@ There is one durable writer. The database lock rejects a second server sharing
 its directory. A PVC is persistence, not replication. Restoring or cloning state
 must not produce two active installations controlling the same Kubernetes Jobs.
 
-Accepted task payloads are limited to 16 MiB in aggregate per data directory,
-in addition to the 10,000-job limit. Existing request IDs remain retryable at
-capacity. Enabled retry jobs additionally reserve max_attempts × 8192 bytes
-against a 16 MiB aggregate history-accounting budget at acceptance. Each encoded
-attempt is bounded by that reservation; it is not reserved bbolt pages or disk
-space. Completion does not release the reservation. Histories have at most ten
-entries; later attempts do not consume new logical/request/sequence bindings.
+Disabled retention uses the historical 16 MiB aggregate accepted-task and
+10,000-job admission limits. Enabled retention uses configured logical quotas;
+activation can preserve valid existing state above those limits while refusing
+new growth. Replay of a live retained request precedes new-admission capacity
+checks; result/window expiry can still refuse it. Finite-retry jobs reserve
+max_attempts × 8192 bytes of history accounting at acceptance, with a default
+16 MiB aggregate limit. This is neither reserved database pages nor disk space.
+Completion alone does not release the charge; enabled result pruning releases
+its tracked task/history charges. Histories have at most ten entries; later
+attempts do not consume new logical/request/sequence bindings.
 The controller admits at most 32 starting/running executions at a time; unknown
 remote executions may remain outside that accounting.
 
@@ -188,21 +205,32 @@ PID. Legacy Kubernetes/unknown routes remain held; there is no automatic remote
 binding migration.
 ## State backup and rollback
 
-The store checks its schema before migration. Format 4 adds attempt history,
-identity indexes and reservation accounting independently of legacy/scoped
-authentication mode. Opening supported historical
-state upgrades the format transactionally without changing accepted task bytes,
-installation identity, request bindings, ownership or accounting. It leaves old
-rows byte-identical and does not activate scoped auth. Opening can upgrade format even if later server configuration
-fails. Take a stopped pre-upgrade snapshot before using the new binary. Newer
-schemas and malformed state refuse before writes. Historical remote rows without
-a binding remain readable and replayable but held from execution and backend logs.
+The store checks its schema before migration. Format 4 introduced attempt
+history, identity indexes and retry reservation accounting independently of
+legacy/scoped authentication mode. The current format is 5: opening supported
+historical state transactionally adds retention side records, quota accounting
+and indexes. Retention remains disabled until explicit stopped-state activation.
+Migration preserves accepted Job/Task rows and installation ownership; adding
+side records does not make total accounting or database size unchanged.
+Historical task-counter differences are recorded separately, and activation
+reconciles that counter to tracked task usage. Neither migration nor accounting
+reconciliation proves native execution stopped.
+
+Opening can upgrade format even if later server configuration fails. Take a
+stopped pre-upgrade snapshot before using the new binary. Newer schemas and
+malformed state refuse before writes. Historical remote rows without a binding
+remain readable and replayable but held from execution and backend logs. See
+[retention and storage maintenance](retention.md) for activation and limits.
 
 `state backup --data-dir DIR --output FILE` creates a consistent offline database
 snapshot. Stop the writable server first; its database lock blocks backup.
 `state restore --input FILE --data-dir NEW_DIR` validates and publishes state in
 a new directory. Neither operation runs, cancels or rewrites workloads, and
-neither overwrites an existing destination.
+neither overwrites an existing destination. Restoring enabled retention keeps
+accepted job rows and owner identity but issues a fresh request lineage and
+closes legacy replay. Old request domains cannot replay into that restored
+lineage; preserved raw bindings are not a promise that replay authority survives
+restore. See the [retention guide](retention.md#requests-results-and-logs).
 
 Snapshots contain only the database. Copy local retained logs separately if
 needed; workload files, programs and images also need independent preservation.

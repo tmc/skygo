@@ -1,0 +1,47 @@
+# Accept epoch-zero work through the actual disabled production daemon first.
+server start
+taskfile task.json success
+skygo --json run -f task.json --request-id legacy-known --wait
+job-id LEGACY
+[linux-retry] taskfile retry.json failonce
+[linux-retry] skygo --json run -f retry.json --request-id legacy-retry --wait
+server stop
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain OLD
+server start
+skygo --json run -f task.json --request-id legacy-known
+stdout '"id": *"'$LEGACY'"'
+skygo --json run -f task.json --request-domain $OLD --request-id before-restore --wait
+job-id JOB
+server stop
+cp $DATA/jobs.db source-before.db
+skygo state backup --data-dir $DATA --output backup.db
+cmp $DATA/jobs.db source-before.db
+skygo state compact --data-dir $DATA --output compact.db
+cmp $DATA/jobs.db source-before.db
+! skygo state compact --data-dir $DATA --output compact.db
+cmp $DATA/jobs.db source-before.db
+skygo --json state restore --data-dir restored --input compact.db
+retention-domain NEW
+stdout '"legacy_replay_open":false'
+copy-outputs restored
+server-directory restored
+server start
+skygo --json jobs get $JOB
+stdout '"id": *"'$JOB'"'
+skygo --json jobs get $LEGACY
+stdout '"id": *"'$LEGACY'"'
+! skygo run -f task.json --request-domain $OLD --request-id before-restore
+stderr 'request lineage changed'
+! skygo run -f task.json --request-id legacy-known
+stderr 'request epoch expired'
+! skygo run -f task.json --request-id absent-legacy
+stderr 'request epoch expired'
+[linux-retry] ! skygo run -f retry.json --request-id legacy-retry
+[linux-retry] stderr 'request epoch expired'
+[linux-retry] ! skygo run -f retry.json --request-id absent-legacy-retry
+[linux-retry] stderr 'request epoch expired'
+[linux-retry] event-count 4
+[!linux-retry] event-count 2
+server stop
+! stderr .

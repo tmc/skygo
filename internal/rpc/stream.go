@@ -3,13 +3,16 @@ package rpc
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/internal/control"
 )
 
 var errStreamLimit = errors.New("log stream limit reached")
@@ -60,41 +63,75 @@ func watchStream(parent context.Context, engine *auth.Engine, actor auth.Actor) 
 	return ctx, func() { cancel(context.Canceled); <-done }
 }
 
-func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.StreamJobLogsRequest], stream *connect.ServerStream[v1.StreamJobLogsResponse]) error {
+type logSelection struct {
+	id       string
+	offset   int64
+	follow   bool
+	attempt  uint32
+	cursor   string
+	retained bool
+}
+
+func (h *handler) StreamJobLogs(parent context.Context, request *connect.Request[v1.StreamJobLogsRequest], stream *connect.ServerStream[v1.StreamJobLogsResponse]) error {
+	if request.Msg == nil {
+		return rpcError(fmt.Errorf("%w: log request required", control.ErrInvalid))
+	}
+	message := request.Msg
+	return h.streamLogs(parent, logSelection{id: message.Id, offset: message.Offset, follow: message.Follow, attempt: message.Attempt}, func(chunk backend.LogChunk, attemptID, _ string) error {
+		return stream.Send(&v1.StreamJobLogsResponse{Data: chunk.Data, NextOffset: chunk.NextOffset, Complete: chunk.Complete, Truncated: chunk.Truncated, AttemptId: attemptID})
+	})
+}
+
+func (h *handler) StreamRetainedJobLogs(parent context.Context, request *connect.Request[v1.StreamRetainedJobLogsRequest], stream *connect.ServerStream[v1.StreamRetainedJobLogsResponse]) error {
+	if request.Msg == nil {
+		return rpcError(fmt.Errorf("%w: log request required", control.ErrInvalid))
+	}
+	message := request.Msg
+	return h.streamLogs(parent, logSelection{id: message.Id, offset: message.Offset, follow: message.Follow, attempt: message.Attempt, cursor: message.Cursor, retained: true}, func(chunk backend.LogChunk, attemptID, cursor string) error {
+		return stream.Send(&v1.StreamRetainedJobLogsResponse{Data: chunk.Data, NextOffset: chunk.NextOffset, Complete: chunk.Complete, Truncated: chunk.Truncated, AttemptId: attemptID, Cursor: cursor})
+	})
+}
+
+func (h *handler) streamLogs(parent context.Context, selection logSelection, send func(backend.LogChunk, string, string) error) error {
+	if !hexID(selection.id) || selection.offset < 0 || selection.offset > backend.MaxLogBytes || selection.attempt > 10 || len(selection.cursor) > 683 || !utf8.ValidString(selection.cursor) || (selection.cursor != "" && selection.offset != 0) {
+		return rpcError(fmt.Errorf("%w: invalid log selector", control.ErrInvalid))
+	}
 	actor := requestActor(parent)
-	job, err := h.control.Get(actor, r.Msg.Id)
+	job, err := h.control.Get(actor, selection.id)
 	if err != nil {
 		h.record(parent, "logs", "", err)
 		return rpcError(err)
-	}
-	attemptID, err := h.control.LogAttempt(actor, job.ID, r.Msg.Attempt)
-	if err != nil {
-		h.record(parent, "logs", "", err)
-		return rpcError(err)
-	}
-	wireAttemptID := ""
-	if len(job.Attempts) != 0 || r.Msg.Attempt != 0 {
-		wireAttemptID = attemptID
 	}
 	select {
 	case h.streams <- struct{}{}:
 	default:
 		return connect.NewError(connect.CodeResourceExhausted, errStreamLimit)
 	}
-	response := parent.Value(responseKey{}).(*streamResponse)
+	lease, err := h.control.OpenLogs(actor, selection.id, selection.attempt, selection.cursor, selection.offset)
+	if err != nil {
+		<-h.streams
+		h.record(parent, "logs", "", err)
+		return rpcError(err)
+	}
+	response, ok := parent.Value(responseKey{}).(*streamResponse)
+	if !ok {
+		lease.Close()
+		<-h.streams
+		return connect.NewError(connect.CodeInternal, errors.New("log transport unavailable"))
+	}
+	wireAttemptID := ""
+	if selection.retained || len(job.Attempts) != 0 || selection.attempt != 0 {
+		wireAttemptID = lease.AttemptID()
+	}
 	limited, stop := context.WithTimeout(parent, 5*time.Minute)
 	ctx, cancel := watchStream(limited, h.engine, actor)
 	aborted := make(chan struct{})
 	abort := context.AfterFunc(ctx, func() {
 		defer close(aborted)
-		// Keep this deadline through Connect's final trailer/flush. The short
-		// allowance lets idle streams deliver a typed error; blocked writes
-		// must still finish within the two-second revocation envelope.
+		// Retain the abort deadline through Connect's final trailers and flush.
 		_ = response.controller.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
 	})
 	response.cleanup = func() {
-		// Normal completion stops the abort before normal cancellation. If it
-		// has started, join it before resetting the connection's deadline.
 		if !abort() {
 			<-aborted
 			_ = response.controller.SetWriteDeadline(time.Time{})
@@ -110,19 +147,18 @@ func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.St
 	}
 	results := make(chan result, 1)
 	go func() {
-		// A context-ignoring backend keeps its permit until it really returns.
-		// A completed worker also waits for Connect trailers and outer cleanup,
-		// bounding blocked writers and watchdogs, not only backend calls.
-		defer func() { <-response.done; <-h.streams }()
-		offset := r.Msg.Offset
+		// Both real backend completion and real HTTP completion own this lease.
+		// A canceled but stuck backend keeps its lease and permit; no replacement.
+		defer func() { <-response.done; lease.Close(); <-h.streams }()
+		offset := lease.Offset()
 		for {
-			chunk, err := h.control.Logs(ctx, actor, r.Msg.Id, attemptID, offset)
+			chunk, err := lease.Read(ctx, actor, offset)
 			select {
 			case results <- result{chunk, err}:
 			case <-ctx.Done():
 				return
 			}
-			if err != nil || chunk.Complete || (!r.Msg.Follow && len(chunk.Data) == 0) {
+			if err != nil || chunk.Complete || (!selection.follow && len(chunk.Data) == 0) {
 				return
 			}
 			offset = chunk.NextOffset
@@ -151,9 +187,7 @@ func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.St
 			if next.err != nil {
 				return rpcError(next.err)
 			}
-			// Check the current scope after Logs returns, before publishing bytes.
-			// A demoted admin must not keep reading another principal's job.
-			if _, err := h.control.Get(actor, job.ID); err != nil {
+			if err := lease.Check(actor); err != nil {
 				return rpcError(err)
 			}
 			fresh, err := h.engine.Check(actor, auth.Read)
@@ -163,14 +197,20 @@ func (h *handler) StreamJobLogs(parent context.Context, r *connect.Request[v1.St
 			if fresh.Role() != actor.Role() {
 				return rpcError(auth.ErrPermissionDenied)
 			}
-			chunk := next.chunk
+			cursor := ""
+			if selection.retained {
+				cursor, err = lease.Cursor(next.chunk.NextOffset)
+				if err != nil {
+					return rpcError(err)
+				}
+			}
 			if ctx.Err() != nil {
 				return rpcError(context.Cause(ctx))
 			}
-			if err := stream.Send(&v1.StreamJobLogsResponse{Data: chunk.Data, NextOffset: chunk.NextOffset, Complete: chunk.Complete, Truncated: chunk.Truncated, AttemptId: wireAttemptID}); err != nil {
+			if err := send(next.chunk, wireAttemptID, cursor); err != nil {
 				return err
 			}
-			if chunk.Complete || (!r.Msg.Follow && len(chunk.Data) == 0) {
+			if next.chunk.Complete || (!selection.follow && len(next.chunk.Data) == 0) {
 				return nil
 			}
 		}

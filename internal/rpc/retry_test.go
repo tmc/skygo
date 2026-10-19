@@ -114,7 +114,7 @@ func TestRetryRPCReplayAndFixedLogs(t *testing.T) {
 		t.Fatalf("capabilities=%v", info.Msg)
 	}
 	now := time.Now().UTC()
-	first, started, err := f.store.BeginAttempt(j.Id, j.Id, now)
+	first, started, err := f.store.BeginAttempt(j.Id, j.Id, 0, now)
 	if err != nil || !started {
 		t.Fatalf("begin=%v,%v", started, err)
 	}
@@ -155,7 +155,7 @@ func TestRetryRPCReplayAndFixedLogs(t *testing.T) {
 	if got.Msg.Job.State != v1.JobState_JOB_STATE_RETRYING || got.Msg.Job.NextAttemptAt == nil || len(got.Msg.Job.Attempts) != 1 || got.Msg.Job.Attempts[0].State != v1.JobState_JOB_STATE_FAILED || got.Msg.Job.Attempts[0].FinishedAt == nil {
 		t.Fatalf("backoff wire=%v", got.Msg)
 	}
-	second, started, err := f.store.BeginAttempt(j.Id, j.Id, *backoff.NextAttemptAt)
+	second, started, err := f.store.BeginAttempt(j.Id, j.Id, 0, *backoff.NextAttemptAt)
 	if err != nil || !started {
 		t.Fatalf("second=%v,%v", started, err)
 	}
@@ -205,9 +205,15 @@ func TestRetryRPCReplayAndFixedLogs(t *testing.T) {
 	selected.Close()
 	for _, tc := range []struct {
 		principal string
+		attempt   uint32
 		code      connect.Code
-	}{{"alice", connect.CodeInvalidArgument}, {"bob", connect.CodeNotFound}} {
-		invalid, err := client.StreamJobLogs(ctx, authorized(f.tokens[tc.principal], &v1.StreamJobLogsRequest{Id: j.Id, Attempt: 99}))
+	}{
+		{"alice", 3, connect.CodeInvalidArgument},
+		{"bob", 3, connect.CodeNotFound},
+		{"alice", 99, connect.CodeInvalidArgument},
+		{"bob", 99, connect.CodeInvalidArgument},
+	} {
+		invalid, err := client.StreamJobLogs(ctx, authorized(f.tokens[tc.principal], &v1.StreamJobLogsRequest{Id: j.Id, Attempt: tc.attempt}))
 		if err == nil {
 			invalid.Receive()
 			err = invalid.Err()

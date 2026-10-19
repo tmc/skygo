@@ -1,0 +1,18 @@
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+server start
+taskfile task.json hold
+skygo --json run -f task.json --request-domain $DOMAIN --request-id unknown
+job-id JOB
+await-file ready
+server stop
+server start
+await-job-state $JOB unknown
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *0'
+stdout '"reason": *"unknown"'
+skygo --json jobs get $JOB
+stdout 'JOB_STATE_UNKNOWN'
+event-count 1
+server stop
+! stderr .

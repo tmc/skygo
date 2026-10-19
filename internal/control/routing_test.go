@@ -64,6 +64,9 @@ func routeControl(t *testing.T, s *store.Store, targets ...backend.Target) *Cont
 	if err != nil {
 		t.Fatal(err)
 	}
+	if c.retention.enabled {
+		primeStorage(c)
+	}
 	return c
 }
 

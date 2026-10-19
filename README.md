@@ -39,9 +39,11 @@ The application build is pure Go; workload programs remain external inputs.
 Successful `--wait` returns exit 0. A failed, canceled, or unknown job returns 2;
 usage and API failures return 1.
 
-Use the printed request ID with the same task when retrying a submission whose
-response was lost. A timeout does not mean the job was rejected. Reusing an ID
-with a different task fails. Request bindings survive server restart.
+A timeout does not mean the job was rejected. With retention disabled, retry
+with the printed request ID and the same task. With retention enabled, preserve
+the exact printed request domain, request ID and original task together; ID alone
+is insufficient. A changed task conflicts with a live binding. Restart does not
+extend an enabled request's replay window or restore expired results.
 
 ## Commands
 
@@ -54,11 +56,17 @@ skygo targets list
 skygo info [--target NAME --require finite-jobs-v1]
 skygo state backup --data-dir DIR --output FILE
 skygo state restore --input FILE --data-dir NEW_DIR
+skygo state retention inspect --data-dir DIR
+skygo state retention enable --data-dir DIR
+skygo state retention revalidate --data-dir DIR --ack-local-writers-stopped
+skygo state compact --data-dir DIR --output FILE
 skygo plan -f task.yaml
-skygo run -f task.yaml [--request-id ID] [--wait]
+skygo run -f task.yaml [--request-domain LINEAGE:EPOCH] [--request-id ID] [--wait]
 skygo jobs list [--page-size N] [--page-token TOKEN]
+skygo jobs retention [--page-size N] [--page-token TOKEN]
+skygo jobs prune --before RFC3339 [--yes]
 skygo jobs get ID
-skygo jobs logs ID [--follow] [--offset BYTES] [--attempt N]
+skygo jobs logs ID [--follow] [--offset BYTES] [--attempt N] [--cursor TOKEN]
 skygo jobs cancel ID --yes
 ```
 
@@ -69,24 +77,30 @@ default. Choose one credential source: `--token-file`, deprecated `--token`, or
 client command does not cancel its job. Cancellation requires `jobs cancel`.
 
 Output is plain text without color, prompts, or pagers. `--json` writes protobuf
-JSON for API commands, a path object for local state commands, and public
+JSON for API commands, command-specific JSON for local state commands, and public
 metadata for local auth commands. Log streams
 write one JSON object per chunk, with base64 data and byte
 offsets. Diagnostics and retry IDs go to stderr. Use `-f -` to read YAML on stdin.
 
 `info` reports capabilities for each configured target. A requirement applies
 only to the named target and fails when discovery is unavailable. Discovery is
-not a capacity reservation. Tasks using resource limits, target labels or node
-selectors check the selected target before submission; the original task remains
-unchanged. Legacy task commands remain available against older servers; this does
-not make them support newer task semantics.
+not a capacity reservation. Ordinary `plan` checks required capabilities against
+its selected target; `plan --objective lowest-rate` uses the separate quote path.
+With retention disabled or unavailable on an older server,
+`run` preflights task extensions only on the default, non-retry path. A selected
+retention domain instead uses `SubmitRetainedJob` directly, preserving replay
+before current placement; the original task remains unchanged. Legacy commands
+on older servers do not acquire newer task semantics.
 
-Stop the server before `state backup` or `state restore`. These local commands
-preserve the database's installation identity, job records and request bindings.
-They exclude local logs, workload files and images. Restore requires a new data
-directory; neither command overwrites existing output. Keep the original
+Stop the server before `state backup` or `state restore`. Backup preserves the
+database's installation identity, job records and request bindings. Restore keeps
+the owner and accepted job records, but enabled retention receives a fresh
+request lineage and closed legacy replay; old request domains become invalid.
+Snapshots exclude local logs, workload files and images. Restore requires a new
+data directory; neither command overwrites existing output. Keep the original
 installation stopped before starting a restored copy. See the
-[backup and rollback contract](docs/contracts.md#state-backup-and-rollback).
+[backup and rollback contract](docs/contracts.md#state-backup-and-rollback) and
+[retention guide](docs/retention.md).
 
 For small-team use, [activate scoped authentication](docs/authentication.md).
 Readers and operators see their own work; admins have global read/cancel access.
@@ -114,8 +128,10 @@ Pod per attempt; tasks without a policy retain the Job path. These guarantees
 cover the owned process group or Pod/container, not arbitrary side effects or
 exactly-once execution.
 
-`run --wait` includes retry backoff. `--json jobs get ID` exposes attempt history
-and the next deadline; `jobs logs ID --attempt N` selects a one-based attempt.
+`run --wait` includes retry backoff. While the result is retained,
+`--json jobs get ID` exposes attempt history and the next deadline;
+`jobs logs ID --attempt N` selects a one-based attempt while its output remains
+available.
 A log stream opened without this flag fixes the current attempt at open and
 never follows a later attempt. See the [retry contract](docs/contracts.md#finite-retries).
 
@@ -165,17 +181,19 @@ installation, authentication, and rollback.
   name and ownership checks support adoption, but execution is not exactly once.
   Unschedulable jobs remain starting. Placement validates capabilities, not
   live capacity or price.
-- Local logs retain the first 1 MiB per execution attempt. Kubernetes logs read
+- Local logs retain at most the first 1 MiB per execution attempt, subject to
+  enabled retention cleanup. Kubernetes logs read
   at most the
   first 1 MiB currently available from the sole owned Pod; kubelet rotation,
   deletion, and eviction can remove or change that prefix. Offsets are not an
   archival cursor. Truncation is explicit; multiple owned Pods are ambiguous.
-- A single locked store retains at most 10,000 job/request bindings, without
-  automatic pruning, with accepted task payloads capped at 16 MiB in aggregate.
-  Existing request IDs remain retryable at capacity. Budget local log space up to
-  roughly 10 GiB for default jobs plus metadata. Retry jobs reserve bounded
-  history accounting and can retain up to 10 MiB of logs each; there is no global
-  physical log-disk quota or retention management API.
+- Retention is disabled by default. Historical admission keeps the 10,000-job
+  and 16 MiB aggregate task limits; known requests remain replayable at capacity.
+  Explicit stopped-state activation enables request epochs, logical quotas and
+  paged pruning. Local output reservations share a bounded pool; configured
+  domain and file maxima are not simultaneous capacity promises. Physical
+  observations and watermarks do not reserve disk or guarantee a maximum file
+  size. See [retention and storage maintenance](docs/retention.md).
 - The controller admits up to 32 starting/running jobs; further jobs remain
   queued. Unknown executions may still exist outside that accounting. Log
   streaming permits 32 concurrent streams, each lasting at most five minutes.

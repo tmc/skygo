@@ -26,7 +26,7 @@ type auditEntry struct {
 
 func validAccess(operation, resource, result string) bool {
 	switch operation {
-	case "authenticate", "info", "targets", "plan", "submit", "get", "list", "cancel", "logs":
+	case "authenticate", "info", "targets", "plan", "submit", "get", "list", "cancel", "logs", "prune":
 	default:
 		return false
 	}
@@ -91,15 +91,28 @@ func (s *Store) RecordAccess(actor auth.Actor, operation, resource, result strin
 		if err != nil {
 			return err
 		}
-		if err := b.Put(sequenceKey(n), data); err != nil {
-			return err
-		}
 		if n == 0 {
 			return errors.New("audit sequence exhausted")
 		}
+		var removed uint64
 		if n > maxAuditEntries {
-			return b.Delete(sequenceKey(n - maxAuditEntries))
+			key := sequenceKey(n - maxAuditEntries)
+			if old := b.Get(key); old != nil {
+				removed = uint64(8 + len(old))
+			}
+			if err := b.Delete(key); err != nil {
+				return err
+			}
 		}
+		if retentionRoot(tx) != nil {
+			if err := adjust(tx, MetadataBytesQuota, uint64(8+len(data)), removed); err != nil {
+				return err
+			}
+		}
+		if err := b.Put(sequenceKey(n), data); err != nil {
+			return err
+		}
+
 		return nil
 	})
 }

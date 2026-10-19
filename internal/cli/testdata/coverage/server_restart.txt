@@ -6,10 +6,14 @@
 taskfile success.json success
 taskfile hold.json hold
 
-# With no server, submission fails but stays retryable under the same ID.
+# Policy discovery must succeed before a submission path or hint is chosen.
+# With no server, GetRetention is unavailable: no implicit fallback or hint.
+# The supplied ID remains unchanged for the explicit retry after startup.
 ! skygo run -f success.json --request-id outage
-stderr '^request-id: outage\n'
-stderr 'submit \(retry with --request-id outage\): unavailable: '
+stderr '^unavailable: '
+! stderr 'request-id:'
+! stderr 'request-domain:'
+! stderr 'submit \('
 ! stdout .
 env SKYGO_EXIT_CODE
 stdout '^SKYGO_EXIT_CODE=1\n$'

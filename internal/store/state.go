@@ -57,6 +57,9 @@ func restore(input, dir string) error {
 		return err
 	}
 	defer os.Remove(name)
+	if err := freshenRestored(name); err != nil {
+		return err
+	}
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return fmt.Errorf("create restore directory: %w", err)
 	}
@@ -64,6 +67,12 @@ func restore(input, dir string) error {
 		// Remove only an empty directory. Another process may have created a file.
 		_ = os.Remove(dir)
 		return fmt.Errorf("publish restored database: %w", err)
+	}
+	if err := syncDirectory(dir); err != nil {
+		return fmt.Errorf("sync published restore directory: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(dir)); err != nil {
+		return fmt.Errorf("sync published restore parent: %w", err)
 	}
 	return nil
 }
@@ -98,6 +107,9 @@ func writeSnapshot(db *bolt.DB, output string) error {
 	// Link atomically publishes the complete file and refuses an existing path.
 	if err := os.Link(name, output); err != nil {
 		return fmt.Errorf("publish snapshot: %w", err)
+	}
+	if err := syncDirectory(filepath.Dir(output)); err != nil {
+		return fmt.Errorf("sync published snapshot parent: %w", err)
 	}
 	return nil
 }

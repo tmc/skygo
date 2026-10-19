@@ -9,7 +9,7 @@ import (
 )
 
 func (o *options) stateCommand() *cobra.Command {
-	state := &cobra.Command{Use: "state", Short: "Back up and restore stopped server state"}
+	state := &cobra.Command{Use: "state", Short: "Manage stopped server state"}
 	for _, action := range []string{"backup", "restore"} {
 		var dir, file string
 		name, short, flag := action, "Back up stopped server state", "output"
@@ -25,6 +25,15 @@ func (o *options) stateCommand() *cobra.Command {
 			}
 			if err != nil {
 				return err
+			}
+			if name == "restore" {
+				info, err := store.InspectRetention(dir)
+				if err != nil {
+					return fmt.Errorf("state restored; inspect retention readback: %w", err)
+				}
+				if info.Enabled {
+					return o.writeOfflineRetention(cmd, dir, info, true)
+				}
 			}
 			path := file
 			if name == "restore" {
@@ -43,5 +52,6 @@ func (o *options) stateCommand() *cobra.Command {
 		_ = cmd.MarkFlagRequired(flag)
 		state.AddCommand(cmd)
 	}
+	state.AddCommand(o.retentionStateCommand(), o.compactStateCommand())
 	return state
 }

@@ -23,7 +23,7 @@ stdout '"complete": *true'
 ! stdout 'hello from'
 ! stderr .
 ! skygo jobs logs $JOB --offset -1
-stderr 'offset must not be negative'
+stderr 'offset must be between 0 and 1048576'
 ! stdout .
 ! skygo jobs logs $JOB --offset 999
 stderr 'invalid_argument:.*offset exceeds retained output'

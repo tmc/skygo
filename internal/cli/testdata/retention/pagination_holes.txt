@@ -1,0 +1,51 @@
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+server start
+taskfile task.json success
+skygo --json run -f task.json --request-domain $DOMAIN --request-id p1 --wait
+job-id FIRST
+skygo --json run -f task.json --request-domain $DOMAIN --request-id p2 --wait
+job-id SECOND
+skygo --json run -f task.json --request-domain $DOMAIN --request-id p3 --wait
+job-id THIRD
+# A dry-run continuation can never authorize mutation.
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --page-size 1
+json-field next_page_token DRY
+! skygo jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --page-size 1 --page-token $DRY --yes
+stderr 'invalid_argument'
+# One actual page removes the oldest subject and leaves a sparse first ordinal.
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --page-size 1 --yes
+stdout '"marked": *1'
+json-field next_page_token PRUNE
+# Tokens bind operation and Execute, not just the age selector.
+! skygo jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --page-size 1 --page-token $PRUNE
+stderr 'invalid_argument'
+! skygo jobs prune --before 9999-12-31T23:59:59Z --logs-only --page-size 1 --page-token $PRUNE --yes
+stderr 'invalid_argument'
+skygo --json jobs list --page-size 1
+jobs-exact $SECOND
+json-field next_page_token NEXT
+! skygo jobs retention --page-token $NEXT
+stderr 'invalid_argument'
+# A later insert is excluded from this already-captured highwater.
+skygo --json run -f task.json --request-domain $DOMAIN --request-id p4 --wait
+job-id FOURTH
+skygo --json jobs list --page-size 1 --page-token $NEXT
+jobs-exact $THIRD
+! stdout '"next_page_token"'
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *3'
+skygo --json jobs list --page-size 2
+jobs-exact
+! stdout '"next_page_token"'
+# Removing every row must not reset the sequence or resurrect an old snapshot.
+skygo --json run -f task.json --request-domain $DOMAIN --request-id p5 --wait
+job-id FIFTH
+skygo --json jobs list --page-size 1 --page-token $NEXT
+jobs-exact
+! stdout '"next_page_token"'
+skygo --json jobs list --page-size 2
+jobs-exact $FIFTH
+event-count 5
+server stop
+! stderr .

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
@@ -29,7 +30,7 @@ func exampleControl() (*control.Control, func()) {
 		os.RemoveAll(dir)
 		panic(err)
 	}
-	c, err := control.New(s, []backend.Target{{Name: "local", Binding: "test-binding", Kind: "local", Backend: b}}, testEngine)
+	c, err := control.NewWithLocalOutput(s, []backend.Target{{Name: "local", Binding: "test-binding", Kind: "local", Backend: b}}, testEngine, control.LocalOutputConfig{})
 	if err != nil {
 		b.Close()
 		s.Close()
@@ -162,4 +163,81 @@ func ExampleControl_QuoteTask() {
 	plan, err := c.QuoteTask(testActor(), backend.Task{Argv: []string{"trainer"}}, "USD", backend.TargetHour, nil)
 	fmt.Println(plan.Outcome, plan.SelectedTarget, len(plan.Candidates), err)
 	// Output: no_comparable_quote  1 <nil>
+}
+
+func ExampleControl_RetentionInfo() {
+	c, close := exampleControl()
+	defer close()
+	view, err := c.RetentionInfo(testActor(), 0, "")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(view.Info.Enabled, len(view.Targets), view.Admin != nil)
+	// Output: false 1 true
+}
+
+func ExampleControl_SubmitRetained() {
+	c, close := exampleControl()
+	defer close()
+	// Explicit domains are accepted only after stopped-state retention enable.
+	domain := store.RequestDomain{Lineage: "11111111111111111111111111111111", Epoch: 1}
+	_, err := c.SubmitRetained(testActor(), domain, "training-1", backend.Task{Argv: []string{"trainer"}})
+	fmt.Println(errors.Is(err, store.ErrRetentionDisabled))
+	// Output: true
+}
+
+func ExampleControl_Prune() {
+	c, close := exampleControl()
+	defer close()
+	_, _, err := c.Prune(context.Background(), testActor(), store.PruneSelection{Before: time.Now()}, false, "")
+	fmt.Println(errors.Is(err, store.ErrRetentionDisabled))
+	// Output: true
+}
+
+func ExampleControl_OpenLogs() {
+	c, close := exampleControl()
+	defer close()
+	job, err := c.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}})
+	if err != nil {
+		panic(err)
+	}
+	lease, err := c.OpenLogs(testActor(), job.ID, 0, "", 0)
+	if err != nil {
+		panic(err)
+	}
+	defer lease.Close() // Streaming transports wait for response completion first.
+	fmt.Println(lease.AttemptID() == job.ID, lease.Offset(), lease.Check(testActor()))
+	chunk, err := lease.Read(context.Background(), testActor(), lease.Offset())
+	fmt.Println(len(chunk.Data), err)
+	cursor, err := lease.Cursor(12)
+	if err != nil {
+		panic(err)
+	}
+	resumed, err := c.OpenLogs(testActor(), job.ID, 0, cursor, 0)
+	if err != nil {
+		panic(err)
+	}
+	defer resumed.Close()
+	fmt.Println(resumed.AttemptID() == lease.AttemptID(), resumed.Offset())
+	// Output:
+	// true 0 <nil>
+	// 0 <nil>
+	// true 12
+}
+
+func ExampleControl_StorageReady() {
+	c, close := exampleControl()
+	defer close()
+	// Disabled retention has no physical sampling prerequisite.
+	fmt.Println(c.StorageReady())
+	// Output: true
+}
+
+func ExampleNewWithLocalOutput() {
+	c, close := exampleControl()
+	defer close()
+	// Zero configuration is sufficient when retention is disabled.
+	view, err := c.RetentionInfo(testActor(), 0, "")
+	fmt.Println(view.Info.Enabled, err)
+	// Output: false <nil>
 }

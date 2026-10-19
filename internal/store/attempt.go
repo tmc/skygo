@@ -41,7 +41,17 @@ func acceptAttempts(tx *bolt.Tx, j *backend.Job) error {
 	}
 	used := binary.BigEndian.Uint64(raw)
 	reserve := uint64(j.Task.Retry.MaxAttempts) * maxAttemptBytes
-	if used > maxRetryBytes || reserve > maxRetryBytes-used {
+	if used > maxRetryBytes {
+		return ErrFull
+	}
+	if reserve > maxRetryBytes-used {
+		st, err := loadRetention(tx)
+		if err != nil {
+			return err
+		}
+		if st.Enabled {
+			return &CapacityError{Domain: RetryBytesQuota, Used: used, Limit: st.Policy.RetryBytes}
+		}
 		return ErrFull
 	}
 	j.Attempts = []backend.Attempt{{ID: j.ID, Status: j.Status, CreatedAt: j.CreatedAt}}
@@ -55,14 +65,14 @@ func acceptAttempts(tx *bolt.Tx, j *backend.Job) error {
 // expected ID returns the current job unchanged. Cancellation of queued or
 // waiting work settles before checking its retry deadline and allocates no ID.
 // The caller must check placement and execution capacity before uncanceled calls.
-func (s *Store) BeginAttempt(jobID, expectedAttemptID string, now time.Time) (j backend.Job, start bool, err error) {
+func (s *Store) BeginAttempt(jobID, expectedAttemptID string, outputReserve uint64, now time.Time) (j backend.Job, start bool, err error) {
 	candidate, err := newID()
 	if err != nil {
 		return j, false, err
 	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		var e error
-		j, start, e = beginAttempt(tx, jobID, expectedAttemptID, candidate, now.UTC())
+		j, start, e = beginAttempt(tx, jobID, expectedAttemptID, candidate, outputReserve, now.UTC())
 		return e
 	})
 	if err != nil {
@@ -71,7 +81,7 @@ func (s *Store) BeginAttempt(jobID, expectedAttemptID string, now time.Time) (j 
 	return
 }
 
-func beginAttempt(tx *bolt.Tx, id, expected, candidate string, now time.Time) (j backend.Job, start bool, err error) {
+func beginAttempt(tx *bolt.Tx, id, expected, candidate string, outputReserve uint64, now time.Time) (j backend.Job, start bool, err error) {
 	j, err = get(tx, id)
 	if err != nil || j.CurrentAttemptID() != expected {
 		return
@@ -106,6 +116,9 @@ func beginAttempt(tx *bolt.Tx, id, expected, candidate string, now time.Time) (j
 		j.Status = backend.Status{State: backend.Starting}
 		j.Attempts = append(j.Attempts, backend.Attempt{ID: candidate, Status: j.Status, CreatedAt: now, StartingAt: &now})
 		j.NextAttemptAt = nil
+		if err = adjust(tx, MetadataBytesQuota, 64, 0); err != nil {
+			return j, false, err
+		}
 		if err = tx.Bucket(attemptJobsBucket).Put([]byte(candidate), []byte(id)); err != nil {
 			return j, false, err
 		}
@@ -118,6 +131,11 @@ func beginAttempt(tx *bolt.Tx, id, expected, candidate string, now time.Time) (j
 			a.StartingAt = &now
 		}
 		start = true
+	}
+	if start {
+		if err = reserveOutput(tx, j, outputReserve); err != nil {
+			return j, false, err
+		}
 	}
 	j.UpdatedAt = now
 	err = putAttemptJob(tx, j)
@@ -200,7 +218,8 @@ func putAttemptJob(tx *bolt.Tx, j backend.Job) error {
 	if err != nil {
 		return err
 	}
-	return tx.Bucket(jobsBucket).Put([]byte(j.ID), data)
+	_ = data
+	return putTrackedJob(tx, j)
 }
 
 func validateUpdate(before, after backend.Job) error {

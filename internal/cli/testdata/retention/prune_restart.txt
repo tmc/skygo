@@ -1,0 +1,49 @@
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+server start
+taskfile task.json success
+skygo --json run -f task.json --request-domain $DOMAIN --request-id restart-prune --wait
+job-id JOB
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *1'
+server stop
+server start
+! skygo run -f task.json --request-domain $DOMAIN --request-id restart-prune
+stderr 'result expired'
+await-usage JOBS 0
+event-count 1
+skygo --json jobs retention
+! stdout 'private-task-value'
+# Preserve a genuine outstanding output operation through actual daemon restarts.
+# The private permission barrier prevents successful unlink before restoration.
+[non-root] json-field admin.obligations.0.id OBLIGATION
+[non-root] retention-usage CLEANUP_RECORDS 1
+[non-root] output-permission deny
+[non-root] skygo --json jobs prune --logs-only --obligation $OBLIGATION --yes
+[non-root] stdout '"marked": *1'
+[non-root] skygo --json jobs retention
+[non-root] stdout '"pending_cleanup_records": *"1"'
+[non-root] retention-usage CLEANUP_RECORDS 2
+[non-root] exists $DATA/logs/$JOB.log
+server stop
+! stderr .
+[non-root] cleanup-checkpoint save $JOB pending.json
+[non-root] server start
+[non-root] skygo --json jobs retention
+[non-root] stdout '"pending_cleanup_records": *"1"'
+[non-root] retention-usage CLEANUP_RECORDS 2
+[non-root] exists $DATA/logs/$JOB.log
+[non-root] server stop
+[non-root] cleanup-checkpoint same $JOB pending.json
+[non-root] output-permission restore
+[non-root] server start
+[non-root] await-usage OUTPUT_BYTES 0
+[non-root] ! exists $DATA/logs/$JOB.log
+[non-root] skygo --json jobs retention
+[non-root] ! stdout '"pending_cleanup_records"'
+[non-root] stdout '"needs_manual": *true'
+[non-root] ! stdout '"output_pending": *true'
+[non-root] retention-usage CLEANUP_RECORDS 1
+[non-root] event-count 1
+[non-root] server stop
+! stderr .

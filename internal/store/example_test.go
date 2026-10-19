@@ -227,7 +227,7 @@ func ExampleStore_ListFor() {
 	s, actor, close := exampleScopedStore()
 	defer close()
 	jobs, err := s.ListFor(actor, 0, 10, 10)
-	fmt.Println(len(jobs), err)
+	fmt.Println(len(jobs.Jobs), err)
 	// Output: 0 <nil>
 }
 
@@ -271,7 +271,7 @@ func ExampleStore_BeginAttempt() {
 	if err != nil {
 		panic(err)
 	}
-	job, start, err := s.BeginAttempt(job.ID, job.CurrentAttemptID(), job.CreatedAt)
+	job, start, err := s.BeginAttempt(job.ID, job.CurrentAttemptID(), 0, job.CreatedAt)
 	fmt.Println(job.Status.State, start, err)
 	// Output: starting true <nil>
 }
@@ -284,7 +284,7 @@ func ExampleStore_ObserveAttempt() {
 	if err != nil {
 		panic(err)
 	}
-	job, _, err = s.BeginAttempt(job.ID, job.ID, job.CreatedAt)
+	job, _, err = s.BeginAttempt(job.ID, job.ID, 0, job.CreatedAt)
 	if err != nil {
 		panic(err)
 	}
@@ -293,4 +293,21 @@ func ExampleStore_ObserveAttempt() {
 	job, err = s.ObserveAttempt(job.ID, job.CurrentAttemptID(), status, job.CreatedAt)
 	fmt.Println(job.Status.State, len(job.Attempts), job.NextAttemptAt != nil, err)
 	// Output: retrying 1 true <nil>
+}
+
+func ExampleRevalidateLocalOutput() {
+	dir, err := os.MkdirTemp("", "skygo-retention-example-")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	before, err := store.EnableRetention(dir, store.DefaultRetentionPolicy())
+	if err != nil {
+		panic(err)
+	}
+	// The offline caller has explicitly stopped and acknowledged local writers.
+	// Revalidation updates filesystem facts without issuing a new request domain.
+	info, err := store.RevalidateLocalOutput(dir)
+	fmt.Println(info.Enabled, info.Domain == before.Domain, err)
+	// Output: true true <nil>
 }

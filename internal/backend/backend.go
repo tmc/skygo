@@ -130,6 +130,9 @@ type Backend interface {
 }
 
 // Target binds a configured name and kind to an executor.
+// Retention and output facts come from the actual constructor; their zero values
+// do not imply remote storage or cleanup support. OutputReservation is the fixed
+// local charge in bytes, or zero for explicitly remote output.
 type Target struct {
 	Advice                 *TargetAdvice
 	Name                   string
@@ -141,4 +144,7 @@ type Target struct {
 	SupportsResourceLimits bool
 	SupportsNodeSelector   bool
 	SupportsRetry          bool
+	Retention              *Retention
+	OutputStorage          OutputStorage
+	OutputReservation      uint64
 }

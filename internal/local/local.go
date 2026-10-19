@@ -28,24 +28,29 @@ type Backend struct {
 	retryOps       retryProcessOps
 	retryAvailable bool
 	defaultOps     defaultProcessOps
+	retention      *retentionState
 }
 
 type execution struct {
-	cmd    *exec.Cmd
-	status backend.Status
-	done   chan struct{}
-	output *output
-	retry  *retryExecution
-	owned  *defaultExecution
+	cmd      *exec.Cmd
+	status   backend.Status
+	done     chan struct{}
+	output   *output
+	retry    *retryExecution
+	owned    *defaultExecution
+	retained *retainedOutput
 }
 
 type output struct {
-	mu        sync.Mutex
-	file      *os.File
-	marker    string
-	size      int64
-	truncated bool
-	err       error
+	mu             sync.Mutex
+	file           *os.File
+	marker         string
+	size           int64
+	truncated      bool
+	err            error
+	markerCloseErr error
+	closed         bool
+	retained       *retainedOutput
 }
 
 // New opens a private directory for retained output.
@@ -124,12 +129,24 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if _, ok := b.jobs[id]; ok {
 		return errors.New("job already started")
 	}
+	if err := b.admitOutput(ctx, id, t); err != nil {
+		return err
+	}
 	// Exclusive creation also fences a repeated start after backend restart.
 	f, err := os.OpenFile(filepath.Join(b.directory, id+".log"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return fmt.Errorf("create job output: %w", err)
 	}
 	out := &output{file: f, marker: filepath.Join(b.directory, id+".truncated")}
+	if b.retention != nil {
+		out.retained = b.retention.outputs[id]
+		info, err := f.Stat()
+		if err != nil {
+			b.closeUnstartedOutput(out)
+			return fmt.Errorf("identify output file: %w", err)
+		}
+		out.retained.log = info
+	}
 	cmd := exec.Command(t.Argv[0], t.Argv[1:]...)
 	cmd.Dir = t.Directory
 	cmd.Env = os.Environ()
@@ -273,7 +290,20 @@ func (o *output) Write(p []byte) (int, error) {
 	}
 	if int64(n) > keep && !o.truncated {
 		o.truncated = true
-		o.err = os.WriteFile(o.marker, []byte("truncated\n"), 0600)
+		if o.retained == nil {
+			o.err = os.WriteFile(o.marker, []byte("truncated\n"), 0600)
+		} else {
+			f, err := os.OpenFile(o.marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+			if err == nil {
+				_, err = f.Write([]byte("truncated\n"))
+				info, statErr := f.Stat()
+				closeErr := f.Close()
+				o.markerCloseErr = closeErr
+				o.retained.marker = info
+				err = errors.Join(err, statErr, closeErr)
+			}
+			o.err = err
+		}
 	}
 	return n, nil
 }
@@ -294,7 +324,35 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if err != nil {
 		return backend.LogChunk{}, err
 	}
-	f, err := os.Open(filepath.Join(b.directory, id+".log"))
+	var expected, expectedMarker os.FileInfo
+	var closedDomain bool
+	if b.retention != nil {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if err := b.checkOutputRoot(); err != nil {
+			return backend.LogChunk{}, err
+		}
+		domain := b.retention.outputs[id]
+		if domain == nil {
+			if e := b.jobs[id]; e != nil {
+				domain = e.retained
+			}
+		}
+		if domain == nil || domain.removed {
+			return backend.LogChunk{}, fs.ErrNotExist
+		}
+		expected = domain.log
+		closedDomain = domain.closed
+		if closedDomain {
+			expectedMarker = domain.marker
+		}
+	}
+	var f *os.File
+	if b.retention != nil {
+		f, err = openRetainedOutput(filepath.Join(b.directory, id+".log"))
+	} else {
+		f, err = os.Open(filepath.Join(b.directory, id+".log"))
+	}
 	if err != nil {
 		return backend.LogChunk{}, fmt.Errorf("open output: %w", err)
 	}
@@ -302,6 +360,9 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	info, err := f.Stat()
 	if err != nil {
 		return backend.LogChunk{}, err
+	}
+	if b.retention != nil && (expected == nil || !info.Mode().IsRegular() || !os.SameFile(expected, info)) {
+		return backend.LogChunk{}, backend.ErrIdentityMismatch
 	}
 	if offset > info.Size() {
 		return backend.LogChunk{}, fmt.Errorf("%w: offset exceeds retained output", fs.ErrInvalid)
@@ -311,8 +372,21 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if err != nil && !errors.Is(err, io.EOF) {
 		return backend.LogChunk{}, err
 	}
-	_, err = os.Stat(filepath.Join(b.directory, id+".truncated"))
+	var marker os.FileInfo
+	if b.retention != nil {
+		marker, err = os.Lstat(filepath.Join(b.directory, id+".truncated"))
+	} else {
+		marker, err = os.Stat(filepath.Join(b.directory, id+".truncated"))
+	}
 	truncated := err == nil
+	if b.retention != nil {
+		if err == nil && (!marker.Mode().IsRegular() || closedDomain && (expectedMarker == nil || !os.SameFile(expectedMarker, marker))) {
+			return backend.LogChunk{}, backend.ErrIdentityMismatch
+		}
+		if errors.Is(err, fs.ErrNotExist) && closedDomain && expectedMarker != nil {
+			return backend.LogChunk{}, backend.ErrIdentityMismatch
+		}
+	}
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return backend.LogChunk{}, err
 	}

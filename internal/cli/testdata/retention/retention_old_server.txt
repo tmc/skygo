@@ -1,0 +1,33 @@
+# The actual signed S05 daemon lacks retention methods.
+server start
+taskfile task.json success
+skygo --json run -f task.json --wait
+job-id JOB
+event-count 1
+calls GetRetention 1
+calls SubmitJob 1
+! skygo run -f task.json --request-domain 11111111111111111111111111111111:1 --request-id explicit
+stderr 'unimplemented'
+calls SubmitRetainedJob 1
+calls SubmitJob 1
+! skygo jobs retention
+stderr 'unimplemented'
+! skygo jobs prune --before 9999-12-31T23:59:59Z
+stderr 'unimplemented'
+! skygo jobs logs $JOB --cursor eA
+stderr 'unimplemented'
+calls StreamRetainedJobLogs 1
+calls StreamJobLogs 0
+calls PlanTask 0
+event-count 1
+skygo jobs logs $JOB
+stdout '^retained workload output\n$'
+calls StreamJobLogs 1
+# Genuine old retry method, without fallback from its actual reply (Linux).
+[linux-retry] taskfile retry.json failonce
+[linux-retry] skygo --json run -f retry.json --wait
+[linux-retry] calls SubmitRetryJob 1
+[linux-retry] calls SubmitJob 1
+[linux-retry] event-count 3
+server stop
+! stderr .

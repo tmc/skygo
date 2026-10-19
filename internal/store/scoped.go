@@ -82,7 +82,10 @@ func activateScoped(tx *bolt.Tx) error {
 	if err := m.Put(schemaKey, sequenceKey(schemaVersion)); err != nil {
 		return err
 	}
-	return validateScoped(tx)
+	if err := reindexRetentionScopes(tx); err != nil {
+		return err
+	}
+	return validateSnapshot(tx)
 }
 
 func (s *Store) authorize(actor auth.Actor, action auth.Action) error {
@@ -125,6 +128,13 @@ func (s *Store) GetFor(actor auth.Actor, id string) (j backend.Job, err error) {
 		return
 	}
 	err = s.db.View(func(tx *bolt.Tx) error {
+		if tx.Bucket(jobsBucket).Get([]byte(id)) == nil {
+			var witness string
+			if loadJSON(retentionTable(tx, resultWitnessBucket), []byte(id), &witness) == nil && (actor.Role() == auth.Admin || witness == actor.Principal()) {
+				return &ExpiryError{Reason: ResultExpired, JobID: id}
+			}
+			return ErrNotFound
+		}
 		if !visible(tx, actor, id) {
 			return ErrNotFound
 		}
@@ -159,12 +169,12 @@ func (s *Store) LastSequenceFor(actor auth.Actor) (n uint64, err error) {
 
 // ListFor lists only the authenticated scope, using its own acceptance index.
 // after and max use LastSequenceFor's scope; accepted Job.Sequence is unchanged.
-func (s *Store) ListFor(actor auth.Actor, after, max uint64, limit int) (out []backend.Job, err error) {
+func (s *Store) ListFor(actor auth.Actor, after, max uint64, limit int) (out Page, err error) {
 	if err = s.authorize(actor, auth.Read); err != nil {
 		return
 	}
-	if limit <= 0 {
-		return nil, errors.New("list limit must be positive")
+	if limit < 1 || limit > 200 {
+		return out, errors.New("list limit outside 1..200")
 	}
 	err = s.db.View(func(tx *bolt.Tx) error {
 		b := scopeIndex(tx, actor)
@@ -172,11 +182,16 @@ func (s *Store) ListFor(actor auth.Actor, after, max uint64, limit int) (out []b
 			return nil
 		}
 		c := b.Cursor()
-		for k, id := c.Seek(sequenceKey(after + 1)); k != nil && len(out) < limit; k, id = c.Next() {
+		for k, id := c.Seek(sequenceKey(after + 1)); k != nil; k, id = c.Next() {
 			if len(k) != 8 {
-				return errors.New("invalid principal index")
+				return errors.New("invalid scope index")
 			}
-			if binary.BigEndian.Uint64(k) > max {
+			n := binary.BigEndian.Uint64(k)
+			if n > max {
+				break
+			}
+			if len(out.Jobs) == limit {
+				out.More = true
 				break
 			}
 			if !visible(tx, actor, string(id)) {
@@ -186,7 +201,8 @@ func (s *Store) ListFor(actor auth.Actor, after, max uint64, limit int) (out []b
 			if e != nil {
 				return e
 			}
-			out = append(out, j)
+			out.Jobs = append(out.Jobs, j)
+			out.After = n
 		}
 		return nil
 	})
@@ -211,6 +227,9 @@ func (s *Store) UpdateFor(actor auth.Actor, id string, fn func(*backend.Job) err
 }
 
 func validateScoped(tx *bolt.Tx) error {
+	if schemaNumber(tx) >= 5 {
+		return validateScopedSparse(tx)
+	}
 	m := tx.Bucket(metadataBucket)
 	n := uint64(0)
 	if v := m.Get(schemaKey); len(v) == 8 {
@@ -232,7 +251,7 @@ func validateScoped(tx *bolt.Tx) error {
 		}
 		return nil
 	}
-	if n != 2 && n != 3 && n != schemaVersion {
+	if n != 2 && n != 3 && n != 4 && n != schemaVersion {
 		return errors.New("scoped mode requires a supported format")
 	}
 	owners, requests, indexes := tx.Bucket(jobPrincipalsBucket), tx.Bucket(principalRequestsBucket), tx.Bucket(principalIndexBucket)

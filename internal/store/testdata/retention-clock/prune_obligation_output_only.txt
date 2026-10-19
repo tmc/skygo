@@ -1,0 +1,34 @@
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json success
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id one --wait
+json-value id JOB
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *1'
+assert-output 0
+assert-native 0
+skygo --json jobs retention
+json-value admin.obligations.0.id OBLIGATION
+usage OUTPUT_BYTES PRESERVED
+positive-env PRESERVED
+stdout '"needs_manual": *true'
+! stdout 'must-not-appear'
+# This is the actual header created by metadata-only mark, not a forged row.
+! skygo jobs prune --logs-only --obligation $OBLIGATION --before 9999-12-31T23:59:59Z
+stderr .
+skygo --json jobs prune --logs-only --obligation $OBLIGATION
+stdout '"selected": *1'
+stdout '"executed": *false'
+assert-output 0
+skygo --json jobs prune --logs-only --obligation $OBLIGATION --yes
+stdout '"marked": *1'
+await-output-usage 0
+! exists $DATA/logs/$JOB.log
+skygo --json jobs retention
+stdout '"needs_manual": *true'
+! stdout '"output_pending": *true'
+! stdout 'must-not-appear'
+! skygo jobs get $JOB
+stderr 'result expired'
+assert-native 0

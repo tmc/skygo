@@ -40,7 +40,7 @@ func TestAttemptMigrationPreservesHistoricalRows(t *testing.T) {
 				t.Fatal("migration changed auth mode")
 			}
 			if err := s.db.View(func(tx *bolt.Tx) error {
-				if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(4)) || !bytes.Equal(tx.Bucket(metadataBucket).Get(retryBytesKey), sequenceKey(0)) || tx.Bucket(attemptJobsBucket) == nil || tx.Bucket(attemptJobsBucket).Stats().KeyN != 0 {
+				if !bytes.Equal(tx.Bucket(metadataBucket).Get(schemaKey), sequenceKey(schemaVersion)) || !bytes.Equal(tx.Bucket(metadataBucket).Get(retryBytesKey), sequenceKey(0)) || tx.Bucket(attemptJobsBucket) == nil || tx.Bucket(attemptJobsBucket).Stats().KeyN != 0 {
 					t.Fatal("new format metadata missing")
 				}
 				return tx.Bucket(jobsBucket).ForEach(func(_, raw []byte) error {
@@ -112,7 +112,7 @@ func TestAttemptMalformedStateRefusedWithoutWrites(t *testing.T) {
 			return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(3))
 		}},
 		{"future", func(tx *bolt.Tx, _ backend.Job) error {
-			return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5))
+			return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion+1))
 		}},
 	}
 	for _, test := range cases {
@@ -216,7 +216,7 @@ func TestAttemptUnstartedExecutionMetadataRefused(t *testing.T) {
 						if err != nil {
 							t.Fatal(err)
 						}
-						j, _, err = s.BeginAttempt(j.ID, j.ID, j.CreatedAt.Add(time.Second))
+						j, _, err = s.BeginAttempt(j.ID, j.ID, 0, j.CreatedAt.Add(time.Second))
 						if err != nil {
 							t.Fatal(err)
 						}

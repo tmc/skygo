@@ -31,4 +31,14 @@
 //
 // Pod log reads have no atomic UID precondition; metadata checks do not eliminate
 // the race with a privileged writer replacing a Pod before its log request.
+//
+// Retention identifies remote output with no local output callbacks or charge.
+// Execution cleanup supports only directly owned retry Pods. Its trusted caller
+// must first validate a persisted NativeExecution intent containing accepted
+// stopped evidence, full task and pinned UID; no RPC supplies that authority.
+// A present Pod must retain the same complete stopped identity. UID-preconditioned
+// deletion and confirmed absence permit receipt retirement. Missing after the
+// durable intent is idempotent cleanup, never new stopped proof. Default Jobs and
+// success without stopped proof require manual reconciliation. Native cleanup
+// qualification is separate from these enforced constructor mechanics.
 package kube

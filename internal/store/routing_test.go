@@ -433,7 +433,7 @@ func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
 	}
 	var out []fixtureBucket
 	for _, b := range buckets {
-		if bytes.Equal(b.Name, attemptJobsBucket) {
+		if bytes.Equal(b.Name, attemptJobsBucket) || bytes.Equal(b.Name, retentionBucket) {
 			continue
 		}
 		if bytes.Equal(b.Name, metadataBucket) {

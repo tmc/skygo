@@ -35,10 +35,12 @@ func systemRetryProcessOps() retryProcessOps {
 }
 
 type retryExecution struct {
-	reader   *os.File
-	readDone chan error
-	reaped   chan struct{}
-	startErr error
+	reader       *os.File
+	readDone     chan error
+	outputDone   chan struct{}
+	reaped       chan struct{}
+	startErr     error
+	handleClosed bool
 	// All fields below are protected by Backend.mu. Once reaping is set, no
 	// cancellation, timer or shutdown path may signal the group again.
 	reaping bool
@@ -57,27 +59,32 @@ func checkInstance(e *execution, instance string) error {
 func (b *Backend) startRetry(cmd *exec.Cmd, out *output, id string, seconds int64) error {
 	var token [16]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		out.file.Close()
+		b.closeUnstartedOutput(out)
 		return fmt.Errorf("create execution identity: %w", err)
 	}
 	reader, writer, err := os.Pipe()
 	if err != nil {
-		out.file.Close()
+		b.closeUnstartedOutput(out)
 		return fmt.Errorf("create output pipe: %w", err)
 	}
 	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = writer, writer, 0
 	b.retryOps.prepare(cmd)
 	e := &execution{cmd: cmd, status: backend.Status{State: backend.Starting, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), output: out,
-		retry: &retryExecution{reader: reader, readDone: make(chan error, 1), reaped: make(chan struct{})}}
+		retry: &retryExecution{reader: reader, readDone: make(chan error, 1), outputDone: make(chan struct{}), reaped: make(chan struct{})}}
 	b.jobs[id] = e
+	b.attachRetention(e, id)
 	if err := cmd.Start(); err != nil {
-		releaseRetry(cmd)
+		e.retry.handleClosed = releaseRetry(cmd) == nil
 		reader.Close()
 		writer.Close()
-		out.file.Close()
+		if err := out.file.Close(); err == nil {
+			out.closed = true
+		}
 		e.status.State, e.status.Reason = backend.Failed, retryReason("start: "+err.Error())
-		close(e.done)
 		close(e.retry.reaped)
+		close(e.retry.outputDone)
+		b.finishPayload(e)
+		close(e.done)
 		return fmt.Errorf("start program: %w", err)
 	}
 	writer.Close()
@@ -97,7 +104,7 @@ func (b *Backend) startRetry(cmd *exec.Cmd, out *output, id string, seconds int6
 }
 
 func readRetryOutput(e *execution) {
-	defer e.retry.reader.Close()
+	defer close(e.retry.outputDone)
 	// Keep draining after a retention failure so a full pipe cannot strand the
 	// leader. The first retention error is sticky and forbids positive evidence.
 	buf := make([]byte, 32<<10)
@@ -112,6 +119,7 @@ func readRetryOutput(e *execution) {
 			if errors.Is(err, io.EOF) {
 				err = nil
 			}
+			e.retry.reader.Close()
 			e.retry.readDone <- err
 			return
 		}
@@ -160,12 +168,19 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 		abortErr = abortRetry(e.cmd)
 		e.retry.reader.Close()
 	}
-	releaseRetry(e.cmd)
+	e.retry.handleClosed = releaseRetry(e.cmd) == nil
 	waitResult := make(chan error, 1)
 	go func() {
 		err := e.cmd.Wait() // Sole reaper; group signals are permanently fenced.
 		close(e.retry.reaped)
 		waitResult <- err
+		b.mu.Lock()
+		select {
+		case <-e.done:
+			b.finishPayload(e)
+		default:
+		}
+		b.mu.Unlock()
 	}()
 	var waitErr error
 	reaped := true
@@ -194,6 +209,7 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 		e.retry.reader.Close()
 		<-e.retry.readDone
 	}
+	<-e.retry.outputDone
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if reaped && e.cmd.ProcessState != nil {
@@ -226,8 +242,12 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 	}
 	e.output.mu.Lock()
 	outputErr := e.output.err
-	if err := e.output.file.Close(); outputErr == nil {
-		outputErr = err
+	closeErr := e.output.file.Close()
+	if closeErr == nil {
+		e.output.closed = true
+	}
+	if outputErr == nil {
+		outputErr = closeErr
 	}
 	e.output.mu.Unlock()
 	if outputErr != nil && !e.retry.intent {
@@ -241,6 +261,7 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 	if ordinaryWait && !e.retry.intent && pinErr == nil && killErr == nil && absentErr == nil && readErr == nil && outputErr == nil && e.status.ExitCode != nil && *e.status.ExitCode >= 0 {
 		e.status.Termination = backend.StoppedWithExitCode
 	}
+	b.finishPayload(e)
 	close(e.done)
 }
 

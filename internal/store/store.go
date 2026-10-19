@@ -38,6 +38,7 @@ type Store struct {
 	db     *bolt.DB
 	owner  string
 	scoped bool
+	now    func() time.Time
 }
 
 // Open opens or initializes a database in dir. Another writer is refused after
@@ -50,7 +51,7 @@ func Open(dir string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open job database: %w", err)
 	}
-	s := &Store{db: db}
+	s := &Store{db: db, now: func() time.Time { return time.Now().UTC() }}
 	// bbolt may flush an unsynced freelist during Open. Defer that write until
 	// the schema has been accepted while holding the exclusive writer lock.
 	err = db.View(validateExisting)
@@ -146,7 +147,31 @@ func (s *Store) Lookup(actor auth.Actor, requestID string, task backend.Task) (j
 	if err != nil {
 		return
 	}
-	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, found, e = lookup(tx, actor, requestID, task); return e })
+	var enabled bool
+	err = s.db.View(func(tx *bolt.Tx) error {
+		st, e := loadRetention(tx)
+		if e != nil {
+			return e
+		}
+		enabled = st.Enabled
+		if enabled {
+			return nil
+		}
+		j, found, e = lookup(tx, actor, requestID, task)
+		return e
+	})
+	if err != nil || !enabled {
+		return
+	}
+	var result error
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		var e error
+		j, found, result, e = legacyLookup(tx, actor, requestID, task, s.now())
+		return e
+	})
+	if err == nil {
+		err = result
+	}
 	return
 }
 
@@ -165,12 +190,22 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 	if err != nil || found {
 		return existing, err
 	}
+	if !validRetainedRequestID(requestID) {
+		return backend.Job{}, errors.New("invalid request ID")
+	}
 	id, err := newID()
 	if err != nil {
 		return backend.Job{}, err
 	}
 	now := time.Now().UTC()
 	err = s.db.Update(func(tx *bolt.Tx) error {
+		st, e := loadRetention(tx)
+		if e != nil {
+			return e
+		}
+		if st.Enabled {
+			return &ExpiryError{Reason: RequestDomainRequired}
+		}
 		existing, found, e := lookup(tx, actor, requestID, task)
 		if e != nil {
 			return e
@@ -244,6 +279,9 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 			return e
 		}
 		// Decode a fresh value so callers cannot mutate task maps owned by others.
+		if e = trackLegacyAccepted(tx, accepted, actor.Principal(), requestID); e != nil {
+			return e
+		}
 		return json.Unmarshal(data, &j)
 	})
 	return
@@ -327,11 +365,10 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 		return j, e
 	}
 	j.UpdatedAt = time.Now().UTC()
-	data, e := json.Marshal(j)
-	if e != nil {
-		return j, e
+	if j.Status.Reason != boundedReason(j.Status.Reason) {
+		j.Status.Reason = boundedReason(j.Status.Reason)
 	}
-	if e = tx.Bucket(jobsBucket).Put([]byte(id), data); e != nil {
+	if e = putTrackedJob(tx, j); e != nil {
 		return j, e
 	}
 	return get(tx, id)

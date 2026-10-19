@@ -26,7 +26,7 @@ func retryJob(t *testing.T, s *Store, request string, delay uint32) backend.Job 
 }
 func beginTest(t *testing.T, s *Store, j backend.Job, now time.Time) backend.Job {
 	t.Helper()
-	got, start, err := s.BeginAttempt(j.ID, j.CurrentAttemptID(), now)
+	got, start, err := s.BeginAttempt(j.ID, j.CurrentAttemptID(), 0, now)
 	if err != nil || !start {
 		t.Fatalf("begin: %v %v %+v", start, err, got)
 	}
@@ -61,7 +61,7 @@ func TestAttemptLifecycle(t *testing.T) {
 		t.Fatal(j)
 	}
 	j = beginTest(t, s, j, now)
-	if _, start, err := s.BeginAttempt(j.ID, j.ID, now); err != nil || start {
+	if _, start, err := s.BeginAttempt(j.ID, j.ID, 0, now); err != nil || start {
 		t.Fatalf("duplicate begin %v %v", start, err)
 	}
 	j = failTest(t, s, j, now.Add(time.Second))
@@ -72,7 +72,7 @@ func TestAttemptLifecycle(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(j, same) {
 		t.Fatalf("duplicate resets deadline %v", err)
 	}
-	if _, start, err := s.BeginAttempt(j.ID, j.ID, now.Add(time.Second)); err != nil || start {
+	if _, start, err := s.BeginAttempt(j.ID, j.ID, 0, now.Add(time.Second)); err != nil || start {
 		t.Fatalf("early begin %v %v", start, err)
 	}
 	first := j.Attempts[0]
@@ -115,11 +115,11 @@ func TestAttemptCancellationBeforeDue(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			stale, start, err := s.BeginAttempt(j.ID, "stale", now)
+			stale, start, err := s.BeginAttempt(j.ID, "stale", 0, now)
 			if err != nil || start || !reflect.DeepEqual(stale, j) {
 				t.Fatalf("stale canceled wrong attempt: %v", err)
 			}
-			got, start, err := s.BeginAttempt(j.ID, j.CurrentAttemptID(), now)
+			got, start, err := s.BeginAttempt(j.ID, j.CurrentAttemptID(), 0, now)
 			if err != nil || start || got.Status.State != backend.Canceled || got.NextAttemptAt != nil || len(got.Attempts) != 1 {
 				t.Fatalf("cancel before deadline: %+v %v %v", got, start, err)
 			}
@@ -147,7 +147,7 @@ func TestAttemptSingleStartConcurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, start, err := s.BeginAttempt(j.ID, j.ID, now)
+			_, start, err := s.BeginAttempt(j.ID, j.ID, 0, now)
 			starts <- start
 			errs <- err
 		}()
@@ -307,7 +307,7 @@ func TestAttemptCollisionRollback(t *testing.T) {
 	j = failTest(t, s, beginTest(t, s, j, now), now)
 	for _, candidate := range []string{j.ID, "invalid"} {
 		err := s.db.Update(func(tx *bolt.Tx) error {
-			_, _, err := beginAttempt(tx, j.ID, j.ID, candidate, *j.NextAttemptAt)
+			_, _, err := beginAttempt(tx, j.ID, j.ID, candidate, 0, *j.NextAttemptAt)
 			return err
 		})
 		if err == nil {
@@ -318,7 +318,7 @@ func TestAttemptCollisionRollback(t *testing.T) {
 	candidate := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	injected := errors.New("after transition")
 	err := s.db.Update(func(tx *bolt.Tx) error {
-		_, start, err := beginAttempt(tx, j.ID, j.ID, candidate, *j.NextAttemptAt)
+		_, start, err := beginAttempt(tx, j.ID, j.ID, candidate, 0, *j.NextAttemptAt)
 		if err != nil {
 			return err
 		}

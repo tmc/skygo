@@ -1,0 +1,39 @@
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json success
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id known --wait
+json-value id JOB
+controller quiesce
+# Discovery is a view at the exact boundary; it cannot latch acceptance.
+clock accept
+db-save accept.db
+skygo --json jobs retention
+db-unchanged accept.db
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal
+stdout '"executed": *false'
+db-unchanged accept.db
+! skygo run -f task.json --request-domain $DOMAIN --request-id absent
+stderr 'request epoch expired'
+clock rollback
+! skygo run -f task.json --request-domain $DOMAIN --request-id absent
+stderr 'request epoch expired'
+skygo --json run -f task.json --request-domain $DOMAIN --request-id known
+json-value id REPLAY
+equal-env JOB REPLAY
+# The first request at RetryUntil retires before it answers.
+clock retry
+! skygo run -f task.json --request-domain $DOMAIN --request-id known
+stderr 'request epoch expired'
+reopen-store
+clock rollback
+! skygo run -f task.json --request-domain $DOMAIN --request-id known
+stderr 'request epoch expired'
+! skygo run -f task.json --request-domain $DOMAIN --request-id absent
+stderr 'request epoch expired'
+cmp starts one-start.txt
+assert-native 0
+assert-output 0
+
+-- one-start.txt --
+start

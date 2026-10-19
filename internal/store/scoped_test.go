@@ -100,11 +100,11 @@ func TestScopedNamespacesAndDenseIndex(t *testing.T) {
 		t.Fatalf("own highwater: %d %v", n, err)
 	}
 	own, err := f.s.ListFor(a, 0, n, 10)
-	if err != nil || len(own) != 2 || own[0].ID != first.ID || own[1].ID != second.ID {
+	if err != nil || len(own.Jobs) != 2 || own.Jobs[0].ID != first.ID || own.Jobs[1].ID != second.ID {
 		t.Fatalf("own list: %+v %v", own, err)
 	}
 	all, err := f.s.ListFor(admin, 0, 3, 10)
-	if err != nil || len(all) != 3 {
+	if err != nil || len(all.Jobs) != 3 {
 		t.Fatalf("admin list: %+v %v", all, err)
 	}
 	if _, err := f.s.GetFor(a, other.ID); !errors.Is(err, ErrNotFound) {

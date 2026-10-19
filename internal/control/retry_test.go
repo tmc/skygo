@@ -31,7 +31,7 @@ func acceptRetry(t *testing.T, s *store.Store, request string, delay uint32) bac
 }
 func beginAttempt(t *testing.T, s *store.Store, j backend.Job, now time.Time) backend.Job {
 	t.Helper()
-	started, ok, err := s.BeginAttempt(j.ID, j.CurrentAttemptID(), now)
+	started, ok, err := s.BeginAttempt(j.ID, j.CurrentAttemptID(), 0, now)
 	if err != nil || !ok {
 		t.Fatalf("begin attempt: %+v %v %v", started, ok, err)
 	}
@@ -278,9 +278,9 @@ func TestRetryRunStartsEachDurableAttemptOnce(t *testing.T) {
 }
 
 func TestRetryUncertaintyNeverSchedulesReplacement(t *testing.T) {
-	for _, status := range []backend.Status{{State: backend.Unknown}, {State: backend.Failed}, {State: backend.Failed, ExitCode: func() *int32 { v := int32(7); return &v }()}, {State: backend.Failed, ExitCode: func() *int32 { v := int32(8); return &v }(), Termination: backend.StoppedWithExitCode}} {
+	for i, status := range []backend.Status{{State: backend.Unknown}, {State: backend.Failed}, {State: backend.Failed, ExitCode: func() *int32 { v := int32(7); return &v }()}, {State: backend.Failed, ExitCode: func() *int32 { v := int32(8); return &v }(), Termination: backend.StoppedWithExitCode}} {
 		s := routeStore(t)
-		j := acceptRetry(t, s, fmt.Sprint("job-", status.Termination, status.ExitCode), 1)
+		j := acceptRetry(t, s, fmt.Sprintf("job-%d", i), 1)
 		j = beginAttempt(t, s, j, time.Now().UTC())
 		b := &routeBackend{}
 		target := retryTarget(b)

@@ -1,0 +1,40 @@
+# All policy validation is local and must precede creating/opening state.
+! skygo state retention enable --data-dir $DATA --request-window 59m
+stderr 'between 1h and 2160h'
+! skygo state retention enable --data-dir $DATA --request-window 2161h
+stderr 'between 1h and 2160h'
+! skygo state retention enable --data-dir $DATA --max-jobs 0
+! skygo state retention enable --data-dir $DATA --max-task-bytes 0
+! skygo state retention enable --data-dir $DATA --max-retry-bytes 0
+! skygo state retention enable --data-dir $DATA --max-metadata-bytes 0
+! skygo state retention enable --data-dir $DATA --max-request-records 0
+! skygo state retention enable --data-dir $DATA --max-request-bytes 0
+! skygo state retention enable --data-dir $DATA --max-cleanup-records 0
+! skygo state retention enable --data-dir $DATA --max-cleanup-bytes 0
+! skygo state retention enable --data-dir $DATA --max-output-bytes 0
+! skygo state retention enable --data-dir $DATA --max-output-domains 0
+! skygo state retention enable --data-dir $DATA --max-output-files 0
+! skygo state retention enable --data-dir $DATA --max-principal-scopes 0
+! skygo state retention enable --data-dir $DATA --max-jobs 10001
+stderr 'between 1 and 10000'
+! exists $DATA/jobs.db
+# Readiness uses the owned daemon directly, bypassing the counted proxy.
+server start
+taskfile task.json success
+! skygo run -f task.json --request-domain 11111111111111111111111111111111:0
+! skygo run -f task.json --request-domain 11111111111111111111111111111111:01
+! skygo run -f task.json --request-domain A1111111111111111111111111111111:1
+! skygo run -f task.json --request-domain 11111111111111111111111111111111:18446744073709551616
+! skygo jobs retention --page-size 101
+! skygo jobs prune --before invalid
+! skygo jobs prune --before 9999-12-31T23:59:59Z --metadata-only
+! skygo jobs prune --before 9999-12-31T23:59:59Z --ack-unverified-terminal
+! skygo jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --logs-only
+! skygo jobs logs 11111111111111111111111111111111 --attempt 0
+! skygo jobs logs 11111111111111111111111111111111 --attempt 11
+! skygo jobs logs 11111111111111111111111111111111 --offset -1
+! skygo jobs logs 11111111111111111111111111111111 --cursor opaque --offset 1
+calls all 0
+event-count 0
+server stop
+! stderr .

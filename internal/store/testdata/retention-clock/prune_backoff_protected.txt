@@ -1,0 +1,20 @@
+# Linux: first real attempt exits 7; no second execution before cancellation.
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json backoff
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id backoff
+json-value id JOB
+await-state $JOB retrying
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *0'
+stdout 'retry_backoff'
+cmp starts one-start.txt
+skygo jobs cancel $JOB --yes
+await-state $JOB canceled
+cmp starts one-start.txt
+assert-native 0
+assert-output 0
+
+-- one-start.txt --
+start

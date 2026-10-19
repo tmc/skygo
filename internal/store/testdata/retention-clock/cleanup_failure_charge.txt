@@ -1,0 +1,35 @@
+skygo --json jobs retention
+domain DOMAIN
+taskfile task.json success
+controller start
+skygo --json run -f task.json --request-domain $DOMAIN --request-id one --wait
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *1'
+skygo --json jobs retention
+json-value admin.obligations.0.id OBLIGATION
+usage OUTPUT_BYTES BEFORE
+positive-env BEFORE
+! stdout 'must-not-appear'
+output-permission deny
+skygo --json jobs prune --logs-only --obligation $OBLIGATION --yes
+stdout '"marked": *1'
+skygo --json jobs retention
+usage CLEANUP_RECORDS PENDING
+positive-env PENDING
+await-remove-failure
+skygo --json jobs retention
+usage OUTPUT_BYTES FAILED
+equal-env BEFORE FAILED
+usage CLEANUP_RECORDS FAILED_RECORDS
+equal-env PENDING FAILED_RECORDS
+stdout '"output_pending": *true'
+assert-native 0
+output-permission restore
+await-output-usage 0
+skygo --json jobs retention
+stdout '"needs_manual": *true'
+usage CLEANUP_RECORDS FINAL_RECORDS
+env HEADER_CHARGE=1
+equal-env FINAL_RECORDS HEADER_CHARGE
+! stdout '"output_pending": *true'
+assert-native 0

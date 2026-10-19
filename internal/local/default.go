@@ -39,19 +39,19 @@ type defaultHandle struct{ fd int }
 type defaultOutputResult struct{ readErr, retainErr, closeErr error }
 
 type defaultExecution struct {
-	reader     *os.File
-	outputDone chan struct{}
-	readDone   chan struct{}
-	reaped     chan struct{}
-	handle     defaultHandle
-	handleErr  error
+	reader       *os.File
+	outputDone   chan struct{}
+	readDone     chan struct{}
+	reaped       chan struct{}
+	handle       defaultHandle
+	handleErr    error
+	handleClosed bool
 	// Published before their respective completion channels close.
 	outputResult defaultOutputResult
 	waitErr      error
 	// All fields below are protected by Backend.mu.
 	signalClosed bool
 	intent       bool // first successful public cancellation/timeout delivery
-	requested    bool
 	cleanupErr   error
 }
 
@@ -60,22 +60,28 @@ type defaultExecution struct {
 func (b *Backend) startDefault(cmd *exec.Cmd, out *output, id string, seconds int64) error {
 	reader, writer, err := os.Pipe()
 	if err != nil {
-		out.file.Close()
+		b.closeUnstartedOutput(out)
 		return fmt.Errorf("create output pipe: %w", err)
 	}
 	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = writer, writer, 0
 	e := &execution{cmd: cmd, status: backend.Status{State: backend.Starting}, done: make(chan struct{}), output: out,
 		owned: &defaultExecution{reader: reader, outputDone: make(chan struct{}), readDone: make(chan struct{}), reaped: make(chan struct{}), handle: defaultHandle{fd: -1}}}
 	b.jobs[id] = e
+	b.attachRetention(e, id)
 	if err := b.defaultOps.start(cmd); err != nil {
 		reader.Close()
 		writer.Close()
-		out.file.Close()
+		closeErr := out.file.Close()
+		if closeErr == nil {
+			out.closed = true
+		}
 		e.status = backend.Status{State: backend.Failed, Reason: "start: " + err.Error()}
 		e.owned.signalClosed = true
+		e.owned.handleClosed = true
 		close(e.owned.readDone)
 		close(e.owned.outputDone)
 		close(e.owned.reaped)
+		b.finishPayload(e)
 		close(e.done)
 		return fmt.Errorf("start program: %w", err)
 	}
@@ -91,8 +97,19 @@ func (b *Backend) startDefault(cmd *exec.Cmd, out *output, id string, seconds in
 
 func (b *Backend) readDefaultOutput(e *execution) {
 	owned := e.owned
-	defer close(owned.outputDone)
-	defer owned.reader.Close()
+	defer func() {
+		owned.reader.Close()
+		b.mu.Lock()
+		if e.retained != nil {
+			e.output.mu.Lock()
+			if e.output.closed && e.output.markerCloseErr == nil {
+				b.publishOutputClosure(e.retained)
+			}
+			e.output.mu.Unlock()
+		}
+		b.mu.Unlock()
+		close(owned.outputDone)
+	}()
 	var result defaultOutputResult
 	buf := make([]byte, 32<<10)
 	for {
@@ -115,6 +132,9 @@ func (b *Backend) readDefaultOutput(e *execution) {
 		result.retainErr = e.output.err
 	}
 	result.closeErr = b.defaultOps.closeOutput(e.output)
+	if result.closeErr == nil {
+		e.output.closed = true
+	}
 	if errors.Is(result.closeErr, os.ErrClosed) {
 		result.closeErr = nil
 	}
@@ -133,7 +153,6 @@ func (b *Backend) stopDefault(e *execution, state backend.State, reason string) 
 	if e.owned.signalClosed || e.owned.intent {
 		return nil
 	}
-	e.owned.requested = true
 	if err := b.defaultOps.kill(e.cmd); err != nil {
 		return fmt.Errorf("kill process group: %w", err)
 	}
@@ -178,6 +197,7 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 	}
 	groupErr := cleanupErr
 	handleCloseErr := owned.handle.close()
+	owned.handleClosed = handleCloseErr == nil
 	cleanupErr = errors.Join(cleanupErr, handleCloseErr)
 	b.mu.Lock()
 	owned.cleanupErr = cleanupErr
@@ -228,6 +248,7 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 	if e.cmd.ProcessState == nil {
 		owned.cleanupErr = errors.Join(owned.cleanupErr, errors.New("local process result is unavailable"))
 	}
+	b.finishPayload(e)
 	close(e.done)
 }
 

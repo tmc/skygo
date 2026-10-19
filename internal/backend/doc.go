@@ -7,4 +7,6 @@
 // a conflicting execution. TaskBytes preserves the canonical JSON task encoding;
 // accepted target bindings are separate from caller task equality. Target facts
 // explicitly describe supported semantics without claiming available capacity.
+// Retention keeps writer closure, output removal and proved execution removal
+// separate; a closure receipt alone never establishes workload termination.
 package backend

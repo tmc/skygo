@@ -1,0 +1,24 @@
+skygo --json state retention enable --data-dir $DATA --request-window 1h
+retention-domain DOMAIN
+server start
+taskfile task.json success
+skygo --json run -f task.json --request-domain $DOMAIN --request-id retained --wait
+job-id JOB
+skygo --json jobs prune --before 9999-12-31T23:59:59Z --metadata-only --ack-unverified-terminal --yes
+stdout '"marked": *1'
+! skygo run -f task.json --request-domain $DOMAIN --request-id retained
+stderr 'result expired'
+event-count 1
+# A changed task still conflicts with its authorized binding after result expiry.
+taskfile changed.json hold
+! skygo run -f changed.json --request-domain $DOMAIN --request-id retained
+stderr 'already_exists'
+event-count 1
+# A new current-domain binding is deliberate new work, not an automatic retry.
+skygo --json run -f task.json --request-domain $DOMAIN --request-id deliberate-new --wait
+event-count 2
+calls PlanTask 0
+calls SubmitJob 0
+calls SubmitRetryJob 0
+server stop
+! stderr .
