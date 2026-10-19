@@ -1,0 +1,37 @@
+# Actual pinned 9135253 daemon: discovery is absent, legacy work still executes.
+# info is read-only; this proves its capability refusal, not future run gating.
+server start
+legacy targets list
+stdout 'local +local'
+! stderr .
+taskfile task.json marker
+! skygo --json info --target local --require finite-jobs-v1
+stderr 'unimplemented: server does not support capability discovery'
+! stdout .
+calls /skygo.v1.ControlService/GetServerInfo 1
+calls /skygo.v1.ControlService/SubmitJob 0
+! exists marker
+legacy jobs list
+stdout '^ID +TARGET +STATE\n$'
+! stderr .
+
+# Authentication failure at the same old daemon must not be called legacy discovery.
+! skygo --token wrong info --target local --require finite-jobs-v1
+stderr 'unauthenticated'
+! stderr 'legacy task commands'
+! stdout .
+
+# Positive control: current default run uses the explicit legacy-compatible path.
+skygo --json run -f task.json --request-id legacy-default --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+job-id JOB
+exists marker
+grep '^executed$' marker
+calls /skygo.v1.ControlService/SubmitJob 1
+skygo --json run -f task.json --request-id legacy-default --wait
+stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+skygo jobs logs $JOB
+stdout '^legacy-compatible workload\n$'
+server stop
+! stderr .

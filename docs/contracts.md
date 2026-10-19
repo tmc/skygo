@@ -23,8 +23,14 @@ resources. No hardware discovery, quota check, VM provisioning, or price model
 runs during planning. A shell is used only when explicitly present in argv.
 
 The public protocol is `skygo.v1.ControlService` in
-[`control.proto`](../proto/skygo/v1/control.proto). The seven methods are
-PlanTask, SubmitJob, GetJob, ListJobs, CancelJob, StreamJobLogs, and ListTargets.
+[`control.proto`](../proto/skygo/v1/control.proto). The methods are
+PlanTask, SubmitJob, GetJob, ListJobs, CancelJob, StreamJobLogs, ListTargets, and
+GetServerInfo. Discovery reports typed capabilities for each configured target. The current
+capability is `FINITE_JOBS_V1`; it describes finite-job semantics, not available
+capacity. A client requiring a capability must check the actual selected target
+before performing the associated operation. Missing discovery is unsupported,
+not implicit support. Existing servers cannot be made to reject unknown newer
+protobuf fields retroactively.
 Generated clients live in `gen/skygo/v1/skyv1connect`. Both executable
 entrypoints use this protocol; a client does not need Kubernetes dependencies
 to submit tasks to a server configured with the Kubernetes integration.
@@ -65,3 +71,30 @@ A missing configured target preserves the last observed state with an explicit
 reason. Restore that target to resume reconciliation. Kubernetes operations
 verify the stored task identity as well as ownership; a conflicting native Job
 is left untouched and the accepted job becomes unknown.
+
+## State backup and rollback
+
+The store checks its schema before migration. Missing schema markers identify
+legacy state; supported legacy state migrates transactionally without changing
+accepted task bytes, installation identity or request bindings. Newer schemas
+and malformed markers refuse without modifying the existing database.
+
+`state backup --data-dir DIR --output FILE` creates a consistent offline database
+snapshot. Stop the writable server first; its database lock blocks backup.
+`state restore --input FILE --data-dir NEW_DIR` validates and publishes state in
+a new directory. Neither operation runs, cancels or rewrites workloads, and
+neither overwrites an existing destination.
+
+Snapshots contain only the database. Copy local retained logs separately if
+needed; workload files, programs and images also need independent preservation.
+Restoring job metadata alone does not restore their output. Active job intent
+is preserved: queued jobs may start when the restored server runs, local work
+from another server lifetime becomes unknown, and Kubernetes work is checked
+against its stored ownership and task identity. Unknown does not authorize retry.
+
+Only one copy of an installation identity may reconcile external work. Keep the
+original stopped before starting the restored copy. For rollback, stop the newer
+server, restore a matching pre-upgrade snapshot into a new directory, and reconcile
+external workloads before starting the prior binary. Binaries predating the
+schema fence cannot safely be opened on newer state. A snapshot may omit work
+accepted afterward; account for those external workloads before resubmitting.

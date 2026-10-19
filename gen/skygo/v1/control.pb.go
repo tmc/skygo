@@ -86,6 +86,53 @@ func (JobState) EnumDescriptor() ([]byte, []int) {
 	return file_skygo_v1_control_proto_rawDescGZIP(), []int{0}
 }
 
+// Capability identifies implemented execution semantics, not available capacity.
+type Capability int32
+
+const (
+	Capability_CAPABILITY_UNSPECIFIED    Capability = 0
+	Capability_CAPABILITY_FINITE_JOBS_V1 Capability = 1
+)
+
+// Enum value maps for Capability.
+var (
+	Capability_name = map[int32]string{
+		0: "CAPABILITY_UNSPECIFIED",
+		1: "CAPABILITY_FINITE_JOBS_V1",
+	}
+	Capability_value = map[string]int32{
+		"CAPABILITY_UNSPECIFIED":    0,
+		"CAPABILITY_FINITE_JOBS_V1": 1,
+	}
+)
+
+func (x Capability) Enum() *Capability {
+	p := new(Capability)
+	*p = x
+	return p
+}
+
+func (x Capability) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Capability) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[1].Descriptor()
+}
+
+func (Capability) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[1]
+}
+
+func (x Capability) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Capability.Descriptor instead.
+func (Capability) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{1}
+}
+
 // Task is immutable after acceptance. Resource quantities are requests, not capacity promises.
 type Task struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -315,6 +362,7 @@ type Target struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	Kind          string                 `protobuf:"bytes,2,opt,name=kind,proto3" json:"kind,omitempty"`
+	Capabilities  []Capability           `protobuf:"varint,3,rep,packed,name=capabilities,proto3,enum=skygo.v1.Capability" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -361,6 +409,13 @@ func (x *Target) GetKind() string {
 		return x.Kind
 	}
 	return ""
+}
+
+func (x *Target) GetCapabilities() []Capability {
+	if x != nil {
+		return x.Capabilities
+	}
+	return nil
 }
 
 type Rejection struct {
@@ -1097,6 +1152,87 @@ func (x *ListTargetsResponse) GetTargets() []*Target {
 	return nil
 }
 
+type GetServerInfoRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetServerInfoRequest) Reset() {
+	*x = GetServerInfoRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetServerInfoRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetServerInfoRequest) ProtoMessage() {}
+
+func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetServerInfoRequest.ProtoReflect.Descriptor instead.
+func (*GetServerInfoRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{18}
+}
+
+// Capabilities apply only to their named target at this endpoint.
+type GetServerInfoResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Targets       []*Target              `protobuf:"bytes,1,rep,name=targets,proto3" json:"targets,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetServerInfoResponse) Reset() {
+	*x = GetServerInfoResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[19]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetServerInfoResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetServerInfoResponse) ProtoMessage() {}
+
+func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[19]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetServerInfoResponse.ProtoReflect.Descriptor instead.
+func (*GetServerInfoResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{19}
+}
+
+func (x *GetServerInfoResponse) GetTargets() []*Target {
+	if x != nil {
+		return x.Targets
+	}
+	return nil
+}
+
 var File_skygo_v1_control_proto protoreflect.FileDescriptor
 
 const file_skygo_v1_control_proto_rawDesc = "" +
@@ -1131,10 +1267,11 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAtB\f\n" +
 	"\n" +
-	"_exit_code\"0\n" +
+	"_exit_code\"j\n" +
 	"\x06Target\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
-	"\x04kind\x18\x02 \x01(\tR\x04kind\";\n" +
+	"\x04kind\x18\x02 \x01(\tR\x04kind\x128\n" +
+	"\fcapabilities\x18\x03 \x03(\x0e2\x14.skygo.v1.CapabilityR\fcapabilities\";\n" +
 	"\tRejection\x12\x16\n" +
 	"\x06target\x18\x01 \x01(\tR\x06target\x12\x16\n" +
 	"\x06reason\x18\x02 \x01(\tR\x06reason\"5\n" +
@@ -1178,6 +1315,9 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\ttruncated\x18\x04 \x01(\bR\ttruncated\"\x14\n" +
 	"\x12ListTargetsRequest\"A\n" +
 	"\x13ListTargetsResponse\x12*\n" +
+	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\"\x16\n" +
+	"\x14GetServerInfoRequest\"C\n" +
+	"\x15GetServerInfoResponse\x12*\n" +
 	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets*\xc8\x01\n" +
 	"\bJobState\x12\x19\n" +
 	"\x15JOB_STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
@@ -1187,7 +1327,11 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x13JOB_STATE_SUCCEEDED\x10\x04\x12\x14\n" +
 	"\x10JOB_STATE_FAILED\x10\x05\x12\x16\n" +
 	"\x12JOB_STATE_CANCELED\x10\x06\x12\x15\n" +
-	"\x11JOB_STATE_UNKNOWN\x10\a2\xff\x03\n" +
+	"\x11JOB_STATE_UNKNOWN\x10\a*G\n" +
+	"\n" +
+	"Capability\x12\x1a\n" +
+	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
+	"\x19CAPABILITY_FINITE_JOBS_V1\x10\x012\xd1\x04\n" +
 	"\x0eControlService\x12A\n" +
 	"\bPlanTask\x12\x19.skygo.v1.PlanTaskRequest\x1a\x1a.skygo.v1.PlanTaskResponse\x12D\n" +
 	"\tSubmitJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12;\n" +
@@ -1195,7 +1339,8 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\bListJobs\x12\x19.skygo.v1.ListJobsRequest\x1a\x1a.skygo.v1.ListJobsResponse\x12D\n" +
 	"\tCancelJob\x12\x1a.skygo.v1.CancelJobRequest\x1a\x1b.skygo.v1.CancelJobResponse\x12R\n" +
 	"\rStreamJobLogs\x12\x1e.skygo.v1.StreamJobLogsRequest\x1a\x1f.skygo.v1.StreamJobLogsResponse0\x01\x12J\n" +
-	"\vListTargets\x12\x1c.skygo.v1.ListTargetsRequest\x1a\x1d.skygo.v1.ListTargetsResponseB)Z'github.com/tmc/skygo/gen/skygo/v1;skyv1b\x06proto3"
+	"\vListTargets\x12\x1c.skygo.v1.ListTargetsRequest\x1a\x1d.skygo.v1.ListTargetsResponse\x12P\n" +
+	"\rGetServerInfo\x12\x1e.skygo.v1.GetServerInfoRequest\x1a\x1f.skygo.v1.GetServerInfoResponseB)Z'github.com/tmc/skygo/gen/skygo/v1;skyv1b\x06proto3"
 
 var (
 	file_skygo_v1_control_proto_rawDescOnce sync.Once
@@ -1209,64 +1354,71 @@ func file_skygo_v1_control_proto_rawDescGZIP() []byte {
 	return file_skygo_v1_control_proto_rawDescData
 }
 
-var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 19)
+var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_skygo_v1_control_proto_goTypes = []any{
 	(JobState)(0),                 // 0: skygo.v1.JobState
-	(*Task)(nil),                  // 1: skygo.v1.Task
-	(*Job)(nil),                   // 2: skygo.v1.Job
-	(*Target)(nil),                // 3: skygo.v1.Target
-	(*Rejection)(nil),             // 4: skygo.v1.Rejection
-	(*PlanTaskRequest)(nil),       // 5: skygo.v1.PlanTaskRequest
-	(*PlanTaskResponse)(nil),      // 6: skygo.v1.PlanTaskResponse
-	(*SubmitJobRequest)(nil),      // 7: skygo.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),     // 8: skygo.v1.SubmitJobResponse
-	(*GetJobRequest)(nil),         // 9: skygo.v1.GetJobRequest
-	(*GetJobResponse)(nil),        // 10: skygo.v1.GetJobResponse
-	(*ListJobsRequest)(nil),       // 11: skygo.v1.ListJobsRequest
-	(*ListJobsResponse)(nil),      // 12: skygo.v1.ListJobsResponse
-	(*CancelJobRequest)(nil),      // 13: skygo.v1.CancelJobRequest
-	(*CancelJobResponse)(nil),     // 14: skygo.v1.CancelJobResponse
-	(*StreamJobLogsRequest)(nil),  // 15: skygo.v1.StreamJobLogsRequest
-	(*StreamJobLogsResponse)(nil), // 16: skygo.v1.StreamJobLogsResponse
-	(*ListTargetsRequest)(nil),    // 17: skygo.v1.ListTargetsRequest
-	(*ListTargetsResponse)(nil),   // 18: skygo.v1.ListTargetsResponse
-	nil,                           // 19: skygo.v1.Task.EnvEntry
-	(*timestamppb.Timestamp)(nil), // 20: google.protobuf.Timestamp
+	(Capability)(0),               // 1: skygo.v1.Capability
+	(*Task)(nil),                  // 2: skygo.v1.Task
+	(*Job)(nil),                   // 3: skygo.v1.Job
+	(*Target)(nil),                // 4: skygo.v1.Target
+	(*Rejection)(nil),             // 5: skygo.v1.Rejection
+	(*PlanTaskRequest)(nil),       // 6: skygo.v1.PlanTaskRequest
+	(*PlanTaskResponse)(nil),      // 7: skygo.v1.PlanTaskResponse
+	(*SubmitJobRequest)(nil),      // 8: skygo.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),     // 9: skygo.v1.SubmitJobResponse
+	(*GetJobRequest)(nil),         // 10: skygo.v1.GetJobRequest
+	(*GetJobResponse)(nil),        // 11: skygo.v1.GetJobResponse
+	(*ListJobsRequest)(nil),       // 12: skygo.v1.ListJobsRequest
+	(*ListJobsResponse)(nil),      // 13: skygo.v1.ListJobsResponse
+	(*CancelJobRequest)(nil),      // 14: skygo.v1.CancelJobRequest
+	(*CancelJobResponse)(nil),     // 15: skygo.v1.CancelJobResponse
+	(*StreamJobLogsRequest)(nil),  // 16: skygo.v1.StreamJobLogsRequest
+	(*StreamJobLogsResponse)(nil), // 17: skygo.v1.StreamJobLogsResponse
+	(*ListTargetsRequest)(nil),    // 18: skygo.v1.ListTargetsRequest
+	(*ListTargetsResponse)(nil),   // 19: skygo.v1.ListTargetsResponse
+	(*GetServerInfoRequest)(nil),  // 20: skygo.v1.GetServerInfoRequest
+	(*GetServerInfoResponse)(nil), // 21: skygo.v1.GetServerInfoResponse
+	nil,                           // 22: skygo.v1.Task.EnvEntry
+	(*timestamppb.Timestamp)(nil), // 23: google.protobuf.Timestamp
 }
 var file_skygo_v1_control_proto_depIdxs = []int32{
-	19, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
-	1,  // 1: skygo.v1.Job.task:type_name -> skygo.v1.Task
+	22, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
+	2,  // 1: skygo.v1.Job.task:type_name -> skygo.v1.Task
 	0,  // 2: skygo.v1.Job.state:type_name -> skygo.v1.JobState
-	20, // 3: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	20, // 4: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
-	1,  // 5: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
-	4,  // 6: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
-	1,  // 7: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
-	2,  // 8: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
-	2,  // 9: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
-	2,  // 10: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
-	2,  // 11: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
-	3,  // 12: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
-	5,  // 13: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
-	7,  // 14: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
-	9,  // 15: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
-	11, // 16: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
-	13, // 17: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
-	15, // 18: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
-	17, // 19: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
-	6,  // 20: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
-	8,  // 21: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
-	10, // 22: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
-	12, // 23: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
-	14, // 24: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
-	16, // 25: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
-	18, // 26: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
-	20, // [20:27] is the sub-list for method output_type
-	13, // [13:20] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	23, // 3: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	23, // 4: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
+	1,  // 5: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
+	2,  // 6: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
+	5,  // 7: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
+	2,  // 8: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
+	3,  // 9: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
+	3,  // 10: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
+	3,  // 11: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
+	3,  // 12: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
+	4,  // 13: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
+	4,  // 14: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
+	6,  // 15: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
+	8,  // 16: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
+	10, // 17: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
+	12, // 18: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
+	14, // 19: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
+	16, // 20: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
+	18, // 21: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
+	20, // 22: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
+	7,  // 23: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
+	9,  // 24: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
+	11, // 25: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
+	13, // 26: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
+	15, // 27: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
+	17, // 28: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
+	19, // 29: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
+	21, // 30: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
+	23, // [23:31] is the sub-list for method output_type
+	15, // [15:23] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_skygo_v1_control_proto_init() }
@@ -1280,8 +1432,8 @@ func file_skygo_v1_control_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skygo_v1_control_proto_rawDesc), len(file_skygo_v1_control_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   19,
+			NumEnums:      2,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

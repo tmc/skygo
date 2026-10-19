@@ -82,7 +82,7 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 	srv.Flags().StringVar(&s.DataDir, "data-dir", "skygo-data", "Durable state directory")
 	srv.Flags().StringVar(&s.Listen, "listen", "127.0.0.1:8080", "HTTP listen address")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
-	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs())
+	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand())
 	targets := &cobra.Command{Use: "targets", Short: "Inspect configured execution targets"}
 	targets.AddCommand(&cobra.Command{Use: "list", Short: "List execution targets", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)

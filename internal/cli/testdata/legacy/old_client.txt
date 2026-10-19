@@ -1,0 +1,29 @@
+# The archived CLI links the untouched old generated client and messages.
+# It must tolerate additive capabilities while default tasks retain their meaning.
+server start
+skygo info --target local --require finite-jobs-v1
+stdout 'local +local +finite-jobs-v1'
+legacy targets list
+stdout 'NAME +KIND'
+stdout 'local +local'
+! stdout 'CAPABILITIES'
+legacy --json targets list
+stdout '"name": *"local"'
+! stdout 'capabilities'
+! stderr .
+taskfile task.json marker
+legacy plan -f task.json
+stdout '^local\n$'
+legacy --json run -f task.json --request-id old-client --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+job-id JOB
+exists marker
+legacy --json run -f task.json --request-id old-client --wait
+stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+legacy --json jobs get $JOB
+stdout '"id": *"'$JOB'"'
+legacy jobs logs $JOB
+stdout '^legacy-compatible workload\n$'
+server stop
+! stderr .

@@ -11,6 +11,7 @@ service ControlService {
   rpc CancelJob(CancelJobRequest) returns (CancelJobResponse);
   rpc StreamJobLogs(StreamJobLogsRequest) returns (stream StreamJobLogsResponse);
   rpc ListTargets(ListTargetsRequest) returns (ListTargetsResponse);
+  rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
 }
 // Task is immutable after acceptance. Resource quantities are requests, not capacity promises.
 message Task {
@@ -46,9 +47,15 @@ message Job {
   google.protobuf.Timestamp created_at = 8;
   google.protobuf.Timestamp updated_at = 9;
 }
+// Capability identifies implemented execution semantics, not available capacity.
+enum Capability {
+  CAPABILITY_UNSPECIFIED = 0;
+  CAPABILITY_FINITE_JOBS_V1 = 1;
+}
 message Target {
   string name = 1;
   string kind = 2;
+  repeated Capability capabilities = 3;
 }
 message Rejection {
   string target = 1;
@@ -91,3 +98,7 @@ message StreamJobLogsResponse {
 }
 message ListTargetsRequest {}
 message ListTargetsResponse { repeated Target targets = 1; }
+
+message GetServerInfoRequest {}
+// Capabilities apply only to their named target at this endpoint.
+message GetServerInfoResponse { repeated Target targets = 1; }

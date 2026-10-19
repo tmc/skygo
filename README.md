@@ -45,6 +45,9 @@ with a different task fails. Request bindings survive server restart.
 skygo server --data-dir DIR
 skygo-kubernetes server --data-dir DIR --namespace NS [--disable-local]
 skygo targets list
+skygo info [--target NAME --require finite-jobs-v1]
+skygo state backup --data-dir DIR --output FILE
+skygo state restore --input FILE --data-dir NEW_DIR
 skygo plan -f task.yaml
 skygo run -f task.yaml [--request-id ID] [--wait]
 skygo jobs list [--page-size N] [--page-token TOKEN]
@@ -59,8 +62,21 @@ default. `--token` overrides `SKYGO_TOKEN`. `--timeout` bounds individual RPCs
 client command does not cancel its job. Cancellation requires `jobs cancel`.
 
 Output is plain text without color, prompts, or pagers. `--json` writes protobuf
-JSON; log streams write one JSON object per chunk, with base64 data and byte
+JSON for API commands and a path object for local state commands. Log streams
+write one JSON object per chunk, with base64 data and byte
 offsets. Diagnostics and retry IDs go to stderr. Use `-f -` to read YAML on stdin.
+
+`info` reports capabilities for each configured target. A requirement applies
+only to the named target and fails when discovery is unavailable. Discovery is
+not a capacity reservation. Legacy task commands remain available against older
+servers; this does not make them support newer task semantics.
+
+Stop the server before `state backup` or `state restore`. These local commands
+preserve the database's installation identity, job records and request bindings.
+They exclude local logs, workload files and images. Restore requires a new data
+directory; neither command overwrites existing output. Keep the original
+installation stopped before starting a restored copy. See the
+[backup and rollback contract](docs/contracts.md#state-backup-and-rollback).
 
 ## Kubernetes
 

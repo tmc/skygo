@@ -1,0 +1,34 @@
+skygo info
+stdout 'NAME +KIND +CAPABILITIES'
+stdout 'supported +local +finite-jobs-v1'
+stdout 'unknown +fixture +unknown\(99\)'
+! stderr .
+skygo --json info --target supported --require finite-jobs-v1
+stdout '"name": *"supported"'
+stdout '"capabilities": *\["CAPABILITY_FINITE_JOBS_V1"\]'
+! stdout 'limited'
+! stdout 'task_semantics_version'
+! stderr .
+! skygo info --target limited --require finite-jobs-v1
+stderr 'failed_precondition: target "limited" does not advertise finite-jobs-v1'
+! stdout .
+! skygo info --target unknown --require finite-jobs-v1
+stderr 'failed_precondition'
+! stdout .
+! skygo info --require finite-jobs-v1
+stderr 'requirements need --target'
+! stdout .
+! skygo info --target absent
+stderr 'not_found'
+! stdout .
+! skygo info --target supported --require future-jobs
+stderr 'unknown capability "future-jobs"'
+! stdout .
+! skygo --token wrong info
+stderr 'unauthenticated'
+! stderr 'legacy'
+! stdout .
+skygo --endpoint http://127.0.0.1:1 info --help
+stdout '--target'
+stdout '--require'
+! stderr .
