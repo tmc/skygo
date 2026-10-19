@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	bolt "go.etcd.io/bbolt"
 )
@@ -34,8 +35,9 @@ var metadataBucket = []byte("metadata")
 
 // Store owns the data directory's exclusive database lock.
 type Store struct {
-	db    *bolt.DB
-	owner string
+	db     *bolt.DB
+	owner  string
+	scoped bool
 }
 
 // Open opens or initializes a database in dir. Another writer is refused after
@@ -69,6 +71,9 @@ func Open(dir string) (*Store, error) {
 		err = db.Update(func(tx *bolt.Tx) error { return initialize(tx, owner) })
 	}
 	s.owner = owner
+	if err == nil {
+		err = db.View(func(tx *bolt.Tx) error { s.scoped = isScoped(tx); return nil })
+	}
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize job database: %w", err)
@@ -101,10 +106,17 @@ func get(tx *bolt.Tx, id string) (backend.Job, error) {
 	}
 	return j, nil
 }
-func lookup(tx *bolt.Tx, requestID string, task backend.Task) (backend.Job, bool, error) {
-	id := tx.Bucket(requestsBucket).Get([]byte(requestID))
+func lookup(tx *bolt.Tx, actor auth.Actor, requestID string, task backend.Task) (backend.Job, bool, error) {
+	bindings := requestNamespace(tx, actor.Principal())
+	if bindings == nil {
+		return backend.Job{}, false, nil
+	}
+	id := bindings.Get([]byte(requestID))
 	if id == nil {
 		return backend.Job{}, false, nil
+	}
+	if isScoped(tx) && string(tx.Bucket(jobPrincipalsBucket).Get(id)) != actor.Principal() {
+		return backend.Job{}, true, ErrNotFound
 	}
 	j, err := get(tx, string(id))
 	if err != nil {
@@ -124,18 +136,32 @@ func lookup(tx *bolt.Tx, requestID string, task backend.Task) (backend.Job, bool
 	return j, true, nil
 }
 
-// Lookup returns an existing request binding. Task equality uses its canonical
+// Lookup returns a binding in the authenticated principal's namespace. Task equality uses its canonical
 // JSON representation, treating nil and empty environment maps equally.
-func (s *Store) Lookup(requestID string, task backend.Task) (j backend.Job, found bool, err error) {
-	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, found, e = lookup(tx, requestID, task); return e })
+func (s *Store) Lookup(actor auth.Actor, requestID string, task backend.Task) (j backend.Job, found bool, err error) {
+	if err = s.authorize(actor, auth.Read); err != nil {
+		return
+	}
+	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, found, e = lookup(tx, actor, requestID, task); return e })
 	return
 }
 
-// Submit atomically binds requestID to a newly accepted job. Repeating an
+// Submit atomically binds requestID within the actor's namespace to a job. Repeating an
 // identical request returns the original job, including its original target.
-func (s *Store) Submit(requestID string, task backend.Task, target string) (j backend.Job, err error) {
+func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, target string) (j backend.Job, err error) {
+	if err = s.authorize(actor, auth.Mutate); err != nil {
+		return
+	}
+	existing, found, err := s.Lookup(actor, requestID, task)
+	if err != nil || found {
+		return existing, err
+	}
+	id, err := newID()
+	if err != nil {
+		return backend.Job{}, err
+	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
-		existing, found, e := lookup(tx, requestID, task)
+		existing, found, e := lookup(tx, actor, requestID, task)
 		if e != nil {
 			return e
 		}
@@ -161,10 +187,6 @@ func (s *Store) Submit(requestID string, task backend.Task, target string) (j ba
 		if seq.Sequence() >= maxJobs {
 			return ErrFull
 		}
-		id, e := newID()
-		if e != nil {
-			return e
-		}
 		if jobs.Get([]byte(id)) != nil {
 			return errors.New("random job identity collision")
 		}
@@ -184,8 +206,24 @@ func (s *Store) Submit(requestID string, task backend.Task, target string) (j ba
 		if e = seq.Put(sequenceKey(n), []byte(id)); e != nil {
 			return e
 		}
-		if e = tx.Bucket(requestsBucket).Put([]byte(requestID), []byte(id)); e != nil {
+		if e = bindRequest(tx, actor.Principal(), requestID, id); e != nil {
 			return e
+		}
+		if isScoped(tx) {
+			if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(id), []byte(actor.Principal())); e != nil {
+				return e
+			}
+			index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(actor.Principal()))
+			if e != nil {
+				return e
+			}
+			ordinal, e := index.NextSequence()
+			if e != nil {
+				return e
+			}
+			if e = index.Put(sequenceKey(ordinal), []byte(id)); e != nil {
+				return e
+			}
 		}
 		if e = metadata.Put(taskBytesKey, sequenceKey(taskBytes+uint64(len(encodedTask)))); e != nil {
 			return e
@@ -196,19 +234,22 @@ func (s *Store) Submit(requestID string, task backend.Task, target string) (j ba
 	return
 }
 
-// Get reads one accepted job.
+// Get reads one accepted job for trusted reconciliation and integrity code.
+// Request handlers must use GetFor.
 func (s *Store) Get(id string) (j backend.Job, err error) {
 	err = s.db.View(func(tx *bolt.Tx) error { var e error; j, e = get(tx, id); return e })
 	return
 }
 
-// LastSequence returns the last accepted sequence for snapshot pagination.
+// LastSequence returns the global sequence for trusted integrity code.
+// Request handlers must use LastSequenceFor.
 func (s *Store) LastSequence() (n uint64, err error) {
 	err = s.db.View(func(tx *bolt.Tx) error { n = tx.Bucket(sequenceBucket).Sequence(); return nil })
 	return
 }
 
-// List returns jobs with after < Sequence <= max, in acceptance order.
+// List returns global jobs for trusted integrity code, in acceptance order.
+// Request handlers must use ListFor.
 func (s *Store) List(after, max uint64, limit int) (out []backend.Job, err error) {
 	if limit <= 0 {
 		return nil, errors.New("list limit must be positive")
@@ -236,37 +277,40 @@ func (s *Store) List(after, max uint64, limit int) (out []backend.Job, err error
 	return
 }
 
-// Update changes mutable job state atomically. The callback must not perform
+// Update changes state for trusted reconciliation. Request handlers use UpdateFor.
+// The callback must not perform
 // external I/O or call Store methods. Identity, task and target cannot change.
 func (s *Store) Update(id string, fn func(*backend.Job) error) (j backend.Job, err error) {
-	err = s.db.Update(func(tx *bolt.Tx) error {
-		before, e := get(tx, id)
-		if e != nil {
-			return e
-		}
-		originalTask, e := json.Marshal(before.Task)
-		if e != nil {
-			return e
-		}
-		j = before
-		if e = fn(&j); e != nil {
-			return e
-		}
-		changedTask, e := json.Marshal(j.Task)
-		if e != nil {
-			return e
-		}
-		if j.ID != before.ID || j.Target != before.Target || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
-			return errors.New("cannot change immutable job fields")
-		}
-		j.UpdatedAt = time.Now().UTC()
-		data, e := json.Marshal(j)
-		if e != nil {
-			return e
-		}
-		return tx.Bucket(jobsBucket).Put([]byte(id), data)
-	})
+	err = s.db.Update(func(tx *bolt.Tx) error { var e error; j, e = update(tx, id, fn); return e })
 	return
+}
+
+func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job, result error) {
+	before, e := get(tx, id)
+	if e != nil {
+		return j, e
+	}
+	originalTask, e := json.Marshal(before.Task)
+	if e != nil {
+		return j, e
+	}
+	j = before
+	if e = fn(&j); e != nil {
+		return j, e
+	}
+	changedTask, e := json.Marshal(j.Task)
+	if e != nil {
+		return j, e
+	}
+	if j.ID != before.ID || j.Target != before.Target || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
+		return j, errors.New("cannot change immutable job fields")
+	}
+	j.UpdatedAt = time.Now().UTC()
+	data, e := json.Marshal(j)
+	if e != nil {
+		return j, e
+	}
+	return j, tx.Bucket(jobsBucket).Put([]byte(id), data)
 }
 
 // Active reads all nonterminal jobs in acceptance order.

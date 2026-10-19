@@ -10,7 +10,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 1
+const schemaVersion = 2
 
 var schemaKey = []byte("schema_version")
 
@@ -28,7 +28,7 @@ func inspect(tx *bolt.Tx) error {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != schemaVersion {
+			if n != 1 && n != schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
@@ -106,7 +106,10 @@ func initialize(tx *bolt.Tx, owner string) error {
 			return err
 		}
 	}
-	return m.Put(schemaKey, sequenceKey(schemaVersion))
+	if m.Get(schemaKey) == nil {
+		return m.Put(schemaKey, sequenceKey(1))
+	}
+	return nil
 }
 
 // validateSnapshot checks references before publishing a restore. It does not
@@ -149,10 +152,13 @@ func validateSnapshot(tx *bolt.Tx) error {
 	}); err != nil {
 		return err
 	}
-	return requests.ForEach(func(key, id []byte) error {
+	if err := requests.ForEach(func(key, id []byte) error {
 		if len(key) == 0 || jobs.Get(id) == nil {
 			return errors.New("invalid snapshot request binding")
 		}
 		return nil
-	})
+	}); err != nil {
+		return err
+	}
+	return validateScoped(tx)
 }

@@ -29,7 +29,7 @@ func exampleControl() (*control.Control, func()) {
 		os.RemoveAll(dir)
 		panic(err)
 	}
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}})
+	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}}, testEngine)
 	if err != nil {
 		b.Close()
 		s.Close()
@@ -47,9 +47,13 @@ func exampleControl() (*control.Control, func()) {
 func Example() {
 	c, close := exampleControl()
 	defer close()
-	target, rejected, err := c.Plan(backend.Task{Argv: []string{"trainer"}})
+	target, rejected, err := c.Plan(testActor(), backend.Task{Argv: []string{"trainer"}})
 	fmt.Println(target, len(rejected), err)
-	fmt.Println(c.Targets()[0].Kind, c.Healthy())
+	targets, err := c.Targets(testActor())
+	if err != nil {
+		panic(err)
+	}
+	fmt.Println(targets[0].Kind, c.Healthy())
 	// Output:
 	// local 0 <nil>
 	// local true
@@ -67,11 +71,11 @@ func ExampleControl_Submit() {
 	c, close := exampleControl()
 	defer close()
 	task := backend.Task{Argv: []string{"trainer"}}
-	job, err := c.Submit("training-1", task)
+	job, err := c.Submit(testActor(), "training-1", task)
 	if err != nil {
 		panic(err)
 	}
-	same, err := c.Submit("training-1", task)
+	same, err := c.Submit(testActor(), "training-1", task)
 	fmt.Println(job.ID == same.ID, same.Status.State, err)
 	// Output: true queued <nil>
 }
@@ -79,15 +83,15 @@ func ExampleControl_Submit() {
 func ExampleControl_List() {
 	c, close := exampleControl()
 	defer close()
-	job, err := c.Submit("training-1", backend.Task{Argv: []string{"trainer"}})
+	job, err := c.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}})
 	if err != nil {
 		panic(err)
 	}
-	got, err := c.Get(job.ID)
+	got, err := c.Get(testActor(), job.ID)
 	if err != nil {
 		panic(err)
 	}
-	jobs, next, err := c.List(10, "")
+	jobs, next, err := c.List(testActor(), 10, "")
 	fmt.Println(got.Status.State, len(jobs), next == "", err)
 	// Output: queued 1 true <nil>
 }
@@ -95,11 +99,11 @@ func ExampleControl_List() {
 func ExampleControl_Cancel() {
 	c, close := exampleControl()
 	defer close()
-	job, err := c.Submit("training-1", backend.Task{Argv: []string{"trainer"}})
+	job, err := c.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}})
 	if err != nil {
 		panic(err)
 	}
-	job, err = c.Cancel(job.ID)
+	job, err = c.Cancel(testActor(), job.ID)
 	fmt.Println(job.CancelRequested, job.Status.State, err)
 	// Output: true queued <nil>
 }
@@ -116,12 +120,26 @@ func ExampleControl_Run() {
 func ExampleControl_Logs() {
 	c, close := exampleControl()
 	defer close()
-	job, err := c.Submit("training-1", backend.Task{Argv: []string{"trainer"}})
+	job, err := c.Submit(testActor(), "training-1", backend.Task{Argv: []string{"trainer"}})
 	if err != nil {
 		panic(err)
 	}
 	// Acceptance alone does not start execution or produce output.
-	chunk, err := c.Logs(context.Background(), job.ID, 0)
+	chunk, err := c.Logs(context.Background(), testActor(), job.ID, 0)
 	fmt.Println(chunk.Complete, len(chunk.Data), err)
 	// Output: false 0 <nil>
+}
+
+func ExampleControl_RecordAccess() {
+	c, close := exampleControl()
+	defer close()
+	fmt.Println(c.RecordAccess(testActor(), "list", "", "allowed"))
+	// Output: <nil>
+}
+
+func ExampleControl_AuditHealthy() {
+	c, close := exampleControl()
+	defer close()
+	fmt.Println(c.AuditHealthy())
+	// Output: true
 }

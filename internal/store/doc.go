@@ -12,6 +12,13 @@
 // the original stopped before resuming the restored copy, since both identify
 // the same installation. Unknown execution state does not prove work stopped.
 //
+// Scoped authentication is an explicit offline activation. ActivateScoped
+// preserves old rows and binds them to the reserved legacy principal. Scoped
+// admission methods require opaque auth actors; trusted reconciliation retains
+// unscoped reads and updates. Principal request namespaces and dense listing
+// indexes keep another principal's submissions out of results and cursors.
+// The separately managed auth file is not included in a database snapshot.
+//
 // Open migrates supported legacy state atomically and refuses newer schemas
 // before writes. Rollback requires the matching binary and its old snapshot;
 // unfenced older binaries must never open a newer database.

@@ -154,6 +154,7 @@ func freeAddress(t *testing.T) string {
 type serverProcess struct {
 	exe, address, data string
 	env                []string
+	args               []string // nil preserves the legacy coverage-token server
 
 	mu   sync.Mutex
 	cmd  *exec.Cmd
@@ -184,8 +185,19 @@ func (p *serverProcess) start(s *script.State) error {
 	if p.cmd != nil {
 		return errors.New("server already running")
 	}
-	cmd := exec.Command(p.exe, "server", "--listen", p.address, "--data-dir", p.data, "--token", "coverage-token")
+	args := []string{"server", "--listen", p.address, "--data-dir", p.data}
+	if p.args == nil {
+		args = append(args, "--token", "coverage-token")
+	} else {
+		args = append(args, p.args...)
+	}
+	cmd := exec.Command(p.exe, args...)
 	cmd.Env = append(s.Environ(), p.env...)
+	if p.args == nil {
+		// The script's clients use SKYGO_TOKEN; the server already names
+		// that credential explicitly and must not receive two sources.
+		cmd.Env = append(cmd.Env, "SKYGO_TOKEN=")
+	}
 	p.out.Reset()
 	p.diag.Reset()
 	cmd.Stdout = &p.out

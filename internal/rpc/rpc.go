@@ -2,15 +2,16 @@ package rpc
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"io/fs"
 	"net/http"
+	"sync"
 	"time"
 
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/store"
@@ -18,25 +19,69 @@ import (
 )
 
 type handler struct {
-	control *control.Control
-	streams chan struct{}
+	control    *control.Control
+	engine     *auth.Engine
+	streams    chan struct{}
+	denialMu   sync.Mutex
+	lastDenial time.Time
 }
 
-// NewHandler serves the control RPCs. A nonempty token authenticates every
-// RPC; transport encryption is the caller's responsibility.
-func NewHandler(c *control.Control, token string) http.Handler {
-	h := &handler{control: c, streams: make(chan struct{}, 32)}
+type actorKey struct{}
+type responseKey struct{}
+
+// NewHandler authenticates and serves the control RPCs. Transport encryption is
+// the caller's responsibility. The control and handler must share one Engine.
+func NewHandler(c *control.Control, engine *auth.Engine) http.Handler {
+	h := &handler{control: c, engine: engine, streams: make(chan struct{}, 32)}
 	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10))
 	mux := http.NewServeMux()
 	mux.Handle(path, service)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if token != "" && subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte("Bearer "+token)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		actor, err := engine.Authenticate(r.Header.Get("Authorization"))
+		if err != nil {
+			h.denialMu.Lock()
+			record := time.Since(h.lastDenial) >= time.Second
+			if record {
+				h.lastDenial = time.Now()
+			}
+			h.denialMu.Unlock()
+			if record {
+				_ = c.RecordAccess(auth.Actor{}, "authenticate", "", "denied")
+			}
+			code, message := http.StatusUnauthorized, "unauthenticated"
+			if errors.Is(err, auth.ErrUnavailable) {
+				code, message = http.StatusServiceUnavailable, "authentication unavailable"
+			}
+			http.Error(w, message, code)
 			return
 		}
-		mux.ServeHTTP(w, r)
+		ctx := context.WithValue(r.Context(), actorKey{}, actor)
+		response := &streamResponse{controller: http.NewResponseController(w), done: make(chan struct{})}
+		ctx = context.WithValue(ctx, responseKey{}, response)
+		// Connect writes and flushes final trailers after the RPC method returns.
+		// Stream cleanup belongs to this enclosing HTTP lifetime.
+		defer response.finish()
+		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+func requestActor(ctx context.Context) auth.Actor {
+	actor, _ := ctx.Value(actorKey{}).(auth.Actor)
+	return actor
+}
+
+func (h *handler) record(ctx context.Context, operation, resource string, err error) {
+	result := "allowed"
+	if err != nil {
+		resource = ""
+		result = "error"
+		if errors.Is(err, auth.ErrUnauthenticated) || errors.Is(err, auth.ErrPermissionDenied) || errors.Is(err, store.ErrNotFound) {
+			result = "denied"
+		}
+	}
+	_ = h.control.RecordAccess(requestActor(ctx), operation, resource, result)
+}
+
 func task(t *v1.Task) backend.Task {
 	if t == nil {
 		return backend.Task{}
@@ -58,6 +103,12 @@ func rpcError(err error) error {
 	}
 	code := connect.CodeInternal
 	switch {
+	case errors.Is(err, auth.ErrUnauthenticated):
+		code = connect.CodeUnauthenticated
+	case errors.Is(err, auth.ErrPermissionDenied):
+		code = connect.CodePermissionDenied
+	case errors.Is(err, auth.ErrUnavailable):
+		code = connect.CodeUnavailable
 	case errors.Is(err, context.Canceled):
 		code = connect.CodeCanceled
 	case errors.Is(err, context.DeadlineExceeded):
@@ -81,7 +132,8 @@ func rpcError(err error) error {
 	return connect.NewError(code, err)
 }
 func (h *handler) PlanTask(ctx context.Context, r *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error) {
-	name, rejections, err := h.control.Plan(task(r.Msg.Task))
+	name, rejections, err := h.control.Plan(requestActor(ctx), task(r.Msg.Task))
+	h.record(ctx, "plan", "", err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
@@ -92,21 +144,24 @@ func (h *handler) PlanTask(ctx context.Context, r *connect.Request[v1.PlanTaskRe
 	return connect.NewResponse(out), nil
 }
 func (h *handler) SubmitJob(ctx context.Context, r *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
-	j, err := h.control.Submit(r.Msg.RequestId, task(r.Msg.Task))
+	j, err := h.control.Submit(requestActor(ctx), r.Msg.RequestId, task(r.Msg.Task))
+	h.record(ctx, "submit", j.ID, err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
 	return connect.NewResponse(&v1.SubmitJobResponse{Job: job(j)}), nil
 }
 func (h *handler) GetJob(ctx context.Context, r *connect.Request[v1.GetJobRequest]) (*connect.Response[v1.GetJobResponse], error) {
-	j, err := h.control.Get(r.Msg.Id)
+	j, err := h.control.Get(requestActor(ctx), r.Msg.Id)
+	h.record(ctx, "get", j.ID, err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
 	return connect.NewResponse(&v1.GetJobResponse{Job: job(j)}), nil
 }
 func (h *handler) ListJobs(ctx context.Context, r *connect.Request[v1.ListJobsRequest]) (*connect.Response[v1.ListJobsResponse], error) {
-	jobs, next, err := h.control.List(int(r.Msg.PageSize), r.Msg.PageToken)
+	jobs, next, err := h.control.List(requestActor(ctx), int(r.Msg.PageSize), r.Msg.PageToken)
+	h.record(ctx, "list", "", err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
@@ -117,7 +172,8 @@ func (h *handler) ListJobs(ctx context.Context, r *connect.Request[v1.ListJobsRe
 	return connect.NewResponse(out), nil
 }
 func (h *handler) CancelJob(ctx context.Context, r *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error) {
-	j, err := h.control.Cancel(r.Msg.Id)
+	j, err := h.control.Cancel(requestActor(ctx), r.Msg.Id)
+	h.record(ctx, "cancel", j.ID, err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
@@ -125,7 +181,12 @@ func (h *handler) CancelJob(ctx context.Context, r *connect.Request[v1.CancelJob
 }
 func (h *handler) ListTargets(ctx context.Context, r *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {
 	out := &v1.ListTargetsResponse{}
-	for _, t := range h.control.Targets() {
+	targets, err := h.control.Targets(requestActor(ctx))
+	h.record(ctx, "targets", "", err)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	for _, t := range targets {
 		out.Targets = append(out.Targets, wireTarget(t))
 	}
 	return connect.NewResponse(out), nil
@@ -139,43 +200,13 @@ func wireTarget(t backend.Target) *v1.Target {
 
 func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
 	out := &v1.GetServerInfoResponse{}
-	for _, t := range h.control.Targets() {
+	targets, err := h.control.Targets(requestActor(ctx))
+	h.record(ctx, "info", "", err)
+	if err != nil {
+		return nil, rpcError(err)
+	}
+	for _, t := range targets {
 		out.Targets = append(out.Targets, wireTarget(t))
 	}
 	return connect.NewResponse(out), nil
-}
-
-func (h *handler) StreamJobLogs(ctx context.Context, r *connect.Request[v1.StreamJobLogsRequest], stream *connect.ServerStream[v1.StreamJobLogsResponse]) error {
-	select {
-	case h.streams <- struct{}{}:
-		defer func() { <-h.streams }()
-	default:
-		return connect.NewError(connect.CodeResourceExhausted, errors.New("log stream limit reached"))
-	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-	defer cancel()
-	offset := r.Msg.Offset
-	for {
-		chunk, err := h.control.Logs(ctx, r.Msg.Id, offset)
-		if err != nil {
-			return rpcError(err)
-		}
-		if err = stream.Send(&v1.StreamJobLogsResponse{Data: chunk.Data, NextOffset: chunk.NextOffset, Complete: chunk.Complete, Truncated: chunk.Truncated}); err != nil {
-			return err
-		}
-		offset = chunk.NextOffset
-		if chunk.Complete || (!r.Msg.Follow && len(chunk.Data) == 0) {
-			return nil
-		}
-		if len(chunk.Data) > 0 {
-			continue
-		}
-		timer := time.NewTimer(250 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return rpcError(ctx.Err())
-		case <-timer.C:
-		}
-	}
 }

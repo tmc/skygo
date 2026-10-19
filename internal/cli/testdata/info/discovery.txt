@@ -24,10 +24,12 @@ stderr 'not_found'
 ! skygo info --target supported --require future-jobs
 stderr 'unknown capability "future-jobs"'
 ! stdout .
+env SKYGO_TOKEN=
 ! skygo --token wrong info
 stderr 'unauthenticated'
 ! stderr 'legacy'
 ! stdout .
+env SKYGO_TOKEN=info-token
 skygo --endpoint http://127.0.0.1:1 info --help
 stdout '--target'
 stdout '--require'

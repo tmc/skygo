@@ -1,0 +1,91 @@
+# Real credential file commands and real scoped control-plane requests.
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+! stdout 'skygo_[0-9a-f]{32}_'
+! stderr .
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth principal add viewer --role reader --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+skygo auth token issue viewer --auth-file $AUTH --output viewer.token --expires-in 24h
+skygo --json auth token list --auth-file $AUTH
+stdout '"principal": *"alice"'
+! stdout '(digest|secret|skygo_[0-9a-f]{32}_)'
+server start
+taskfile success.json success
+taskfile hold.json hold
+
+# The same request ID belongs independently to two principals. Rotation for
+# one principal keeps that principal's existing accepted identity.
+skygo --token-file alice.token --json run -f success.json --request-id shared --wait
+job-id ALICE
+skygo --token-file bob.token --json run -f hold.json --request-id shared
+job-id BOB
+await-file ready
+skygo --token-file alice.token --json run -f success.json --request-id alice-second --wait
+job-id ALICE_SECOND
+skygo --token-file alice.token jobs logs $ALICE
+stdout '^done\n$'
+skygo --token-file admin.token jobs logs $BOB
+stdout '^holding\n$'
+
+# Foreign objects and missing objects produce exactly the same diagnostics.
+! skygo --token-file alice.token jobs get $BOB
+stderr '^not_found: '
+cp stderr missing.err
+! skygo --token-file alice.token jobs get 00000000000000000000000000000000
+cmp stderr missing.err
+! skygo --token-file alice.token jobs logs $BOB
+cmp stderr missing.err
+! skygo --token-file alice.token jobs cancel $BOB --yes
+cmp stderr missing.err
+skygo --token-file alice.token --json jobs list
+stdout '"id": *"'$ALICE'"'
+! stdout '"id": *"'$BOB'"'
+skygo --token-file viewer.token --json jobs list
+! stdout '"id"'
+skygo --token-file viewer.token targets list
+stdout 'local'
+skygo --token-file viewer.token plan -f success.json
+stdout '^local\n$'
+! skygo --token-file viewer.token run -f success.json --request-id forbidden
+stderr 'permission_denied: '
+! skygo --token-file viewer.token jobs cancel $ALICE --yes
+stderr '^permission_denied: '
+
+# Own pagination cannot reveal another principal's acceptance high-water.
+skygo --token-file alice.token --json jobs list --page-size 1
+page-token ALICE_PAGE
+cp stdout own-page.json
+skygo --token-file bob.token --json run -f success.json --request-id bob-second --wait
+skygo --token-file alice.token --json jobs list --page-size 1
+cmp stdout own-page.json
+! skygo --token-file bob.token jobs list --page-token $ALICE_PAGE
+stderr '^invalid_argument: '
+skygo --token-file admin.token --json jobs list --page-size 1
+page-token ADMIN_PAGE
+! skygo --token-file alice.token jobs list --page-token $ADMIN_PAGE
+stderr '^invalid_argument: '
+
+skygo auth token issue alice --auth-file $AUTH --output alice-new.token --expires-in 24h
+await-auth allowed alice-new.token jobs get $ALICE
+skygo --token-file alice-new.token --json run -f success.json --request-id shared --wait
+stdout '"id": *"'$ALICE'"'
+token-id alice.token OLD_ALICE
+skygo auth token revoke $OLD_ALICE --auth-file $AUTH
+await-auth unauthenticated alice.token jobs get $ALICE
+skygo --token-file alice-new.token jobs get $ALICE
+! stderr .
+
+# Administrative visibility does not create work under another principal.
+skygo --token-file admin.token --json run -f success.json --request-id shared --wait
+job-id ADMIN
+skygo --token-file admin.token --json jobs list
+stdout '"id": *"'$BOB'"'
+stdout '"id": *"'$ADMIN'"'
+skygo --token-file alice-new.token --json jobs list
+! stdout '"id": *"'$ADMIN'"'
+skygo --token-file admin.token jobs cancel $BOB --yes
+! stderr .
+server stop
+! stderr .

@@ -46,7 +46,10 @@ kubectl --context YOUR_CONTEXT -n skygo port-forward service/skygo 8080:8080
 The private token file must contain no trailing newline (for example, write it
 using `printf '%s'` with restrictive file permissions). The secret template is
 deliberately excluded from Kustomize. Do not commit a token. The server reads it
-at startup, so token rotation requires a restart.
+at startup, so token rotation requires a restart. This manifest uses the legacy
+single-operator mode. [Scoped authentication](authentication.md) additionally
+requires offline activation and a private auth-file mount; remove the legacy
+token environment and pass `--auth-file` when configuring that deployment.
 In another terminal, set `SKYGO_TOKEN` from the same private file and run:
 
 ```sh

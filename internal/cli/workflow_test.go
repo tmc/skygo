@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/local"
@@ -97,7 +98,8 @@ func runLocalWorkflow(t *testing.T, e *script.Engine, pattern string) {
 			t.Error(err)
 		}
 	})
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}})
+	engine := auth.NewLegacy("workflow-token")
+	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}}, engine)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +112,7 @@ func runLocalWorkflow(t *testing.T, e *script.Engine, pattern string) {
 			t.Error(err)
 		}
 	})
-	srv := httptest.NewServer(rpc.NewHandler(c, "workflow-token"))
+	srv := httptest.NewServer(rpc.NewHandler(c, engine))
 	t.Cleanup(srv.Close)
 	exe, err := os.Executable()
 	if err != nil {

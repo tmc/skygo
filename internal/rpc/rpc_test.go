@@ -17,6 +17,7 @@ import (
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/local"
@@ -46,6 +47,7 @@ func workload(mode string) *v1.Task {
 }
 
 type fixture struct {
+	actor   auth.Actor
 	client  skyv1connect.ControlServiceClient
 	control *control.Control
 	server  *httptest.Server
@@ -64,12 +66,20 @@ func setup(t *testing.T, token string, run bool) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}})
+	engine := auth.NewLegacy(token)
+	c, err := control.New(s, []backend.Target{{Name: "local", Kind: "local", Backend: b}}, engine)
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(rpc.NewHandler(c, token))
-	f := &fixture{client: skyv1connect.NewControlServiceClient(server.Client(), server.URL), control: c, server: server}
+	server := httptest.NewServer(rpc.NewHandler(c, engine))
+	actor, err := engine.Authenticate("Bearer " + token)
+	if token == "" {
+		actor, err = engine.Authenticate("")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &fixture{actor: actor, client: skyv1connect.NewControlServiceClient(server.Client(), server.URL), control: c, server: server}
 	if run {
 		f.start()
 	}

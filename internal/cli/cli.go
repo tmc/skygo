@@ -24,14 +24,14 @@ import (
 
 // ServerOptions configures the server callback.
 type ServerOptions struct {
-	DataDir, Listen, Token string
-	DisableLocal           bool
+	DataDir, Listen, Token, AuthFile string
+	DisableLocal                     bool
 }
 
 type options struct {
-	endpoint, token string
-	json            bool
-	timeout         time.Duration
+	endpoint, token, tokenFile string
+	json                       bool
+	timeout                    time.Duration
 }
 
 type jobError struct{ job *skyv1.Job }
@@ -55,21 +55,25 @@ func ExitCode(err error) int {
 // New builds the sole command tree. The caller supplies server startup and a
 // signal-aware context to ExecuteContext, and prints returned errors once.
 func New(server func(context.Context, ServerOptions) error) *cobra.Command {
-	o := &options{endpoint: "http://127.0.0.1:8080", token: os.Getenv("SKYGO_TOKEN"), timeout: 30 * time.Second}
+	o := &options{endpoint: "http://127.0.0.1:8080", timeout: 30 * time.Second}
 	if v := os.Getenv("SKYGO_ENDPOINT"); v != "" {
 		o.endpoint = v
 	}
 	root := &cobra.Command{Use: "skygo", Short: "Run finite jobs on local or Kubernetes targets", SilenceUsage: true, SilenceErrors: true}
 	root.CompletionOptions.DisableDefaultCmd = true
 	root.PersistentFlags().StringVar(&o.endpoint, "endpoint", o.endpoint, "Connect server URL (SKYGO_ENDPOINT)")
-	root.PersistentFlags().StringVar(&o.token, "token", o.token, "Bearer token (SKYGO_TOKEN)")
+	root.PersistentFlags().StringVar(&o.token, "token", o.token, "Bearer token (deprecated; prefer --token-file or SKYGO_TOKEN)")
+	root.PersistentFlags().StringVar(&o.tokenFile, "token-file", "", "Private bearer token file")
 	root.PersistentFlags().BoolVar(&o.json, "json", false, "Write protobuf JSON; logs use one JSON object per chunk")
 	root.PersistentFlags().DurationVar(&o.timeout, "timeout", o.timeout, "Per-RPC deadline (log follow and wait use the command context)")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		if localCommand(cmd) {
+			return nil
+		}
 		if o.timeout <= 0 {
 			return errors.New("timeout must be positive")
 		}
-		return nil
+		return o.resolveCredentials(cmd)
 	}
 	s := ServerOptions{}
 	srv := &cobra.Command{Use: "server", Short: "Serve the workload API", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
@@ -81,8 +85,9 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 	}}
 	srv.Flags().StringVar(&s.DataDir, "data-dir", "skygo-data", "Durable state directory")
 	srv.Flags().StringVar(&s.Listen, "listen", "127.0.0.1:8080", "HTTP listen address")
+	srv.Flags().StringVar(&s.AuthFile, "auth-file", "", "Private scoped authentication file")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
-	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand())
+	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand(), o.authCommand())
 	targets := &cobra.Command{Use: "targets", Short: "Inspect configured execution targets"}
 	targets.AddCommand(&cobra.Command{Use: "list", Short: "List execution targets", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)

@@ -16,8 +16,10 @@ stdout '"targets":'
 stdout '"name": *"local"'
 ! stderr .
 
+env SKYGO_TOKEN=
 ! skygo --token wrong targets list
 stderr 'unauthenticated'
+env SKYGO_TOKEN=test-token
 ! skygo jobs get missing
 stderr 'not_found'
 ! skygo jobs cancel j1
