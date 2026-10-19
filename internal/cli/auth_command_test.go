@@ -29,6 +29,9 @@ func TestTokenFile(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.data), tc.mode); err != nil {
 				t.Fatal(err)
 			}
+			if err := os.Chmod(path, tc.mode); err != nil {
+				t.Fatal(err)
+			}
 			got, err := readTokenFile(path)
 			if tc.want {
 				if err != nil || got != secret {
