@@ -28,13 +28,30 @@ func TestProgram(t *testing.T) {
 		fmt.Fprint(os.Stderr, " world")
 	case "fail":
 		os.Exit(7)
-	case "tree":
+	case "tree", "orphan", "orphan-fail":
 		child := exec.Command(os.Args[0], "-test.run=^TestProgram$")
 		child.Env = append(os.Environ(), "SKYGO_TEST_PROGRAM=tick")
 		child.Stdout = os.Stdout
 		child.Stderr = os.Stderr
 		if err := child.Start(); err != nil {
 			os.Exit(2)
+		}
+		if mode != "tree" {
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if _, err := os.Stat(os.Getenv("SKYGO_TICK")); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					os.Exit(4)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			fmt.Fprint(os.Stdout, "leader done")
+			if mode == "orphan-fail" {
+				os.Exit(7)
+			}
+			os.Exit(0)
 		}
 		time.Sleep(time.Minute)
 	case "tick":
@@ -48,6 +65,14 @@ func TestProgram(t *testing.T) {
 		time.Sleep(time.Minute)
 	case "output":
 		fmt.Fprint(os.Stdout, strings.Repeat("x", backend.MaxLogBytes+10000))
+	case "retention":
+		for {
+			if _, err := os.Stat(os.Getenv("SKYGO_RELEASE")); err == nil {
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		fmt.Fprint(os.Stdout, "hello")
 	}
 	os.Exit(0)
 }
@@ -133,6 +158,76 @@ func TestLifecycle(t *testing.T) {
 				t.Fatalf("out-of-range read error = %v", err)
 			}
 		})
+	}
+}
+
+func TestInheritedOutputPipes(t *testing.T) {
+	for _, tt := range []struct {
+		mode string
+		want backend.State
+		exit int32
+	}{{"orphan", backend.Succeeded, 0}, {"orphan-fail", backend.Failed, 7}} {
+		t.Run(tt.mode, func(t *testing.T) {
+			b := newBackend(t)
+			id := strings.Repeat("f", 32)
+			path := filepath.Join(t.TempDir(), "tick")
+			task := task(tt.mode)
+			task.Env["SKYGO_TICK"] = path
+			if err := b.Start(context.Background(), id, task); err != nil {
+				t.Fatal(err)
+			}
+			s := completed(t, b, id)
+			if s.State != tt.want || s.ExitCode == nil || *s.ExitCode != tt.exit {
+				t.Fatalf("status = %+v", s)
+			}
+			if tt.exit == 0 && !strings.Contains(s.Reason, "later output discarded") {
+				t.Fatalf("missing output-loss reason: %q", s.Reason)
+			}
+			chunk, err := b.Logs(context.Background(), backend.Reference{ID: id}, 0, backend.MaxChunkBytes)
+			if err != nil || string(chunk.Data) != "leader done" || !chunk.Complete {
+				t.Fatalf("logs = %+v, %v", chunk, err)
+			}
+			before, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			time.Sleep(100 * time.Millisecond)
+			after, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(before) != string(after) {
+				t.Fatal("descendant survived leader exit")
+			}
+		})
+	}
+}
+
+func TestOutputRetentionFailure(t *testing.T) {
+	b := newBackend(t)
+	id := strings.Repeat("f", 32)
+	release := filepath.Join(t.TempDir(), "release")
+	task := task("retention")
+	task.Env["SKYGO_RELEASE"] = release
+	if err := b.Start(context.Background(), id, task); err != nil {
+		t.Fatal(err)
+	}
+	// The helper waits for release, so closing its retained file cannot race Write.
+	b.mu.Lock()
+	out := b.jobs[id].output
+	b.mu.Unlock()
+	out.mu.Lock()
+	err := out.file.Close()
+	out.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(release, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := completed(t, b, id)
+	if s.State != backend.Failed || !strings.HasPrefix(s.Reason, "retain output: ") {
+		t.Fatalf("status = %+v", s)
 	}
 }
 
