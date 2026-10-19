@@ -106,17 +106,23 @@ be reconciled.
 
 ## Upgrade and rollback
 
-There is no schema migration or cross-version rollback guarantee yet. Before
-an upgrade, record the current image digest and retain the prior manifest.
+Before an upgrade, record the current image digest and retain the prior manifest.
 Scale the server to zero, wait for its Pod to terminate, and take a consistent
 volume backup using your storage system. Native workload Jobs remain running.
 Never copy the live database as a substitute for a consistent backup.
+With the server stopped and its volume mounted exclusively for maintenance,
+`skygo state backup --data-dir DIR --output FILE` makes a database-only snapshot.
+Use storage-level backups for other retained files. Restore with
+`skygo state restore --input FILE --data-dir NEW_DIR`; it refuses an existing
+directory. Preserve exactly one active copy of the installation identity.
 
 Apply the new digest and run the manual verification plan. If it fails, scale
 to zero again. Restore the pre-upgrade state backup before starting the prior
 image when storage compatibility has not been proved. This may lose jobs and
 request IDs accepted after the backup; reconcile their Kubernetes Jobs manually
 before retrying submissions. Do not run both versions concurrently.
+The schema fence refuses newer state in supported binaries; older unfenced
+binaries offer no such protection. Always use their matching pre-upgrade snapshot.
 
 A disposable test installation can be removed with:
 

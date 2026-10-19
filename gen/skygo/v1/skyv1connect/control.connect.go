@@ -51,6 +51,9 @@ const (
 	// ControlServiceListTargetsProcedure is the fully-qualified name of the ControlService's
 	// ListTargets RPC.
 	ControlServiceListTargetsProcedure = "/skygo.v1.ControlService/ListTargets"
+	// ControlServiceGetServerInfoProcedure is the fully-qualified name of the ControlService's
+	// GetServerInfo RPC.
+	ControlServiceGetServerInfoProcedure = "/skygo.v1.ControlService/GetServerInfo"
 )
 
 // ControlServiceClient is a client for the skygo.v1.ControlService service.
@@ -62,6 +65,7 @@ type ControlServiceClient interface {
 	CancelJob(context.Context, *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error)
 	StreamJobLogs(context.Context, *connect.Request[v1.StreamJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamJobLogsResponse], error)
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
+	GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error)
 }
 
 // NewControlServiceClient constructs a client for the skygo.v1.ControlService service. By default,
@@ -117,6 +121,12 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(controlServiceMethods.ByName("ListTargets")),
 			connect.WithClientOptions(opts...),
 		),
+		getServerInfo: connect.NewClient[v1.GetServerInfoRequest, v1.GetServerInfoResponse](
+			httpClient,
+			baseURL+ControlServiceGetServerInfoProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("GetServerInfo")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -129,6 +139,7 @@ type controlServiceClient struct {
 	cancelJob     *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
 	streamJobLogs *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
 	listTargets   *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
+	getServerInfo *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
 }
 
 // PlanTask calls skygo.v1.ControlService.PlanTask.
@@ -166,6 +177,11 @@ func (c *controlServiceClient) ListTargets(ctx context.Context, req *connect.Req
 	return c.listTargets.CallUnary(ctx, req)
 }
 
+// GetServerInfo calls skygo.v1.ControlService.GetServerInfo.
+func (c *controlServiceClient) GetServerInfo(ctx context.Context, req *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
+	return c.getServerInfo.CallUnary(ctx, req)
+}
+
 // ControlServiceHandler is an implementation of the skygo.v1.ControlService service.
 type ControlServiceHandler interface {
 	PlanTask(context.Context, *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error)
@@ -175,6 +191,7 @@ type ControlServiceHandler interface {
 	CancelJob(context.Context, *connect.Request[v1.CancelJobRequest]) (*connect.Response[v1.CancelJobResponse], error)
 	StreamJobLogs(context.Context, *connect.Request[v1.StreamJobLogsRequest], *connect.ServerStream[v1.StreamJobLogsResponse]) error
 	ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error)
+	GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error)
 }
 
 // NewControlServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -226,6 +243,12 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		connect.WithSchema(controlServiceMethods.ByName("ListTargets")),
 		connect.WithHandlerOptions(opts...),
 	)
+	controlServiceGetServerInfoHandler := connect.NewUnaryHandler(
+		ControlServiceGetServerInfoProcedure,
+		svc.GetServerInfo,
+		connect.WithSchema(controlServiceMethods.ByName("GetServerInfo")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/skygo.v1.ControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ControlServicePlanTaskProcedure:
@@ -242,6 +265,8 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServiceStreamJobLogsHandler.ServeHTTP(w, r)
 		case ControlServiceListTargetsProcedure:
 			controlServiceListTargetsHandler.ServeHTTP(w, r)
+		case ControlServiceGetServerInfoProcedure:
+			controlServiceGetServerInfoHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -277,4 +302,8 @@ func (UnimplementedControlServiceHandler) StreamJobLogs(context.Context, *connec
 
 func (UnimplementedControlServiceHandler) ListTargets(context.Context, *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.ListTargets is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.GetServerInfo is not implemented"))
 }

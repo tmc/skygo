@@ -22,7 +22,7 @@ type handler struct {
 	streams chan struct{}
 }
 
-// NewHandler serves the seven control RPCs. A nonempty token authenticates every
+// NewHandler serves the control RPCs. A nonempty token authenticates every
 // RPC; transport encryption is the caller's responsibility.
 func NewHandler(c *control.Control, token string) http.Handler {
 	h := &handler{control: c, streams: make(chan struct{}, 32)}
@@ -126,10 +126,25 @@ func (h *handler) CancelJob(ctx context.Context, r *connect.Request[v1.CancelJob
 func (h *handler) ListTargets(ctx context.Context, r *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {
 	out := &v1.ListTargetsResponse{}
 	for _, t := range h.control.Targets() {
-		out.Targets = append(out.Targets, &v1.Target{Name: t.Name, Kind: t.Kind})
+		out.Targets = append(out.Targets, wireTarget(t))
 	}
 	return connect.NewResponse(out), nil
 }
+
+// All current backends implement finite jobs. New target-specific semantics must
+// be advertised and checked by that integration when they are introduced.
+func wireTarget(t backend.Target) *v1.Target {
+	return &v1.Target{Name: t.Name, Kind: t.Kind, Capabilities: []v1.Capability{v1.Capability_CAPABILITY_FINITE_JOBS_V1}}
+}
+
+func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
+	out := &v1.GetServerInfoResponse{}
+	for _, t := range h.control.Targets() {
+		out.Targets = append(out.Targets, wireTarget(t))
+	}
+	return connect.NewResponse(out), nil
+}
+
 func (h *handler) StreamJobLogs(ctx context.Context, r *connect.Request[v1.StreamJobLogsRequest], stream *connect.ServerStream[v1.StreamJobLogsResponse]) error {
 	select {
 	case h.streams <- struct{}{}:

@@ -28,6 +28,14 @@ Comments pin the upstream source used for each analogue and identify Go-specific
 contracts. These tests do not execute upstream SkyPilot or establish drop-in CLI
 compatibility; command names, task YAML, defaults and exit codes differ.
 
+`GOWORK=off go test ./internal/cli -run '^TestCoverage$' -count=1`
+runs separate production server and CLI processes for interrupted log follow,
+graceful restart/request replay, writer exclusion, and responses lost after
+submission/cancellation was processed. Coverage-mode builds collect helper
+subprocess data; the parent test's displayed percentage alone does not include
+all subprocess coverage. Parent `-race` does not instrument those separately
+built executables.
+
 ## Local lifecycle
 
 Use a new private task directory. In terminal A:
@@ -50,6 +58,29 @@ Expect `local`, then the same successful job ID on both submissions. Copy that
 ID and check `jobs logs ID` prints `hello from skygo`. Restart terminal A using
 the same data directory and repeat the submission: expect the same ID and logs.
 Starting another server with that directory must fail the writer lock.
+
+`./bin/skygo info --target local --require finite-jobs-v1` must report the local
+finite-job capability. An unknown target or required capability must fail.
+Use `--json` to inspect the typed response; `targets list` retains its plain table.
+
+Stop terminal A, then make a database-only snapshot and restore into a fresh
+directory:
+
+```sh
+./bin/skygo state backup --data-dir "$HOME/tmp/skygo/manual-test/state" \
+  --output "$HOME/tmp/skygo/manual-test/state.db"
+./bin/skygo state restore --input "$HOME/tmp/skygo/manual-test/state.db" \
+  --data-dir "$HOME/tmp/skygo/manual-test/restored"
+./bin/skygo server --data-dir "$HOME/tmp/skygo/manual-test/restored"
+```
+
+Repeat the original completed submission from terminal B: expect the same ID
+and status. Logs are excluded from the snapshot and are unavailable in this
+fresh restore. Stop this server before returning to the original directory;
+the two copies share an installation identity. Repeating backup to the existing
+file or restore to the existing directory must fail without overwriting either.
+Backup while the original writable server is running must fail its database lock.
+Do not point an old unfenced binary at migrated state as a rollback test.
 
 ```sh
 ./bin/skygo run -f examples/local-sleep.yaml --request-id manual-sleep
