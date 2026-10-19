@@ -1,0 +1,5 @@
+run: echo alternative
+resources:
+  any_of:
+    - cpus: '2+'
+    - cpus: '4+'

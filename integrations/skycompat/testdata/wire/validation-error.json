@@ -1,0 +1,11 @@
+{
+  "detail": {
+    "type": "ValueError",
+    "message": "unsupported resources.cloud",
+    "args": [
+      "unsupported resources.cloud"
+    ],
+    "attributes": {},
+    "stacktrace": null
+  }
+}

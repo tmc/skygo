@@ -1,0 +1,20 @@
+{
+  "detail": {
+    "request_id": "11111111-2222-4333-8444-555555555555",
+    "name": "sky.jobs.launch",
+    "entrypoint": "gAROLg==",
+    "request_body": "gAROLg==",
+    "status": "FAILED",
+    "created_at": 1700000000.0,
+    "user_id": "conformance-user",
+    "return_value": "null",
+    "error": "{\"object\":\"gASVaQAAAAAAAAB9lCiMBHR5cGWUjApWYWx1ZUVycm9ylIwHbWVzc2FnZZSMG3Vuc3VwcG9ydGVkIHJlc291cmNlcy5jbG91ZJSMBGFyZ3OUaASFlIwKYXR0cmlidXRlc5R9lIwKc3RhY2t0cmFjZZROdS4=\",\"type\":\"ValueError\",\"message\":\"unsupported resources.cloud\"}",
+    "pid": null,
+    "schedule_type": "long",
+    "cluster_name": null,
+    "status_msg": null,
+    "should_retry": false,
+    "finished_at": 1700000001.0,
+    "file_mounts_blob_id": null
+  }
+}

@@ -1,0 +1,3 @@
+run: echo ratio
+resources:
+  memory: '3x'

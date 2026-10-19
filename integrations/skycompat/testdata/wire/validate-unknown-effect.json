@@ -1,0 +1,5 @@
+{
+  "dag": "run: echo data\n",
+  "request_options": null,
+  "run_as_admin": true
+}

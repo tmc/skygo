@@ -1,0 +1,3 @@
+run: echo gpu
+resources:
+  accelerators: A100:2

@@ -1,0 +1,18 @@
+{
+  "request_id": "11111111-2222-4333-8444-555555555555",
+  "name": "sky.jobs.launch",
+  "entrypoint": "gAROLg==",
+  "request_body": "gAROLg==",
+  "status": "SUCCEEDED",
+  "created_at": 1700000000.0,
+  "user_id": "conformance-user",
+  "return_value": "{\"job_id\":1,\"handle\":null}",
+  "error": "null",
+  "pid": null,
+  "schedule_type": "long",
+  "cluster_name": null,
+  "status_msg": null,
+  "should_retry": false,
+  "finished_at": 1700000001.0,
+  "file_mounts_blob_id": null
+}

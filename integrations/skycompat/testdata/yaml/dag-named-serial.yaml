@@ -1,0 +1,4 @@
+name: example
+execution: serial
+---
+run: echo single

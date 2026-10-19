@@ -1,0 +1,3 @@
+run: echo bad
+resources:
+  surprise_gpu_policy: true

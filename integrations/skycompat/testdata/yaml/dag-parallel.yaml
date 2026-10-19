@@ -1,0 +1,4 @@
+name: example
+execution: parallel
+---
+run: echo single

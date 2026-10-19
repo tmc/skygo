@@ -1,0 +1,7 @@
+{
+  "resources": {},
+  "num_nodes": 1,
+  "run": "echo skycompat",
+  "file_mounts": {},
+  "volumes": {}
+}

@@ -1,0 +1,5 @@
+name: chain
+---
+run: echo first
+---
+run: echo second

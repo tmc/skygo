@@ -1,0 +1,7 @@
+run: echo env
+envs:
+  NAME: two words
+  COUNT: 12
+  ENABLED: true
+  DISABLED: false
+  EMPTY: ''

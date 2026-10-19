@@ -1,0 +1,6 @@
+run: echo provider
+resources:
+  cloud: aws
+  region: us-east-1
+  zone: us-east-1a
+  instance_type: m5.large

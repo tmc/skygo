@@ -1,0 +1,6 @@
+run: echo config
+config:
+  kubernetes:
+    pod_config:
+      spec:
+        hostNetwork: true
