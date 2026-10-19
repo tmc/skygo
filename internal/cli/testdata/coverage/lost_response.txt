@@ -1,0 +1,41 @@
+# A response lost after the server committed the operation. The proxy at
+# $PROXY forwards each request to the server; drop-response discards the
+# server's reply and closes the client connection.
+# Go contract: cli.go:181-188 (print the request ID before sending and name it
+# in the error), control.go:122-145 (a known request ID returns its job),
+# control.go:208-219 (cancellation is idempotent intent).
+server start
+taskfile success.json success
+taskfile hold.json hold
+
+drop-response /skygo.v1.ControlService/SubmitJob
+! skygo --endpoint $PROXY run -f success.json --request-id lost --wait
+stderr '^request-id: lost\n'
+stderr 'submit \(retry with --request-id lost\): '
+! stderr '^job: '
+! stdout .
+
+# The job was accepted anyway. Retrying the printed ID returns it rather than
+# creating a second job.
+skygo --json --endpoint $PROXY run -f success.json --request-id lost --wait
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+job-id LOST
+skygo jobs list
+stdout '^ID +TARGET +STATE\n'$LOST' +local +succeeded\n$'
+
+# A lost cancellation reply still cancels; repeating it is safe.
+skygo --json run -f hold.json --request-id hold
+job-id HOLD
+await-file ready
+drop-response /skygo.v1.ControlService/CancelJob
+! skygo --endpoint $PROXY jobs cancel $HOLD --yes
+! stdout .
+! skygo --json run -f hold.json --request-id hold --wait
+stdout '"state": *"JOB_STATE_CANCELED"'
+stdout '"cancel_requested": *true'
+skygo --json --endpoint $PROXY jobs cancel $HOLD --yes
+stdout '"id": *"'$HOLD'"'
+stdout '"state": *"JOB_STATE_CANCELED"'
+
+server stop
+! stderr .

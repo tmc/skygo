@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"flag"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -191,7 +192,32 @@ func scriptEngine(t *testing.T) *script.Engine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return executableScriptEngine(exe, []string{"-test.run=^TestCLIHelper$", "--"}, []string{"SKYGO_TEST_HELPER=1"})
+	env := []string{"SKYGO_TEST_HELPER=1"}
+	if dir := coverDir(t); dir != "" {
+		env = append(env, "GOCOVERDIR="+dir)
+	}
+	return executableScriptEngine(exe, []string{"-test.run=^TestCLIHelper$", "--"}, env)
+}
+
+// coverDir returns a new directory for coverage data written by subprocesses
+// of this test, or "" if the test binary is not instrumented. The directory is
+// created under -test.gocoverdir, so the data outlives the test when that flag
+// names a persistent directory; `go tool covdata` can then merge it.
+func coverDir(t *testing.T) string {
+	t.Helper()
+	if testing.CoverMode() == "" {
+		return ""
+	}
+	root := t.TempDir()
+	if f := flag.Lookup("test.gocoverdir"); f != nil && f.Value.String() != "" {
+		root = f.Value.String()
+	}
+	name := strings.NewReplacer("/", "_", " ", "_").Replace(t.Name())
+	dir, err := os.MkdirTemp(root, "subprocess-"+name+"-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 
 func executableScriptEngine(exe string, prefix, env []string) *script.Engine {
