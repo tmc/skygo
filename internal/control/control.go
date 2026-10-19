@@ -256,6 +256,10 @@ func (c *Control) Logs(ctx context.Context, id string, offset int64) (backend.Lo
 	if err == nil {
 		return chunk, nil
 	}
+	// Starting intent is durable before Start creates the backend's log stream.
+	if j.Status.State == backend.Starting && offset == 0 && errors.Is(err, fs.ErrNotExist) {
+		return backend.LogChunk{}, nil
+	}
 	if errors.Is(err, fs.ErrInvalid) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return chunk, err
 	}
