@@ -24,6 +24,9 @@ type scopeFixture struct {
 func newScopeFixture(t *testing.T) scopeFixture {
 	t.Helper()
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	s, err := Open(filepath.Join(dir, "state"))
 	if err != nil {
 		t.Fatal(err)
