@@ -44,53 +44,31 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
 	}
-	db, err := bolt.Open(filepath.Join(dir, "jobs.db"), 0600, &bolt.Options{Timeout: time.Second})
+	db, err := bolt.Open(filepath.Join(dir, "jobs.db"), 0600, &bolt.Options{Timeout: time.Second, NoFreelistSync: true})
 	if err != nil {
 		return nil, fmt.Errorf("open job database: %w", err)
 	}
 	s := &Store{db: db}
-	err = db.Update(func(tx *bolt.Tx) error {
-		for _, name := range [][]byte{jobsBucket, requestsBucket, sequenceBucket, metadataBucket} {
-			if _, err := tx.CreateBucketIfNotExists(name); err != nil {
-				return err
+	// bbolt may flush an unsynced freelist during Open. Defer that write until
+	// the schema has been accepted while holding the exclusive writer lock.
+	err = db.View(validateExisting)
+	var owner string
+	if err == nil {
+		err = db.View(func(tx *bolt.Tx) error {
+			if m := tx.Bucket(metadataBucket); m != nil {
+				owner = string(m.Get([]byte("owner")))
 			}
-		}
-		m := tx.Bucket(metadataBucket)
-		// Older stores have no aggregate counter. Derive it once before admitting
-		// new tasks; existing bindings remain valid even above the current cap.
-		if data := m.Get(taskBytesKey); data == nil {
-			var total uint64
-			if err := tx.Bucket(jobsBucket).ForEach(func(_, data []byte) error {
-				var j backend.Job
-				if err := json.Unmarshal(data, &j); err != nil {
-					return err
-				}
-				task, err := json.Marshal(j.Task)
-				if err != nil {
-					return err
-				}
-				total += uint64(len(task))
-				return nil
-			}); err != nil {
-				return err
-			}
-			if err := m.Put(taskBytesKey, sequenceKey(total)); err != nil {
-				return err
-			}
-		} else if len(data) != 8 {
-			return errors.New("invalid task byte counter")
-		}
-		s.owner = string(m.Get([]byte("owner")))
-		if s.owner == "" {
-			id, err := newID()
-			if err != nil {
-				return err
-			}
-			s.owner = id
-			return m.Put([]byte("owner"), []byte(id))
-		}
-		return nil
-	})
+			return nil
+		})
+	}
+	if err == nil && owner == "" {
+		owner, err = newID()
+	}
+	if err == nil {
+		db.NoFreelistSync = false
+		err = db.Update(func(tx *bolt.Tx) error { return initialize(tx, owner) })
+	}
+	s.owner = owner
 	if err != nil {
 		db.Close()
 		return nil, fmt.Errorf("initialize job database: %w", err)
