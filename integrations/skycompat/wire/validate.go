@@ -14,7 +14,8 @@ type ValidateBody struct{ DAG string }
 // DecodeValidate reads at most 1 MiB and accepts exactly the selected API67
 // validation fields. DAG text is limited to 512 KiB; JSON nesting to 32 levels
 // and tokens to 65536. Duplicate and unknown fields fail. Recognized display and
-// telemetry context is bounded and discarded, never used as identity or env.
+// telemetry context and config-path text are bounded and discarded, never used
+// as identity, environment, or server configuration.
 // Nondefault configuration, policy, upload, or authority fields are unsupported.
 func DecodeValidate(r io.Reader) (ValidateBody, error) { return decodeValidate(r) }
 
@@ -50,7 +51,12 @@ func decodeValidate(r io.Reader) (ValidateBody, error) {
 					err = unsupported(key)
 				}
 			}
-		case "override_skypilot_config_path", "file_mounts_blob_id", "client_api_version", "workspace_access", "request_options":
+		case "override_skypilot_config_path":
+			if !isNull(value) {
+				// Client path provenance is text, not a server file or configuration.
+				_, err = text(value, 4096, key)
+			}
+		case "file_mounts_blob_id", "client_api_version", "workspace_access", "request_options":
 			if !isNull(value) {
 				err = unsupported(key)
 			}

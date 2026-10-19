@@ -66,3 +66,53 @@ shipping product must build and execute with CGO disabled and without Python.
 | duplicate/unsafe tags/anchors/deep documents | Invalid/limit refusal with safe source location | No execution |
 | request/error envelopes | Three actual pinned-SDK decoder checks pass | No HTTP handler/request-lifecycle or real launch proof |
 | real SDK HTTP + canonical execution | Not qualified by corpus | C03/C04/C05 and underlying accepted domains |
+
+
+## E0 HTTP health and validation qualification
+
+The facade has a separate real HTTP qualification, not inferred from the corpus
+above. Against a real canonical scoped server with accepted credential format,
+the unmodified pinned SDK performed health/version discovery, public
+`sky.client.sdk.validate` for its ordinary one-task DAG, and a resource-negative
+validation that reconstructed ValueError. The honest implementation version
+`0.0.0+skycompat.api67` was accepted. Config-only credentials were absent from
+transmitted bodies. The separate environment-token negative case was refused;
+no body-token allowlist or SDK monkeypatch was used.
+
+The current profile serves GET `/api/health` and POST `/validate` only. Health
+returns public version fields and user null; successful validation returns JSON
+null. Validation forwards the original bearer credential on a fresh canonical
+GetServerInfo and accepts only the narrow inert task subset documented in the
+README. It does not plan or submit work. Known nonnull
+`override_skypilot_config_path` is accepted only as null or bounded4096-byte text,
+discarded without inner JSON interpretation, path access or config merging.
+Nondefault config content, identity authority, uploads and environment secrets
+remain refused.
+
+Actual-process HTTP tests covered two principals including a reader, missing/bad
+credentials, revocation, expiry, auth-unavailable recovery, duplicate headers,
+negative/default fields and zero jobs created. Real TCP tests bounded incomplete
+bodies and disconnects, including unknown-route rejection. A stalled-response
+proxy covered the two-second canonical deadline and admission cap. A separate
+controlled response writer verified permits remain held during frontend flush
+and release on completion/deadline; that test is not TCP backpressure evidence.
+
+Receipts for this E0 candidate are retained in the coordinator's task evidence,
+`20261018-gap-closure-execution/skycompat/E0/facade-work`, including source hashes,
+normal/race/vet results and redacted SDK HTTP traces. Child canonical processes
+were CGO-disabled production builds, not race-instrumented merely because their
+Go parent test ran with -race. Tests requiring the external canonical binary or
+pinned Python oracle skip when those explicit test inputs are absent; a default
+standalone unit run alone does not repeat the HTTP/SDK qualification.
+
+| E0 surface | Qualification | Remaining limit |
+| --- | --- | --- |
+| Health/version | Real scoped canonical process and unmodified pinned SDK | Selected implementation/profile identity only |
+| One-task validation | Real SDK positive and expected ValueError negatives | Narrow inert subset; no lowering/execution |
+| Config credentials/provenance | Real header forwarding; body-secret negative refused | No environment-token mode or configuration override |
+| Bounded body/admission | Real TCP and separately labeled controlled flush tests | Embedding server owns header/connection limits |
+| Async requests, jobs, environments, services | Not implemented by this facade | Corresponding canonical domain and E1 identity gates remain open |
+
+These E0 receipts do not promote the earlier illustrative async codec fixtures
+to real request-lifecycle support, nor qualify Kubernetes/SSH/cloud execution,
+full API67, or a published standalone module.

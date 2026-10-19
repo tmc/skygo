@@ -10,9 +10,9 @@ required by either application.
 This is an independent, small implementation of selected SkyPilot concerns:
 task validation, target selection, submission, status, logs, and cancellation.
 The CLI uses its own task format. The optional `integrations/skycompat` module
-parses selected upstream task YAML and provides selected API wire codecs. It
-does not yet serve upstream HTTP endpoints or execute imported tasks. See its
-[supported subset](integrations/skycompat/README.md).
+parses selected upstream task YAML and provides wire codecs and an authenticated
+HTTP handler for health and syntax validation. Imported tasks remain inert. See
+its [supported subset](integrations/skycompat/README.md).
 
 ## Run locally
 

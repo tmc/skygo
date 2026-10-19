@@ -37,6 +37,44 @@ func TestDecodeValidateDefaults(t *testing.T) {
 		}
 	}
 }
+func TestDecodeValidateConfigProvenance(t *testing.T) {
+	const dag = "run: echo hello"
+	want := ValidateBody{DAG: dag}
+	// Neither an existing client file nor an absent path may be loaded or
+	// merged as server configuration. Only the DAG belongs in ValidateBody.
+	path := filepath.Join(t.TempDir(), "client-config.yaml")
+	if err := os.WriteFile(path, []byte("secret-canary: unsupported configuration\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	serialized, err := json.Marshal([]any{path, nil})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{
+		nil, "", string(serialized), filepath.Join(t.TempDir(), "absent.yaml"),
+		"not inner JSON: {", strings.Repeat("x", 4096), strings.Repeat("é", 2048),
+	} {
+		data, err := json.Marshal(map[string]any{"dag": dag, "override_skypilot_config_path": value})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := DecodeValidate(bytes.NewReader(data))
+		if err != nil || got != want {
+			t.Fatalf("provenance affected validation body: %v", err)
+		}
+	}
+	// The boundary counts decoded UTF-8 bytes, not code points or JSON escapes.
+	data, err := json.Marshal(map[string]any{"dag": dag, "override_skypilot_config_path": strings.Repeat("é", 2049)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = DecodeValidate(bytes.NewReader(data))
+	var limit *DecodeError
+	if !errors.As(err, &limit) || limit.Code != "limit" || limit.Field != "override_skypilot_config_path" {
+		t.Fatalf("multibyte provenance limit: %v", err)
+	}
+}
+
 func TestDecodeValidateInvalid(t *testing.T) {
 	for _, tt := range []struct{ name, input, code, field string }{
 		{"empty", "", "invalid", ""}, {"null", "null", "invalid", ""}, {"array", "[]", "invalid", ""},
@@ -51,7 +89,11 @@ func TestDecodeValidateInvalid(t *testing.T) {
 		{"remote type", `{"dag":"a","using_remote_api_server":null}`, "invalid", "using_remote_api_server"},
 		{"config", `{"dag":"a","override_skypilot_config":{"secret-canary":true}}`, "unsupported", "override_skypilot_config"},
 		{"config type", `{"dag":"a","override_skypilot_config":[]}`, "invalid", "override_skypilot_config"},
-		{"config path", `{"dag":"a","override_skypilot_config_path":"secret-canary"}`, "unsupported", "override_skypilot_config_path"},
+		{"config path number", `{"dag":"a","override_skypilot_config_path":1}`, "invalid", "override_skypilot_config_path"},
+		{"config path boolean", `{"dag":"a","override_skypilot_config_path":true}`, "invalid", "override_skypilot_config_path"},
+		{"config path array", `{"dag":"a","override_skypilot_config_path":["secret-canary"]}`, "invalid", "override_skypilot_config_path"},
+		{"config path object", `{"dag":"a","override_skypilot_config_path":{"secret-canary":true}}`, "invalid", "override_skypilot_config_path"},
+		{"config path oversized", `{"dag":"a","override_skypilot_config_path":"` + strings.Repeat("secret-canary", 342) + `"}`, "limit", "override_skypilot_config_path"},
 		{"authority", `{"dag":"a","workspace_access":"admin-secret-canary"}`, "unsupported", "workspace_access"},
 		{"client version", `{"dag":"a","client_api_version":67}`, "unsupported", "client_api_version"},
 		{"upload", `{"dag":"a","file_mounts_blob_id":"secret-canary"}`, "unsupported", "file_mounts_blob_id"},
