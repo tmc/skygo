@@ -155,3 +155,11 @@ func ExampleControl_LogAttempt() {
 	fmt.Println(selected == job.ID, err)
 	// Output: true <nil>
 }
+
+func ExampleControl_QuoteTask() {
+	c, close := exampleControl()
+	defer close()
+	plan, err := c.QuoteTask(testActor(), backend.Task{Argv: []string{"trainer"}}, "USD", backend.TargetHour, nil)
+	fmt.Println(plan.Outcome, plan.SelectedTarget, len(plan.Candidates), err)
+	// Output: no_comparable_quote  1 <nil>
+}

@@ -148,6 +148,485 @@ func (Capability) EnumDescriptor() ([]byte, []int) {
 	return file_skygo_v1_control_proto_rawDescGZIP(), []int{1}
 }
 
+// RateUnit is the denominator of an operator-configured rate.
+type RateUnit int32
+
+const (
+	RateUnit_RATE_UNIT_UNSPECIFIED      RateUnit = 0
+	RateUnit_RATE_UNIT_TARGET_HOUR      RateUnit = 1
+	RateUnit_RATE_UNIT_CPU_HOUR         RateUnit = 2
+	RateUnit_RATE_UNIT_ACCELERATOR_HOUR RateUnit = 3
+)
+
+// Enum value maps for RateUnit.
+var (
+	RateUnit_name = map[int32]string{
+		0: "RATE_UNIT_UNSPECIFIED",
+		1: "RATE_UNIT_TARGET_HOUR",
+		2: "RATE_UNIT_CPU_HOUR",
+		3: "RATE_UNIT_ACCELERATOR_HOUR",
+	}
+	RateUnit_value = map[string]int32{
+		"RATE_UNIT_UNSPECIFIED":      0,
+		"RATE_UNIT_TARGET_HOUR":      1,
+		"RATE_UNIT_CPU_HOUR":         2,
+		"RATE_UNIT_ACCELERATOR_HOUR": 3,
+	}
+)
+
+func (x RateUnit) Enum() *RateUnit {
+	p := new(RateUnit)
+	*p = x
+	return p
+}
+
+func (x RateUnit) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (RateUnit) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[2].Descriptor()
+}
+
+func (RateUnit) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[2]
+}
+
+func (x RateUnit) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use RateUnit.Descriptor instead.
+func (RateUnit) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{2}
+}
+
+// Gate A facts are configured, never live provider observations.
+type FactOrigin int32
+
+const (
+	FactOrigin_FACT_ORIGIN_UNSPECIFIED FactOrigin = 0
+	FactOrigin_FACT_ORIGIN_CONFIGURED  FactOrigin = 1
+)
+
+// Enum value maps for FactOrigin.
+var (
+	FactOrigin_name = map[int32]string{
+		0: "FACT_ORIGIN_UNSPECIFIED",
+		1: "FACT_ORIGIN_CONFIGURED",
+	}
+	FactOrigin_value = map[string]int32{
+		"FACT_ORIGIN_UNSPECIFIED": 0,
+		"FACT_ORIGIN_CONFIGURED":  1,
+	}
+)
+
+func (x FactOrigin) Enum() *FactOrigin {
+	p := new(FactOrigin)
+	*p = x
+	return p
+}
+
+func (x FactOrigin) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FactOrigin) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[3].Descriptor()
+}
+
+func (FactOrigin) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[3]
+}
+
+func (x FactOrigin) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FactOrigin.Descriptor instead.
+func (FactOrigin) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{3}
+}
+
+type CapacityState int32
+
+const (
+	CapacityState_CAPACITY_STATE_UNSPECIFIED CapacityState = 0
+	CapacityState_CAPACITY_STATE_AVAILABLE   CapacityState = 1
+	CapacityState_CAPACITY_STATE_UNAVAILABLE CapacityState = 2
+	CapacityState_CAPACITY_STATE_ERROR       CapacityState = 3
+)
+
+// Enum value maps for CapacityState.
+var (
+	CapacityState_name = map[int32]string{
+		0: "CAPACITY_STATE_UNSPECIFIED",
+		1: "CAPACITY_STATE_AVAILABLE",
+		2: "CAPACITY_STATE_UNAVAILABLE",
+		3: "CAPACITY_STATE_ERROR",
+	}
+	CapacityState_value = map[string]int32{
+		"CAPACITY_STATE_UNSPECIFIED": 0,
+		"CAPACITY_STATE_AVAILABLE":   1,
+		"CAPACITY_STATE_UNAVAILABLE": 2,
+		"CAPACITY_STATE_ERROR":       3,
+	}
+)
+
+func (x CapacityState) Enum() *CapacityState {
+	p := new(CapacityState)
+	*p = x
+	return p
+}
+
+func (x CapacityState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CapacityState) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[4].Descriptor()
+}
+
+func (CapacityState) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[4]
+}
+
+func (x CapacityState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CapacityState.Descriptor instead.
+func (CapacityState) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{4}
+}
+
+type CapacityFailureReason int32
+
+const (
+	CapacityFailureReason_CAPACITY_FAILURE_REASON_UNSPECIFIED        CapacityFailureReason = 0
+	CapacityFailureReason_CAPACITY_FAILURE_REASON_SOURCE_UNAVAILABLE CapacityFailureReason = 1
+)
+
+// Enum value maps for CapacityFailureReason.
+var (
+	CapacityFailureReason_name = map[int32]string{
+		0: "CAPACITY_FAILURE_REASON_UNSPECIFIED",
+		1: "CAPACITY_FAILURE_REASON_SOURCE_UNAVAILABLE",
+	}
+	CapacityFailureReason_value = map[string]int32{
+		"CAPACITY_FAILURE_REASON_UNSPECIFIED":        0,
+		"CAPACITY_FAILURE_REASON_SOURCE_UNAVAILABLE": 1,
+	}
+)
+
+func (x CapacityFailureReason) Enum() *CapacityFailureReason {
+	p := new(CapacityFailureReason)
+	*p = x
+	return p
+}
+
+func (x CapacityFailureReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CapacityFailureReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[5].Descriptor()
+}
+
+func (CapacityFailureReason) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[5]
+}
+
+func (x CapacityFailureReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CapacityFailureReason.Descriptor instead.
+func (CapacityFailureReason) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{5}
+}
+
+type QuoteOutcome int32
+
+const (
+	QuoteOutcome_QUOTE_OUTCOME_UNSPECIFIED         QuoteOutcome = 0
+	QuoteOutcome_QUOTE_OUTCOME_SELECTED            QuoteOutcome = 1
+	QuoteOutcome_QUOTE_OUTCOME_NO_ELIGIBLE_TARGET  QuoteOutcome = 2
+	QuoteOutcome_QUOTE_OUTCOME_NO_COMPARABLE_QUOTE QuoteOutcome = 3
+)
+
+// Enum value maps for QuoteOutcome.
+var (
+	QuoteOutcome_name = map[int32]string{
+		0: "QUOTE_OUTCOME_UNSPECIFIED",
+		1: "QUOTE_OUTCOME_SELECTED",
+		2: "QUOTE_OUTCOME_NO_ELIGIBLE_TARGET",
+		3: "QUOTE_OUTCOME_NO_COMPARABLE_QUOTE",
+	}
+	QuoteOutcome_value = map[string]int32{
+		"QUOTE_OUTCOME_UNSPECIFIED":         0,
+		"QUOTE_OUTCOME_SELECTED":            1,
+		"QUOTE_OUTCOME_NO_ELIGIBLE_TARGET":  2,
+		"QUOTE_OUTCOME_NO_COMPARABLE_QUOTE": 3,
+	}
+)
+
+func (x QuoteOutcome) Enum() *QuoteOutcome {
+	p := new(QuoteOutcome)
+	*p = x
+	return p
+}
+
+func (x QuoteOutcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (QuoteOutcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[6].Descriptor()
+}
+
+func (QuoteOutcome) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[6]
+}
+
+func (x QuoteOutcome) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use QuoteOutcome.Descriptor instead.
+func (QuoteOutcome) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{6}
+}
+
+type PriceStatus int32
+
+const (
+	PriceStatus_PRICE_STATUS_UNSPECIFIED       PriceStatus = 0
+	PriceStatus_PRICE_STATUS_MISSING           PriceStatus = 1
+	PriceStatus_PRICE_STATUS_FUTURE            PriceStatus = 2
+	PriceStatus_PRICE_STATUS_STALE             PriceStatus = 3
+	PriceStatus_PRICE_STATUS_CURRENCY_MISMATCH PriceStatus = 4
+	PriceStatus_PRICE_STATUS_UNIT_MISMATCH     PriceStatus = 5
+	PriceStatus_PRICE_STATUS_COMPARABLE        PriceStatus = 6
+)
+
+// Enum value maps for PriceStatus.
+var (
+	PriceStatus_name = map[int32]string{
+		0: "PRICE_STATUS_UNSPECIFIED",
+		1: "PRICE_STATUS_MISSING",
+		2: "PRICE_STATUS_FUTURE",
+		3: "PRICE_STATUS_STALE",
+		4: "PRICE_STATUS_CURRENCY_MISMATCH",
+		5: "PRICE_STATUS_UNIT_MISMATCH",
+		6: "PRICE_STATUS_COMPARABLE",
+	}
+	PriceStatus_value = map[string]int32{
+		"PRICE_STATUS_UNSPECIFIED":       0,
+		"PRICE_STATUS_MISSING":           1,
+		"PRICE_STATUS_FUTURE":            2,
+		"PRICE_STATUS_STALE":             3,
+		"PRICE_STATUS_CURRENCY_MISMATCH": 4,
+		"PRICE_STATUS_UNIT_MISMATCH":     5,
+		"PRICE_STATUS_COMPARABLE":        6,
+	}
+)
+
+func (x PriceStatus) Enum() *PriceStatus {
+	p := new(PriceStatus)
+	*p = x
+	return p
+}
+
+func (x PriceStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (PriceStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[7].Descriptor()
+}
+
+func (PriceStatus) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[7]
+}
+
+func (x PriceStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use PriceStatus.Descriptor instead.
+func (PriceStatus) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{7}
+}
+
+type FactFreshness int32
+
+const (
+	FactFreshness_FACT_FRESHNESS_UNSPECIFIED FactFreshness = 0
+	FactFreshness_FACT_FRESHNESS_UNKNOWN     FactFreshness = 1
+	FactFreshness_FACT_FRESHNESS_FUTURE      FactFreshness = 2
+	FactFreshness_FACT_FRESHNESS_STALE       FactFreshness = 3
+	FactFreshness_FACT_FRESHNESS_FRESH       FactFreshness = 4
+)
+
+// Enum value maps for FactFreshness.
+var (
+	FactFreshness_name = map[int32]string{
+		0: "FACT_FRESHNESS_UNSPECIFIED",
+		1: "FACT_FRESHNESS_UNKNOWN",
+		2: "FACT_FRESHNESS_FUTURE",
+		3: "FACT_FRESHNESS_STALE",
+		4: "FACT_FRESHNESS_FRESH",
+	}
+	FactFreshness_value = map[string]int32{
+		"FACT_FRESHNESS_UNSPECIFIED": 0,
+		"FACT_FRESHNESS_UNKNOWN":     1,
+		"FACT_FRESHNESS_FUTURE":      2,
+		"FACT_FRESHNESS_STALE":       3,
+		"FACT_FRESHNESS_FRESH":       4,
+	}
+)
+
+func (x FactFreshness) Enum() *FactFreshness {
+	p := new(FactFreshness)
+	*p = x
+	return p
+}
+
+func (x FactFreshness) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (FactFreshness) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[8].Descriptor()
+}
+
+func (FactFreshness) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[8]
+}
+
+func (x FactFreshness) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use FactFreshness.Descriptor instead.
+func (FactFreshness) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{8}
+}
+
+type EstimateStatus int32
+
+const (
+	EstimateStatus_ESTIMATE_STATUS_UNSPECIFIED          EstimateStatus = 0
+	EstimateStatus_ESTIMATE_STATUS_QUOTE_NOT_COMPARABLE EstimateStatus = 1
+	EstimateStatus_ESTIMATE_STATUS_DURATION_UNSPECIFIED EstimateStatus = 2
+	EstimateStatus_ESTIMATE_STATUS_QUANTITY_UNSPECIFIED EstimateStatus = 3
+	EstimateStatus_ESTIMATE_STATUS_AVAILABLE            EstimateStatus = 4
+)
+
+// Enum value maps for EstimateStatus.
+var (
+	EstimateStatus_name = map[int32]string{
+		0: "ESTIMATE_STATUS_UNSPECIFIED",
+		1: "ESTIMATE_STATUS_QUOTE_NOT_COMPARABLE",
+		2: "ESTIMATE_STATUS_DURATION_UNSPECIFIED",
+		3: "ESTIMATE_STATUS_QUANTITY_UNSPECIFIED",
+		4: "ESTIMATE_STATUS_AVAILABLE",
+	}
+	EstimateStatus_value = map[string]int32{
+		"ESTIMATE_STATUS_UNSPECIFIED":          0,
+		"ESTIMATE_STATUS_QUOTE_NOT_COMPARABLE": 1,
+		"ESTIMATE_STATUS_DURATION_UNSPECIFIED": 2,
+		"ESTIMATE_STATUS_QUANTITY_UNSPECIFIED": 3,
+		"ESTIMATE_STATUS_AVAILABLE":            4,
+	}
+)
+
+func (x EstimateStatus) Enum() *EstimateStatus {
+	p := new(EstimateStatus)
+	*p = x
+	return p
+}
+
+func (x EstimateStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (EstimateStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[9].Descriptor()
+}
+
+func (EstimateStatus) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[9]
+}
+
+func (x EstimateStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use EstimateStatus.Descriptor instead.
+func (EstimateStatus) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{9}
+}
+
+type ExcludedCharge int32
+
+const (
+	ExcludedCharge_EXCLUDED_CHARGE_UNSPECIFIED          ExcludedCharge = 0
+	ExcludedCharge_EXCLUDED_CHARGE_STORAGE              ExcludedCharge = 1
+	ExcludedCharge_EXCLUDED_CHARGE_TRANSFER             ExcludedCharge = 2
+	ExcludedCharge_EXCLUDED_CHARGE_TAX                  ExcludedCharge = 3
+	ExcludedCharge_EXCLUDED_CHARGE_LICENSES             ExcludedCharge = 4
+	ExcludedCharge_EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS ExcludedCharge = 5
+)
+
+// Enum value maps for ExcludedCharge.
+var (
+	ExcludedCharge_name = map[int32]string{
+		0: "EXCLUDED_CHARGE_UNSPECIFIED",
+		1: "EXCLUDED_CHARGE_STORAGE",
+		2: "EXCLUDED_CHARGE_TRANSFER",
+		3: "EXCLUDED_CHARGE_TAX",
+		4: "EXCLUDED_CHARGE_LICENSES",
+		5: "EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS",
+	}
+	ExcludedCharge_value = map[string]int32{
+		"EXCLUDED_CHARGE_UNSPECIFIED":          0,
+		"EXCLUDED_CHARGE_STORAGE":              1,
+		"EXCLUDED_CHARGE_TRANSFER":             2,
+		"EXCLUDED_CHARGE_TAX":                  3,
+		"EXCLUDED_CHARGE_LICENSES":             4,
+		"EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS": 5,
+	}
+)
+
+func (x ExcludedCharge) Enum() *ExcludedCharge {
+	p := new(ExcludedCharge)
+	*p = x
+	return p
+}
+
+func (x ExcludedCharge) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ExcludedCharge) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[10].Descriptor()
+}
+
+func (ExcludedCharge) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[10]
+}
+
+func (x ExcludedCharge) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ExcludedCharge.Descriptor instead.
+func (ExcludedCharge) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{10}
+}
+
 // Task is immutable after acceptance. Resource requests and limits are not capacity promises.
 type Task struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -1501,6 +1980,538 @@ func (x *GetServerInfoResponse) GetTargets() []*Target {
 	return nil
 }
 
+// Money is a fixed-point amount. Presence distinguishes explicit zero from unknown.
+type Money struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AmountMicros  *int64                 `protobuf:"varint,1,opt,name=amount_micros,json=amountMicros,proto3,oneof" json:"amount_micros,omitempty"`
+	Currency      string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Money) Reset() {
+	*x = Money{}
+	mi := &file_skygo_v1_control_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Money) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Money) ProtoMessage() {}
+
+func (x *Money) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Money.ProtoReflect.Descriptor instead.
+func (*Money) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *Money) GetAmountMicros() int64 {
+	if x != nil && x.AmountMicros != nil {
+		return *x.AmountMicros
+	}
+	return 0
+}
+
+func (x *Money) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+type Quote struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Rate          *Money                 `protobuf:"bytes,1,opt,name=rate,proto3" json:"rate,omitempty"`
+	Unit          RateUnit               `protobuf:"varint,2,opt,name=unit,proto3,enum=skygo.v1.RateUnit" json:"unit,omitempty"`
+	Origin        FactOrigin             `protobuf:"varint,3,opt,name=origin,proto3,enum=skygo.v1.FactOrigin" json:"origin,omitempty"`
+	Source        string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`
+	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ValidUntil    *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=valid_until,json=validUntil,proto3" json:"valid_until,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Quote) Reset() {
+	*x = Quote{}
+	mi := &file_skygo_v1_control_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Quote) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Quote) ProtoMessage() {}
+
+func (x *Quote) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Quote.ProtoReflect.Descriptor instead.
+func (*Quote) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *Quote) GetRate() *Money {
+	if x != nil {
+		return x.Rate
+	}
+	return nil
+}
+
+func (x *Quote) GetUnit() RateUnit {
+	if x != nil {
+		return x.Unit
+	}
+	return RateUnit_RATE_UNIT_UNSPECIFIED
+}
+
+func (x *Quote) GetOrigin() FactOrigin {
+	if x != nil {
+		return x.Origin
+	}
+	return FactOrigin_FACT_ORIGIN_UNSPECIFIED
+}
+
+func (x *Quote) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *Quote) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+func (x *Quote) GetValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ValidUntil
+	}
+	return nil
+}
+
+type CapacitySnapshot struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	State          CapacityState          `protobuf:"varint,1,opt,name=state,proto3,enum=skygo.v1.CapacityState" json:"state,omitempty"`
+	AvailableSlots *uint32                `protobuf:"varint,2,opt,name=available_slots,json=availableSlots,proto3,oneof" json:"available_slots,omitempty"`
+	Origin         FactOrigin             `protobuf:"varint,3,opt,name=origin,proto3,enum=skygo.v1.FactOrigin" json:"origin,omitempty"`
+	Source         string                 `protobuf:"bytes,4,opt,name=source,proto3" json:"source,omitempty"`
+	ObservedAt     *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ValidUntil     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=valid_until,json=validUntil,proto3" json:"valid_until,omitempty"`
+	FailureReason  CapacityFailureReason  `protobuf:"varint,7,opt,name=failure_reason,json=failureReason,proto3,enum=skygo.v1.CapacityFailureReason" json:"failure_reason,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *CapacitySnapshot) Reset() {
+	*x = CapacitySnapshot{}
+	mi := &file_skygo_v1_control_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CapacitySnapshot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CapacitySnapshot) ProtoMessage() {}
+
+func (x *CapacitySnapshot) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CapacitySnapshot.ProtoReflect.Descriptor instead.
+func (*CapacitySnapshot) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *CapacitySnapshot) GetState() CapacityState {
+	if x != nil {
+		return x.State
+	}
+	return CapacityState_CAPACITY_STATE_UNSPECIFIED
+}
+
+func (x *CapacitySnapshot) GetAvailableSlots() uint32 {
+	if x != nil && x.AvailableSlots != nil {
+		return *x.AvailableSlots
+	}
+	return 0
+}
+
+func (x *CapacitySnapshot) GetOrigin() FactOrigin {
+	if x != nil {
+		return x.Origin
+	}
+	return FactOrigin_FACT_ORIGIN_UNSPECIFIED
+}
+
+func (x *CapacitySnapshot) GetSource() string {
+	if x != nil {
+		return x.Source
+	}
+	return ""
+}
+
+func (x *CapacitySnapshot) GetObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return nil
+}
+
+func (x *CapacitySnapshot) GetValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ValidUntil
+	}
+	return nil
+}
+
+func (x *CapacitySnapshot) GetFailureReason() CapacityFailureReason {
+	if x != nil {
+		return x.FailureReason
+	}
+	return CapacityFailureReason_CAPACITY_FAILURE_REASON_UNSPECIFIED
+}
+
+type QuoteCandidate struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	Target               string                 `protobuf:"bytes,1,opt,name=target,proto3" json:"target,omitempty"`
+	Eligible             bool                   `protobuf:"varint,2,opt,name=eligible,proto3" json:"eligible,omitempty"`
+	Rejection            string                 `protobuf:"bytes,3,opt,name=rejection,proto3" json:"rejection,omitempty"`
+	Quote                *Quote                 `protobuf:"bytes,4,opt,name=quote,proto3" json:"quote,omitempty"`
+	PriceStatus          PriceStatus            `protobuf:"varint,5,opt,name=price_status,json=priceStatus,proto3,enum=skygo.v1.PriceStatus" json:"price_status,omitempty"`
+	Capacity             *CapacitySnapshot      `protobuf:"bytes,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	CapacityFreshness    FactFreshness          `protobuf:"varint,7,opt,name=capacity_freshness,json=capacityFreshness,proto3,enum=skygo.v1.FactFreshness" json:"capacity_freshness,omitempty"`
+	CapacityWarning      bool                   `protobuf:"varint,8,opt,name=capacity_warning,json=capacityWarning,proto3" json:"capacity_warning,omitempty"`
+	EstimatedComputeCost *Money                 `protobuf:"bytes,9,opt,name=estimated_compute_cost,json=estimatedComputeCost,proto3" json:"estimated_compute_cost,omitempty"`
+	EstimateStatus       EstimateStatus         `protobuf:"varint,10,opt,name=estimate_status,json=estimateStatus,proto3,enum=skygo.v1.EstimateStatus" json:"estimate_status,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *QuoteCandidate) Reset() {
+	*x = QuoteCandidate{}
+	mi := &file_skygo_v1_control_proto_msgTypes[25]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuoteCandidate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuoteCandidate) ProtoMessage() {}
+
+func (x *QuoteCandidate) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[25]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuoteCandidate.ProtoReflect.Descriptor instead.
+func (*QuoteCandidate) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *QuoteCandidate) GetTarget() string {
+	if x != nil {
+		return x.Target
+	}
+	return ""
+}
+
+func (x *QuoteCandidate) GetEligible() bool {
+	if x != nil {
+		return x.Eligible
+	}
+	return false
+}
+
+func (x *QuoteCandidate) GetRejection() string {
+	if x != nil {
+		return x.Rejection
+	}
+	return ""
+}
+
+func (x *QuoteCandidate) GetQuote() *Quote {
+	if x != nil {
+		return x.Quote
+	}
+	return nil
+}
+
+func (x *QuoteCandidate) GetPriceStatus() PriceStatus {
+	if x != nil {
+		return x.PriceStatus
+	}
+	return PriceStatus_PRICE_STATUS_UNSPECIFIED
+}
+
+func (x *QuoteCandidate) GetCapacity() *CapacitySnapshot {
+	if x != nil {
+		return x.Capacity
+	}
+	return nil
+}
+
+func (x *QuoteCandidate) GetCapacityFreshness() FactFreshness {
+	if x != nil {
+		return x.CapacityFreshness
+	}
+	return FactFreshness_FACT_FRESHNESS_UNSPECIFIED
+}
+
+func (x *QuoteCandidate) GetCapacityWarning() bool {
+	if x != nil {
+		return x.CapacityWarning
+	}
+	return false
+}
+
+func (x *QuoteCandidate) GetEstimatedComputeCost() *Money {
+	if x != nil {
+		return x.EstimatedComputeCost
+	}
+	return nil
+}
+
+func (x *QuoteCandidate) GetEstimateStatus() EstimateStatus {
+	if x != nil {
+		return x.EstimateStatus
+	}
+	return EstimateStatus_ESTIMATE_STATUS_UNSPECIFIED
+}
+
+// QuoteTask always ranks comparable configured rates, with bytewise name ties.
+type QuoteTaskRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Task     *Task                  `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	Currency string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	Unit     RateUnit               `protobuf:"varint,3,opt,name=unit,proto3,enum=skygo.v1.RateUnit" json:"unit,omitempty"`
+	// User-declared total billable duration, never inferred from task timeout.
+	BillableDurationSeconds *int64 `protobuf:"varint,4,opt,name=billable_duration_seconds,json=billableDurationSeconds,proto3,oneof" json:"billable_duration_seconds,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *QuoteTaskRequest) Reset() {
+	*x = QuoteTaskRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[26]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuoteTaskRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuoteTaskRequest) ProtoMessage() {}
+
+func (x *QuoteTaskRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[26]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuoteTaskRequest.ProtoReflect.Descriptor instead.
+func (*QuoteTaskRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *QuoteTaskRequest) GetTask() *Task {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
+func (x *QuoteTaskRequest) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *QuoteTaskRequest) GetUnit() RateUnit {
+	if x != nil {
+		return x.Unit
+	}
+	return RateUnit_RATE_UNIT_UNSPECIFIED
+}
+
+func (x *QuoteTaskRequest) GetBillableDurationSeconds() int64 {
+	if x != nil && x.BillableDurationSeconds != nil {
+		return *x.BillableDurationSeconds
+	}
+	return 0
+}
+
+type QuoteTaskResponse struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	AsOf                    *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=as_of,json=asOf,proto3" json:"as_of,omitempty"`
+	Currency                string                 `protobuf:"bytes,2,opt,name=currency,proto3" json:"currency,omitempty"`
+	Unit                    RateUnit               `protobuf:"varint,3,opt,name=unit,proto3,enum=skygo.v1.RateUnit" json:"unit,omitempty"`
+	BillableDurationSeconds *int64                 `protobuf:"varint,4,opt,name=billable_duration_seconds,json=billableDurationSeconds,proto3,oneof" json:"billable_duration_seconds,omitempty"`
+	Outcome                 QuoteOutcome           `protobuf:"varint,5,opt,name=outcome,proto3,enum=skygo.v1.QuoteOutcome" json:"outcome,omitempty"`
+	SelectedTarget          string                 `protobuf:"bytes,6,opt,name=selected_target,json=selectedTarget,proto3" json:"selected_target,omitempty"`
+	ComparisonCount         uint32                 `protobuf:"varint,7,opt,name=comparison_count,json=comparisonCount,proto3" json:"comparison_count,omitempty"`
+	UnpricedEligibleCount   uint32                 `protobuf:"varint,8,opt,name=unpriced_eligible_count,json=unpricedEligibleCount,proto3" json:"unpriced_eligible_count,omitempty"`
+	Candidates              []*QuoteCandidate      `protobuf:"bytes,9,rep,name=candidates,proto3" json:"candidates,omitempty"`
+	// This advisory compute estimate excludes each of these categories.
+	ExcludedCharges []ExcludedCharge `protobuf:"varint,10,rep,packed,name=excluded_charges,json=excludedCharges,proto3,enum=skygo.v1.ExcludedCharge" json:"excluded_charges,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *QuoteTaskResponse) Reset() {
+	*x = QuoteTaskResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[27]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *QuoteTaskResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*QuoteTaskResponse) ProtoMessage() {}
+
+func (x *QuoteTaskResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[27]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use QuoteTaskResponse.ProtoReflect.Descriptor instead.
+func (*QuoteTaskResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{27}
+}
+
+func (x *QuoteTaskResponse) GetAsOf() *timestamppb.Timestamp {
+	if x != nil {
+		return x.AsOf
+	}
+	return nil
+}
+
+func (x *QuoteTaskResponse) GetCurrency() string {
+	if x != nil {
+		return x.Currency
+	}
+	return ""
+}
+
+func (x *QuoteTaskResponse) GetUnit() RateUnit {
+	if x != nil {
+		return x.Unit
+	}
+	return RateUnit_RATE_UNIT_UNSPECIFIED
+}
+
+func (x *QuoteTaskResponse) GetBillableDurationSeconds() int64 {
+	if x != nil && x.BillableDurationSeconds != nil {
+		return *x.BillableDurationSeconds
+	}
+	return 0
+}
+
+func (x *QuoteTaskResponse) GetOutcome() QuoteOutcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return QuoteOutcome_QUOTE_OUTCOME_UNSPECIFIED
+}
+
+func (x *QuoteTaskResponse) GetSelectedTarget() string {
+	if x != nil {
+		return x.SelectedTarget
+	}
+	return ""
+}
+
+func (x *QuoteTaskResponse) GetComparisonCount() uint32 {
+	if x != nil {
+		return x.ComparisonCount
+	}
+	return 0
+}
+
+func (x *QuoteTaskResponse) GetUnpricedEligibleCount() uint32 {
+	if x != nil {
+		return x.UnpricedEligibleCount
+	}
+	return 0
+}
+
+func (x *QuoteTaskResponse) GetCandidates() []*QuoteCandidate {
+	if x != nil {
+		return x.Candidates
+	}
+	return nil
+}
+
+func (x *QuoteTaskResponse) GetExcludedCharges() []ExcludedCharge {
+	if x != nil {
+		return x.ExcludedCharges
+	}
+	return nil
+}
+
 var File_skygo_v1_control_proto protoreflect.FileDescriptor
 
 const file_skygo_v1_control_proto_rawDesc = "" +
@@ -1627,7 +2638,64 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\"\x16\n" +
 	"\x14GetServerInfoRequest\"C\n" +
 	"\x15GetServerInfoResponse\x12*\n" +
-	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets*\xe0\x01\n" +
+	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\"_\n" +
+	"\x05Money\x12(\n" +
+	"\ramount_micros\x18\x01 \x01(\x03H\x00R\famountMicros\x88\x01\x01\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrencyB\x10\n" +
+	"\x0e_amount_micros\"\x94\x02\n" +
+	"\x05Quote\x12#\n" +
+	"\x04rate\x18\x01 \x01(\v2\x0f.skygo.v1.MoneyR\x04rate\x12&\n" +
+	"\x04unit\x18\x02 \x01(\x0e2\x12.skygo.v1.RateUnitR\x04unit\x12,\n" +
+	"\x06origin\x18\x03 \x01(\x0e2\x14.skygo.v1.FactOriginR\x06origin\x12\x16\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\x12;\n" +
+	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\x12;\n" +
+	"\vvalid_until\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"validUntil\"\x8b\x03\n" +
+	"\x10CapacitySnapshot\x12-\n" +
+	"\x05state\x18\x01 \x01(\x0e2\x17.skygo.v1.CapacityStateR\x05state\x12,\n" +
+	"\x0favailable_slots\x18\x02 \x01(\rH\x00R\x0eavailableSlots\x88\x01\x01\x12,\n" +
+	"\x06origin\x18\x03 \x01(\x0e2\x14.skygo.v1.FactOriginR\x06origin\x12\x16\n" +
+	"\x06source\x18\x04 \x01(\tR\x06source\x12;\n" +
+	"\vobserved_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"observedAt\x12;\n" +
+	"\vvalid_until\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"validUntil\x12F\n" +
+	"\x0efailure_reason\x18\a \x01(\x0e2\x1f.skygo.v1.CapacityFailureReasonR\rfailureReasonB\x12\n" +
+	"\x10_available_slots\"\xf8\x03\n" +
+	"\x0eQuoteCandidate\x12\x16\n" +
+	"\x06target\x18\x01 \x01(\tR\x06target\x12\x1a\n" +
+	"\beligible\x18\x02 \x01(\bR\beligible\x12\x1c\n" +
+	"\trejection\x18\x03 \x01(\tR\trejection\x12%\n" +
+	"\x05quote\x18\x04 \x01(\v2\x0f.skygo.v1.QuoteR\x05quote\x128\n" +
+	"\fprice_status\x18\x05 \x01(\x0e2\x15.skygo.v1.PriceStatusR\vpriceStatus\x126\n" +
+	"\bcapacity\x18\x06 \x01(\v2\x1a.skygo.v1.CapacitySnapshotR\bcapacity\x12F\n" +
+	"\x12capacity_freshness\x18\a \x01(\x0e2\x17.skygo.v1.FactFreshnessR\x11capacityFreshness\x12)\n" +
+	"\x10capacity_warning\x18\b \x01(\bR\x0fcapacityWarning\x12E\n" +
+	"\x16estimated_compute_cost\x18\t \x01(\v2\x0f.skygo.v1.MoneyR\x14estimatedComputeCost\x12A\n" +
+	"\x0festimate_status\x18\n" +
+	" \x01(\x0e2\x18.skygo.v1.EstimateStatusR\x0eestimateStatus\"\xd9\x01\n" +
+	"\x10QuoteTaskRequest\x12\"\n" +
+	"\x04task\x18\x01 \x01(\v2\x0e.skygo.v1.TaskR\x04task\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12&\n" +
+	"\x04unit\x18\x03 \x01(\x0e2\x12.skygo.v1.RateUnitR\x04unit\x12?\n" +
+	"\x19billable_duration_seconds\x18\x04 \x01(\x03H\x00R\x17billableDurationSeconds\x88\x01\x01B\x1c\n" +
+	"\x1a_billable_duration_seconds\"\xa4\x04\n" +
+	"\x11QuoteTaskResponse\x12/\n" +
+	"\x05as_of\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x04asOf\x12\x1a\n" +
+	"\bcurrency\x18\x02 \x01(\tR\bcurrency\x12&\n" +
+	"\x04unit\x18\x03 \x01(\x0e2\x12.skygo.v1.RateUnitR\x04unit\x12?\n" +
+	"\x19billable_duration_seconds\x18\x04 \x01(\x03H\x00R\x17billableDurationSeconds\x88\x01\x01\x120\n" +
+	"\aoutcome\x18\x05 \x01(\x0e2\x16.skygo.v1.QuoteOutcomeR\aoutcome\x12'\n" +
+	"\x0fselected_target\x18\x06 \x01(\tR\x0eselectedTarget\x12)\n" +
+	"\x10comparison_count\x18\a \x01(\rR\x0fcomparisonCount\x126\n" +
+	"\x17unpriced_eligible_count\x18\b \x01(\rR\x15unpricedEligibleCount\x128\n" +
+	"\n" +
+	"candidates\x18\t \x03(\v2\x18.skygo.v1.QuoteCandidateR\n" +
+	"candidates\x12C\n" +
+	"\x10excluded_charges\x18\n" +
+	" \x03(\x0e2\x18.skygo.v1.ExcludedChargeR\x0fexcludedChargesB\x1c\n" +
+	"\x1a_billable_duration_seconds*\xe0\x01\n" +
 	"\bJobState\x12\x19\n" +
 	"\x15JOB_STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10JOB_STATE_QUEUED\x10\x01\x12\x16\n" +
@@ -1645,8 +2713,58 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x1dCAPABILITY_RESOURCE_LIMITS_V1\x10\x02\x12\x1f\n" +
 	"\x1bCAPABILITY_NODE_SELECTOR_V1\x10\x03\x12\x1f\n" +
 	"\x1bCAPABILITY_TARGET_LABELS_V1\x10\x04\x12\"\n" +
-	"\x1eCAPABILITY_FINITE_JOB_RETRY_V1\x10\x052\x9c\x05\n" +
-	"\x0eControlService\x12A\n" +
+	"\x1eCAPABILITY_FINITE_JOB_RETRY_V1\x10\x05*x\n" +
+	"\bRateUnit\x12\x19\n" +
+	"\x15RATE_UNIT_UNSPECIFIED\x10\x00\x12\x19\n" +
+	"\x15RATE_UNIT_TARGET_HOUR\x10\x01\x12\x16\n" +
+	"\x12RATE_UNIT_CPU_HOUR\x10\x02\x12\x1e\n" +
+	"\x1aRATE_UNIT_ACCELERATOR_HOUR\x10\x03*E\n" +
+	"\n" +
+	"FactOrigin\x12\x1b\n" +
+	"\x17FACT_ORIGIN_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16FACT_ORIGIN_CONFIGURED\x10\x01*\x87\x01\n" +
+	"\rCapacityState\x12\x1e\n" +
+	"\x1aCAPACITY_STATE_UNSPECIFIED\x10\x00\x12\x1c\n" +
+	"\x18CAPACITY_STATE_AVAILABLE\x10\x01\x12\x1e\n" +
+	"\x1aCAPACITY_STATE_UNAVAILABLE\x10\x02\x12\x18\n" +
+	"\x14CAPACITY_STATE_ERROR\x10\x03*p\n" +
+	"\x15CapacityFailureReason\x12'\n" +
+	"#CAPACITY_FAILURE_REASON_UNSPECIFIED\x10\x00\x12.\n" +
+	"*CAPACITY_FAILURE_REASON_SOURCE_UNAVAILABLE\x10\x01*\x96\x01\n" +
+	"\fQuoteOutcome\x12\x1d\n" +
+	"\x19QUOTE_OUTCOME_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16QUOTE_OUTCOME_SELECTED\x10\x01\x12$\n" +
+	" QUOTE_OUTCOME_NO_ELIGIBLE_TARGET\x10\x02\x12%\n" +
+	"!QUOTE_OUTCOME_NO_COMPARABLE_QUOTE\x10\x03*\xd7\x01\n" +
+	"\vPriceStatus\x12\x1c\n" +
+	"\x18PRICE_STATUS_UNSPECIFIED\x10\x00\x12\x18\n" +
+	"\x14PRICE_STATUS_MISSING\x10\x01\x12\x17\n" +
+	"\x13PRICE_STATUS_FUTURE\x10\x02\x12\x16\n" +
+	"\x12PRICE_STATUS_STALE\x10\x03\x12\"\n" +
+	"\x1ePRICE_STATUS_CURRENCY_MISMATCH\x10\x04\x12\x1e\n" +
+	"\x1aPRICE_STATUS_UNIT_MISMATCH\x10\x05\x12\x1b\n" +
+	"\x17PRICE_STATUS_COMPARABLE\x10\x06*\x9a\x01\n" +
+	"\rFactFreshness\x12\x1e\n" +
+	"\x1aFACT_FRESHNESS_UNSPECIFIED\x10\x00\x12\x1a\n" +
+	"\x16FACT_FRESHNESS_UNKNOWN\x10\x01\x12\x19\n" +
+	"\x15FACT_FRESHNESS_FUTURE\x10\x02\x12\x18\n" +
+	"\x14FACT_FRESHNESS_STALE\x10\x03\x12\x18\n" +
+	"\x14FACT_FRESHNESS_FRESH\x10\x04*\xce\x01\n" +
+	"\x0eEstimateStatus\x12\x1f\n" +
+	"\x1bESTIMATE_STATUS_UNSPECIFIED\x10\x00\x12(\n" +
+	"$ESTIMATE_STATUS_QUOTE_NOT_COMPARABLE\x10\x01\x12(\n" +
+	"$ESTIMATE_STATUS_DURATION_UNSPECIFIED\x10\x02\x12(\n" +
+	"$ESTIMATE_STATUS_QUANTITY_UNSPECIFIED\x10\x03\x12\x1d\n" +
+	"\x19ESTIMATE_STATUS_AVAILABLE\x10\x04*\xcd\x01\n" +
+	"\x0eExcludedCharge\x12\x1f\n" +
+	"\x1bEXCLUDED_CHARGE_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17EXCLUDED_CHARGE_STORAGE\x10\x01\x12\x1c\n" +
+	"\x18EXCLUDED_CHARGE_TRANSFER\x10\x02\x12\x17\n" +
+	"\x13EXCLUDED_CHARGE_TAX\x10\x03\x12\x1c\n" +
+	"\x18EXCLUDED_CHARGE_LICENSES\x10\x04\x12(\n" +
+	"$EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS\x10\x052\xe2\x05\n" +
+	"\x0eControlService\x12D\n" +
+	"\tQuoteTask\x12\x1a.skygo.v1.QuoteTaskRequest\x1a\x1b.skygo.v1.QuoteTaskResponse\x12A\n" +
 	"\bPlanTask\x12\x19.skygo.v1.PlanTaskRequest\x1a\x1a.skygo.v1.PlanTaskResponse\x12D\n" +
 	"\tSubmitJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12I\n" +
 	"\x0eSubmitRetryJob\x12\x1a.skygo.v1.SubmitJobRequest\x1a\x1b.skygo.v1.SubmitJobResponse\x12;\n" +
@@ -1669,88 +2787,128 @@ func file_skygo_v1_control_proto_rawDescGZIP() []byte {
 	return file_skygo_v1_control_proto_rawDescData
 }
 
-var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 26)
+var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 11)
+var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 32)
 var file_skygo_v1_control_proto_goTypes = []any{
 	(JobState)(0),                 // 0: skygo.v1.JobState
 	(Capability)(0),               // 1: skygo.v1.Capability
-	(*Task)(nil),                  // 2: skygo.v1.Task
-	(*RetryPolicy)(nil),           // 3: skygo.v1.RetryPolicy
-	(*Job)(nil),                   // 4: skygo.v1.Job
-	(*Attempt)(nil),               // 5: skygo.v1.Attempt
-	(*Target)(nil),                // 6: skygo.v1.Target
-	(*Rejection)(nil),             // 7: skygo.v1.Rejection
-	(*PlanTaskRequest)(nil),       // 8: skygo.v1.PlanTaskRequest
-	(*PlanTaskResponse)(nil),      // 9: skygo.v1.PlanTaskResponse
-	(*SubmitJobRequest)(nil),      // 10: skygo.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),     // 11: skygo.v1.SubmitJobResponse
-	(*GetJobRequest)(nil),         // 12: skygo.v1.GetJobRequest
-	(*GetJobResponse)(nil),        // 13: skygo.v1.GetJobResponse
-	(*ListJobsRequest)(nil),       // 14: skygo.v1.ListJobsRequest
-	(*ListJobsResponse)(nil),      // 15: skygo.v1.ListJobsResponse
-	(*CancelJobRequest)(nil),      // 16: skygo.v1.CancelJobRequest
-	(*CancelJobResponse)(nil),     // 17: skygo.v1.CancelJobResponse
-	(*StreamJobLogsRequest)(nil),  // 18: skygo.v1.StreamJobLogsRequest
-	(*StreamJobLogsResponse)(nil), // 19: skygo.v1.StreamJobLogsResponse
-	(*ListTargetsRequest)(nil),    // 20: skygo.v1.ListTargetsRequest
-	(*ListTargetsResponse)(nil),   // 21: skygo.v1.ListTargetsResponse
-	(*GetServerInfoRequest)(nil),  // 22: skygo.v1.GetServerInfoRequest
-	(*GetServerInfoResponse)(nil), // 23: skygo.v1.GetServerInfoResponse
-	nil,                           // 24: skygo.v1.Task.EnvEntry
-	nil,                           // 25: skygo.v1.Task.TargetLabelsEntry
-	nil,                           // 26: skygo.v1.Task.NodeSelectorEntry
-	nil,                           // 27: skygo.v1.Target.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 28: google.protobuf.Timestamp
+	(RateUnit)(0),                 // 2: skygo.v1.RateUnit
+	(FactOrigin)(0),               // 3: skygo.v1.FactOrigin
+	(CapacityState)(0),            // 4: skygo.v1.CapacityState
+	(CapacityFailureReason)(0),    // 5: skygo.v1.CapacityFailureReason
+	(QuoteOutcome)(0),             // 6: skygo.v1.QuoteOutcome
+	(PriceStatus)(0),              // 7: skygo.v1.PriceStatus
+	(FactFreshness)(0),            // 8: skygo.v1.FactFreshness
+	(EstimateStatus)(0),           // 9: skygo.v1.EstimateStatus
+	(ExcludedCharge)(0),           // 10: skygo.v1.ExcludedCharge
+	(*Task)(nil),                  // 11: skygo.v1.Task
+	(*RetryPolicy)(nil),           // 12: skygo.v1.RetryPolicy
+	(*Job)(nil),                   // 13: skygo.v1.Job
+	(*Attempt)(nil),               // 14: skygo.v1.Attempt
+	(*Target)(nil),                // 15: skygo.v1.Target
+	(*Rejection)(nil),             // 16: skygo.v1.Rejection
+	(*PlanTaskRequest)(nil),       // 17: skygo.v1.PlanTaskRequest
+	(*PlanTaskResponse)(nil),      // 18: skygo.v1.PlanTaskResponse
+	(*SubmitJobRequest)(nil),      // 19: skygo.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),     // 20: skygo.v1.SubmitJobResponse
+	(*GetJobRequest)(nil),         // 21: skygo.v1.GetJobRequest
+	(*GetJobResponse)(nil),        // 22: skygo.v1.GetJobResponse
+	(*ListJobsRequest)(nil),       // 23: skygo.v1.ListJobsRequest
+	(*ListJobsResponse)(nil),      // 24: skygo.v1.ListJobsResponse
+	(*CancelJobRequest)(nil),      // 25: skygo.v1.CancelJobRequest
+	(*CancelJobResponse)(nil),     // 26: skygo.v1.CancelJobResponse
+	(*StreamJobLogsRequest)(nil),  // 27: skygo.v1.StreamJobLogsRequest
+	(*StreamJobLogsResponse)(nil), // 28: skygo.v1.StreamJobLogsResponse
+	(*ListTargetsRequest)(nil),    // 29: skygo.v1.ListTargetsRequest
+	(*ListTargetsResponse)(nil),   // 30: skygo.v1.ListTargetsResponse
+	(*GetServerInfoRequest)(nil),  // 31: skygo.v1.GetServerInfoRequest
+	(*GetServerInfoResponse)(nil), // 32: skygo.v1.GetServerInfoResponse
+	(*Money)(nil),                 // 33: skygo.v1.Money
+	(*Quote)(nil),                 // 34: skygo.v1.Quote
+	(*CapacitySnapshot)(nil),      // 35: skygo.v1.CapacitySnapshot
+	(*QuoteCandidate)(nil),        // 36: skygo.v1.QuoteCandidate
+	(*QuoteTaskRequest)(nil),      // 37: skygo.v1.QuoteTaskRequest
+	(*QuoteTaskResponse)(nil),     // 38: skygo.v1.QuoteTaskResponse
+	nil,                           // 39: skygo.v1.Task.EnvEntry
+	nil,                           // 40: skygo.v1.Task.TargetLabelsEntry
+	nil,                           // 41: skygo.v1.Task.NodeSelectorEntry
+	nil,                           // 42: skygo.v1.Target.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 43: google.protobuf.Timestamp
 }
 var file_skygo_v1_control_proto_depIdxs = []int32{
-	24, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
-	25, // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
-	26, // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
-	3,  // 3: skygo.v1.Task.retry:type_name -> skygo.v1.RetryPolicy
-	2,  // 4: skygo.v1.Job.task:type_name -> skygo.v1.Task
+	39, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
+	40, // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
+	41, // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
+	12, // 3: skygo.v1.Task.retry:type_name -> skygo.v1.RetryPolicy
+	11, // 4: skygo.v1.Job.task:type_name -> skygo.v1.Task
 	0,  // 5: skygo.v1.Job.state:type_name -> skygo.v1.JobState
-	28, // 6: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	28, // 7: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
-	5,  // 8: skygo.v1.Job.attempts:type_name -> skygo.v1.Attempt
-	28, // 9: skygo.v1.Job.next_attempt_at:type_name -> google.protobuf.Timestamp
+	43, // 6: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	43, // 7: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
+	14, // 8: skygo.v1.Job.attempts:type_name -> skygo.v1.Attempt
+	43, // 9: skygo.v1.Job.next_attempt_at:type_name -> google.protobuf.Timestamp
 	0,  // 10: skygo.v1.Attempt.state:type_name -> skygo.v1.JobState
-	28, // 11: skygo.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
-	28, // 12: skygo.v1.Attempt.starting_at:type_name -> google.protobuf.Timestamp
-	28, // 13: skygo.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
+	43, // 11: skygo.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
+	43, // 12: skygo.v1.Attempt.starting_at:type_name -> google.protobuf.Timestamp
+	43, // 13: skygo.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
 	1,  // 14: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
-	27, // 15: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
-	2,  // 16: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
-	7,  // 17: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
-	2,  // 18: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
-	4,  // 19: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
-	4,  // 20: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
-	4,  // 21: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
-	4,  // 22: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
-	6,  // 23: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
-	6,  // 24: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
-	8,  // 25: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
-	10, // 26: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
-	10, // 27: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
-	12, // 28: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
-	14, // 29: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
-	16, // 30: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
-	18, // 31: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
-	20, // 32: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
-	22, // 33: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
-	9,  // 34: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
-	11, // 35: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
-	11, // 36: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
-	13, // 37: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
-	15, // 38: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
-	17, // 39: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
-	19, // 40: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
-	21, // 41: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
-	23, // 42: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
-	34, // [34:43] is the sub-list for method output_type
-	25, // [25:34] is the sub-list for method input_type
-	25, // [25:25] is the sub-list for extension type_name
-	25, // [25:25] is the sub-list for extension extendee
-	0,  // [0:25] is the sub-list for field type_name
+	42, // 15: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
+	11, // 16: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
+	16, // 17: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
+	11, // 18: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
+	13, // 19: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
+	13, // 20: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
+	13, // 21: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
+	13, // 22: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
+	15, // 23: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
+	15, // 24: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
+	33, // 25: skygo.v1.Quote.rate:type_name -> skygo.v1.Money
+	2,  // 26: skygo.v1.Quote.unit:type_name -> skygo.v1.RateUnit
+	3,  // 27: skygo.v1.Quote.origin:type_name -> skygo.v1.FactOrigin
+	43, // 28: skygo.v1.Quote.observed_at:type_name -> google.protobuf.Timestamp
+	43, // 29: skygo.v1.Quote.valid_until:type_name -> google.protobuf.Timestamp
+	4,  // 30: skygo.v1.CapacitySnapshot.state:type_name -> skygo.v1.CapacityState
+	3,  // 31: skygo.v1.CapacitySnapshot.origin:type_name -> skygo.v1.FactOrigin
+	43, // 32: skygo.v1.CapacitySnapshot.observed_at:type_name -> google.protobuf.Timestamp
+	43, // 33: skygo.v1.CapacitySnapshot.valid_until:type_name -> google.protobuf.Timestamp
+	5,  // 34: skygo.v1.CapacitySnapshot.failure_reason:type_name -> skygo.v1.CapacityFailureReason
+	34, // 35: skygo.v1.QuoteCandidate.quote:type_name -> skygo.v1.Quote
+	7,  // 36: skygo.v1.QuoteCandidate.price_status:type_name -> skygo.v1.PriceStatus
+	35, // 37: skygo.v1.QuoteCandidate.capacity:type_name -> skygo.v1.CapacitySnapshot
+	8,  // 38: skygo.v1.QuoteCandidate.capacity_freshness:type_name -> skygo.v1.FactFreshness
+	33, // 39: skygo.v1.QuoteCandidate.estimated_compute_cost:type_name -> skygo.v1.Money
+	9,  // 40: skygo.v1.QuoteCandidate.estimate_status:type_name -> skygo.v1.EstimateStatus
+	11, // 41: skygo.v1.QuoteTaskRequest.task:type_name -> skygo.v1.Task
+	2,  // 42: skygo.v1.QuoteTaskRequest.unit:type_name -> skygo.v1.RateUnit
+	43, // 43: skygo.v1.QuoteTaskResponse.as_of:type_name -> google.protobuf.Timestamp
+	2,  // 44: skygo.v1.QuoteTaskResponse.unit:type_name -> skygo.v1.RateUnit
+	6,  // 45: skygo.v1.QuoteTaskResponse.outcome:type_name -> skygo.v1.QuoteOutcome
+	36, // 46: skygo.v1.QuoteTaskResponse.candidates:type_name -> skygo.v1.QuoteCandidate
+	10, // 47: skygo.v1.QuoteTaskResponse.excluded_charges:type_name -> skygo.v1.ExcludedCharge
+	37, // 48: skygo.v1.ControlService.QuoteTask:input_type -> skygo.v1.QuoteTaskRequest
+	17, // 49: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
+	19, // 50: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
+	19, // 51: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
+	21, // 52: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
+	23, // 53: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
+	25, // 54: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
+	27, // 55: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
+	29, // 56: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
+	31, // 57: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
+	38, // 58: skygo.v1.ControlService.QuoteTask:output_type -> skygo.v1.QuoteTaskResponse
+	18, // 59: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
+	20, // 60: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
+	20, // 61: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
+	22, // 62: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
+	24, // 63: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
+	26, // 64: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
+	28, // 65: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
+	30, // 66: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
+	32, // 67: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
+	58, // [58:68] is the sub-list for method output_type
+	48, // [48:58] is the sub-list for method input_type
+	48, // [48:48] is the sub-list for extension type_name
+	48, // [48:48] is the sub-list for extension extendee
+	0,  // [0:48] is the sub-list for field type_name
 }
 
 func init() { file_skygo_v1_control_proto_init() }
@@ -1760,13 +2918,17 @@ func file_skygo_v1_control_proto_init() {
 	}
 	file_skygo_v1_control_proto_msgTypes[2].OneofWrappers = []any{}
 	file_skygo_v1_control_proto_msgTypes[3].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[22].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[24].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[26].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[27].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skygo_v1_control_proto_rawDesc), len(file_skygo_v1_control_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   26,
+			NumEnums:      11,
+			NumMessages:   32,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

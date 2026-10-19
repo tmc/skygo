@@ -25,8 +25,8 @@ import (
 
 // ServerOptions configures the server callback.
 type ServerOptions struct {
-	DataDir, Listen, Token, AuthFile string
-	DisableLocal                     bool
+	DataDir, Listen, Token, AuthFile, TargetFacts string
+	DisableLocal                                  bool
 }
 
 type options struct {
@@ -86,6 +86,7 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 	}}
 	srv.Flags().StringVar(&s.DataDir, "data-dir", "skygo-data", "Durable state directory")
 	srv.Flags().StringVar(&s.Listen, "listen", "127.0.0.1:8080", "HTTP listen address")
+	srv.Flags().StringVar(&s.TargetFacts, "target-facts", "", "Configured advisory quote and capacity facts (Linux and macOS)")
 	srv.Flags().StringVar(&s.AuthFile, "auth-file", "", "Private scoped authentication file")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
 	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand(), o.authCommand())
@@ -149,11 +150,17 @@ func (o *options) job(w io.Writer, j *skyv1.Job) error {
 func (o *options) taskCommand(run bool) *cobra.Command {
 	var file, id string
 	var wait bool
+	var quote quoteFlags
 	name, short := "plan", "Validate a task and select an eligible target"
 	if run {
 		name, short = "run", "Submit a task"
 	}
 	c := &cobra.Command{Use: name + " -f task.yaml", Short: short, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		if !run {
+			if err := quote.validate(cmd); err != nil {
+				return err
+			}
+		}
 		task, err := readTask(cmd, file)
 		if err != nil {
 			return err
@@ -162,6 +169,9 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		defer cancel()
 		client := o.client()
 		if !run {
+			if quote.objective == "lowest-rate" {
+				return o.quoteTask(ctx, cmd, task, quote)
+			}
 			r, err := o.planTask(ctx, client, task)
 			if err != nil {
 				return err
@@ -225,6 +235,9 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		return nil
 	}}
 	c.Flags().StringVarP(&file, "file", "f", "", "Task YAML path, or - for stdin")
+	if !run {
+		quote.flags(c)
+	}
 	if run {
 		c.Flags().StringVar(&id, "request-id", "", "Stable request ID to reuse when retrying submission")
 		c.Flags().BoolVar(&wait, "wait", false, "Wait for terminal status; unsuccessful jobs exit 2")

@@ -51,6 +51,9 @@ func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Contro
 		if t.Name == "" || t.Backend == nil || (i > 0 && targets[i-1].Name == t.Name) || !validText(t.Binding, 256, false) || !validLabels(t.Labels, 32) || !validAcceleratorNames(t.AcceleratorNames) {
 			return nil, fmt.Errorf("invalid target configuration")
 		}
+		if err := backend.ValidateAdvice(t.Advice); err != nil {
+			return nil, fmt.Errorf("invalid target facts: %w", err)
+		}
 		targets[i] = cloneTarget(t)
 	}
 	return &Control{store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess)}, nil
@@ -134,20 +137,7 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 	var selected string
 	var rejected []Rejection
 	for _, target := range c.targets {
-		var err error
-		if t.Target != "" && t.Target != target.Name {
-			err = fmt.Errorf("target constraint differs")
-		} else if !matchesLabels(target.Labels, t.TargetLabels) {
-			err = fmt.Errorf("target labels differ")
-		} else if t.Retry != nil && !target.SupportsRetry {
-			err = fmt.Errorf("finite job retries are unsupported")
-		} else if (t.CPULimitMillis != 0 || t.MemoryLimitBytes != 0) && !target.SupportsResourceLimits {
-			err = fmt.Errorf("resource limits are unsupported")
-		} else if len(t.NodeSelector) != 0 && !target.SupportsNodeSelector {
-			err = fmt.Errorf("node selectors are unsupported")
-		} else {
-			err = target.Backend.Check(cloneTask(t))
-		}
+		err := checkTarget(t, target)
 		if err != nil {
 			rejected = append(rejected, Rejection{target.Name, err.Error()})
 		} else if selected == "" {

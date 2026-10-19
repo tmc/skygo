@@ -1,0 +1,52 @@
+planner facts.yaml
+bounded 2s skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":[ ]*"b"'
+stdout 'CAPACITY_STATE_ERROR'
+stdout '"capacity_warning":[ ]*true'
+! skygo --json plan -f impossible.yaml --objective lowest-rate --currency USD
+stdout 'QUOTE_OUTCOME_NO_ELIGIBLE_TARGET'
+! stdout '"selected_target"'
+stderr 'no eligible target'
+quotejson QUOTE_OUTCOME_NO_ELIGIBLE_TARGET
+! skygo plan -f impossible.yaml
+stderr 'no eligible'
+skygo plan -f pinned.yaml
+stdout '^a\n$'
+skygo --json plan -f pinned.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":"a"'
+stdout '"comparison_count":1'
+! skygo plan -f labels.yaml
+stderr 'no eligible'
+! skygo --json plan -f labels.yaml --objective lowest-rate --currency USD
+stdout 'QUOTE_OUTCOME_NO_ELIGIBLE_TARGET'
+quotejson QUOTE_OUTCOME_NO_ELIGIBLE_TARGET
+apicalls 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- task.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 1000
+-- impossible.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 3000
+-- facts.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 2000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+  capacity: {state: available, available_slots: 2, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+- name: b
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+  capacity: {state: error, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+
+-- pinned.yaml --
+argv: [program]
+image: example.invalid/compute:test
+target: a
+-- labels.yaml --
+argv: [program]
+image: example.invalid/compute:test
+target_labels: {pool: nonexistent}

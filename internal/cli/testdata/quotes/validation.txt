@@ -1,0 +1,41 @@
+planner facts.yaml
+! skygo plan -f task.yaml --objective lowest-rate
+stderr 'three-letter uppercase currency'
+! skygo plan -f task.yaml --objective lowest-rate --currency usd
+stderr 'three-letter uppercase currency'
+! skygo plan -f task.yaml --currency USD
+stderr 'requires --objective lowest-rate'
+! skygo plan -f task.yaml --objective lowest-rate --currency USD --unit unknown
+stderr 'invalid quote rate unit'
+! skygo plan -f task.yaml --objective lowest-rate --currency USD --billable-duration 0s
+stderr 'billable duration'
+! skygo plan -f task.yaml --objective lowest-rate --currency USD --billable-duration 500ms
+stderr 'billable duration'
+! skygo run -f task.yaml --objective lowest-rate
+stderr 'unknown flag'
+! skygo plan -f task.yaml --unit target-hour
+stderr 'requires --objective lowest-rate'
+! skygo plan -f task.yaml --objective lowest-rate --currency USD --billable-duration 169h
+stderr 'billable duration'
+rpccalls QuoteTask 0
+rpccalls PlanTask 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+httpcalls 0
+validatefacts no_amount.yaml 'invalid quote amount'
+apicalls 0
+
+-- task.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 1000
+-- facts.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+-- no_amount.yaml --
+version: 1
+targets:
+- name: a
+  quote: {currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}

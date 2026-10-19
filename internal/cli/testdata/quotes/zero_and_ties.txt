@@ -1,0 +1,40 @@
+cp task.yaml original.yaml
+planner free.yaml
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":[ ]*"b"'
+stdout '"amount_micros":[ ]*"0"'
+stdout '"available_slots":0'
+! stdout '"estimated_compute_cost"'
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD --billable-duration 1s
+stdout '"estimated_compute_cost":'
+stdout '"amount_micros":[ ]*"0"'
+quotejson QUOTE_OUTCOME_SELECTED 0
+planner tie.yaml
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":[ ]*"a"'
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":[ ]*"a"'
+cmp task.yaml original.yaml
+apicalls 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- task.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 1000
+-- free.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+- name: b
+  quote: {amount_micros: 0, currency: USD, unit: target-hour, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+  capacity: {state: unavailable, available_slots: 0, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+-- tie.yaml --
+version: 1
+targets:
+- name: b
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+- name: a
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}

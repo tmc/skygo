@@ -1,0 +1,43 @@
+# Actual client + actual Kubernetes server/constructors; no native scheduler claim.
+planner facts.yaml
+skygo plan -f task.yaml --objective lowest-rate --currency USD
+stdout 'advisory target: b'
+stdout 'rate: 1[.]000000 USD/target-hour'
+stdout 'estimated compute cost: unknown'
+stdout 'advisory only; run uses task.target or ordinary placement'
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD --billable-duration 45m
+stdout '"selected_target":[ ]*"b"'
+stdout '"comparison_count":[ ]*2'
+stdout '"estimated_compute_cost":'
+stdout '"amount_micros":[ ]*"750000"'
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":[ ]*"b"'
+taskunchanged expected.json
+wirebounds
+apicalls 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+rpccalls PlanTask 0
+rpccalls GetServerInfo 0
+skygo plan -f task.yaml
+stdout '^a\n$'
+skygo plan -f task.yaml --objective first-fit
+stdout '^a\n$'
+rpccalls PlanTask 2
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- task.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 1000
+-- facts.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 2000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+- name: b
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+
+-- expected.json --
+{"argv":["program"],"image":"example.invalid/compute:test","cpu_millis":"1000"}

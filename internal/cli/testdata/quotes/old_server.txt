@@ -1,0 +1,18 @@
+# Actual source-pinned pre-A daemon, not a current handler with a switch.
+oldplanner
+! skygo plan -f task.yaml --objective lowest-rate --currency USD
+stderr 'unimplemented'
+! stdout .
+rpccalls QuoteTask 1
+rpccalls PlanTask 0
+rpccalls GetServerInfo 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+skygo plan -f task.yaml
+stdout '^local\n$'
+rpccalls PlanTask 1
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- task.yaml --
+argv: [program]

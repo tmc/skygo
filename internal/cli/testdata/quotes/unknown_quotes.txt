@@ -1,0 +1,57 @@
+planner missing.yaml
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout '"selected_target":[ ]*"b"'
+stdout 'PRICE_STATUS_MISSING'
+stdout '"unpriced_eligible_count":[ ]*1'
+! stdout '"estimated_compute_cost"'
+planner stale.yaml
+! skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout 'QUOTE_OUTCOME_NO_COMPARABLE_QUOTE'
+stdout 'PRICE_STATUS_STALE'
+! stdout '"selected_target"'
+! stdout '"estimated_compute_cost"'
+stderr 'no comparable configured quote'
+quotejson QUOTE_OUTCOME_NO_COMPARABLE_QUOTE
+planner future.yaml
+! skygo --json plan -f task.yaml --objective lowest-rate --currency USD
+stdout 'PRICE_STATUS_FUTURE'
+stdout 'QUOTE_OUTCOME_NO_COMPARABLE_QUOTE'
+! stdout '"selected_target"'
+quotejson QUOTE_OUTCOME_NO_COMPARABLE_QUOTE
+planner incomparable.yaml
+! skygo --json plan -f task.yaml --objective lowest-rate --currency USD --unit target-hour
+stdout 'QUOTE_OUTCOME_NO_COMPARABLE_QUOTE'
+stdout 'PRICE_STATUS_CURRENCY_MISMATCH'
+stdout 'PRICE_STATUS_UNIT_MISMATCH'
+quotejson QUOTE_OUTCOME_NO_COMPARABLE_QUOTE
+apicalls 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- task.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 1000
+-- missing.yaml --
+version: 1
+targets:
+- name: b
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+-- stale.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$STALE_START', valid_until: '$STALE_END'}
+-- incomparable.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000, currency: EUR, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+- name: b
+  quote: {amount_micros: 1000000, currency: USD, unit: cpu-hour, source: 'operator:b', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+
+-- future.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FUTURE_START', valid_until: '$FUTURE_END'}

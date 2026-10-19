@@ -1,0 +1,20 @@
+# Actual core daemon must forward --target-facts into production assembly.
+coreplanner facts.yaml
+skygo --json plan -f task.yaml --objective lowest-rate --currency USD --billable-duration 30m
+stdout '"selected_target":"local"'
+stdout '"amount_micros":"500000"'
+stdout 'ESTIMATE_STATUS_AVAILABLE'
+wirebounds
+apicalls 0
+rpccalls PlanTask 0
+rpccalls GetServerInfo 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- task.yaml --
+argv: [program]
+-- facts.yaml --
+version: 1
+targets:
+- name: local
+  quote: {amount_micros: 1000000, currency: USD, unit: target-hour, source: 'operator:local', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}

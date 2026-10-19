@@ -1,0 +1,42 @@
+{
+  "as_of": "2026-10-18T12:00:00.123456789Z",
+  "currency": "USD",
+  "unit": "RATE_UNIT_TARGET_HOUR",
+  "outcome": "QUOTE_OUTCOME_NO_ELIGIBLE_TARGET",
+  "candidates": [
+    {
+      "target": "a",
+      "rejection": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "quote": {
+        "rate": {
+          "amount_micros": "1",
+          "currency": "USD"
+        },
+        "unit": "RATE_UNIT_TARGET_HOUR",
+        "origin": "FACT_ORIGIN_CONFIGURED",
+        "source": "q",
+        "observed_at": "2026-10-18T11:59:00.123456789Z",
+        "valid_until": "2026-10-18T13:00:00.123456789Z"
+      },
+      "price_status": "PRICE_STATUS_COMPARABLE",
+      "capacity": {
+        "state": "CAPACITY_STATE_ERROR",
+        "origin": "FACT_ORIGIN_CONFIGURED",
+        "source": "c",
+        "observed_at": "2026-10-18T11:59:00.123456789Z",
+        "valid_until": "2026-10-18T13:00:00.123456789Z",
+        "failure_reason": "CAPACITY_FAILURE_REASON_SOURCE_UNAVAILABLE"
+      },
+      "capacity_freshness": "FACT_FRESHNESS_FRESH",
+      "capacity_warning": true,
+      "estimate_status": "ESTIMATE_STATUS_QUOTE_NOT_COMPARABLE"
+    }
+  ],
+  "excluded_charges": [
+    "EXCLUDED_CHARGE_STORAGE",
+    "EXCLUDED_CHARGE_TRANSFER",
+    "EXCLUDED_CHARGE_TAX",
+    "EXCLUDED_CHARGE_LICENSES",
+    "EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS"
+  ]
+}

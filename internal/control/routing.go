@@ -46,6 +46,7 @@ func validAcceleratorNames(names []string) bool {
 	return true
 }
 func cloneTarget(t backend.Target) backend.Target {
+	t.Advice = backend.CloneAdvice(t.Advice)
 	t.Labels = maps.Clone(t.Labels)
 	t.AcceleratorNames = slices.Clone(t.AcceleratorNames)
 	slices.Sort(t.AcceleratorNames)

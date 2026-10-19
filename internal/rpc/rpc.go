@@ -35,7 +35,12 @@ type responseKey struct{}
 // the caller's responsibility. The control and handler must share one Engine.
 func NewHandler(c *control.Control, engine *auth.Engine) http.Handler {
 	h := &handler{control: c, engine: engine, streams: make(chan struct{}, 32)}
-	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10))
+	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10), connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
+		if info.Procedure != skyv1connect.ControlServiceQuoteTaskProcedure {
+			return nil
+		}
+		return []connect.HandlerOption{connect.WithCodec(quoteJSONCodec{name: "json"}), connect.WithCodec(quoteJSONCodec{name: "json; charset=utf-8"})}
+	}))
 	mux := http.NewServeMux()
 	mux.Handle(path, service)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -122,7 +127,7 @@ func rpcError(err error) error {
 		code = connect.CodeDeadlineExceeded
 	case errors.Is(err, control.ErrInvalid), errors.Is(err, fs.ErrInvalid):
 		code = connect.CodeInvalidArgument
-	case errors.Is(err, control.ErrUnsupported), errors.Is(err, control.ErrLogsUnavailable):
+	case errors.Is(err, control.ErrQuoteMetadata), errors.Is(err, control.ErrUnsupported), errors.Is(err, control.ErrLogsUnavailable):
 		code = connect.CodeFailedPrecondition
 	case errors.Is(err, control.ErrUnavailable):
 		code = connect.CodeUnavailable

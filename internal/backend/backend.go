@@ -131,6 +131,7 @@ type Backend interface {
 
 // Target binds a configured name and kind to an executor.
 type Target struct {
+	Advice                 *TargetAdvice
 	Name                   string
 	Kind                   string
 	Backend                Backend

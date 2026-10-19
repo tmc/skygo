@@ -33,6 +33,9 @@ const (
 // reflection-formatted method names, remove the leading slash and convert the remaining slash to a
 // period.
 const (
+	// ControlServiceQuoteTaskProcedure is the fully-qualified name of the ControlService's QuoteTask
+	// RPC.
+	ControlServiceQuoteTaskProcedure = "/skygo.v1.ControlService/QuoteTask"
 	// ControlServicePlanTaskProcedure is the fully-qualified name of the ControlService's PlanTask RPC.
 	ControlServicePlanTaskProcedure = "/skygo.v1.ControlService/PlanTask"
 	// ControlServiceSubmitJobProcedure is the fully-qualified name of the ControlService's SubmitJob
@@ -61,6 +64,8 @@ const (
 
 // ControlServiceClient is a client for the skygo.v1.ControlService service.
 type ControlServiceClient interface {
+	// QuoteTask returns advisory configured rates; it never changes submission placement.
+	QuoteTask(context.Context, *connect.Request[v1.QuoteTaskRequest]) (*connect.Response[v1.QuoteTaskResponse], error)
 	PlanTask(context.Context, *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error)
 	// Both submission methods share the accepted task and request identity shape.
 	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
@@ -90,6 +95,12 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 	baseURL = strings.TrimRight(baseURL, "/")
 	controlServiceMethods := v1.File_skygo_v1_control_proto.Services().ByName("ControlService").Methods()
 	return &controlServiceClient{
+		quoteTask: connect.NewClient[v1.QuoteTaskRequest, v1.QuoteTaskResponse](
+			httpClient,
+			baseURL+ControlServiceQuoteTaskProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("QuoteTask")),
+			connect.WithClientOptions(opts...),
+		),
 		planTask: connect.NewClient[v1.PlanTaskRequest, v1.PlanTaskResponse](
 			httpClient,
 			baseURL+ControlServicePlanTaskProcedure,
@@ -149,6 +160,7 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 
 // controlServiceClient implements ControlServiceClient.
 type controlServiceClient struct {
+	quoteTask      *connect.Client[v1.QuoteTaskRequest, v1.QuoteTaskResponse]
 	planTask       *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
 	submitJob      *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
 	submitRetryJob *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
@@ -158,6 +170,11 @@ type controlServiceClient struct {
 	streamJobLogs  *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
 	listTargets    *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
 	getServerInfo  *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+}
+
+// QuoteTask calls skygo.v1.ControlService.QuoteTask.
+func (c *controlServiceClient) QuoteTask(ctx context.Context, req *connect.Request[v1.QuoteTaskRequest]) (*connect.Response[v1.QuoteTaskResponse], error) {
+	return c.quoteTask.CallUnary(ctx, req)
 }
 
 // PlanTask calls skygo.v1.ControlService.PlanTask.
@@ -207,6 +224,8 @@ func (c *controlServiceClient) GetServerInfo(ctx context.Context, req *connect.R
 
 // ControlServiceHandler is an implementation of the skygo.v1.ControlService service.
 type ControlServiceHandler interface {
+	// QuoteTask returns advisory configured rates; it never changes submission placement.
+	QuoteTask(context.Context, *connect.Request[v1.QuoteTaskRequest]) (*connect.Response[v1.QuoteTaskResponse], error)
 	PlanTask(context.Context, *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error)
 	// Both submission methods share the accepted task and request identity shape.
 	// buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
@@ -232,6 +251,12 @@ type ControlServiceHandler interface {
 // and JSON codecs. They also support gzip compression.
 func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.HandlerOption) (string, http.Handler) {
 	controlServiceMethods := v1.File_skygo_v1_control_proto.Services().ByName("ControlService").Methods()
+	controlServiceQuoteTaskHandler := connect.NewUnaryHandler(
+		ControlServiceQuoteTaskProcedure,
+		svc.QuoteTask,
+		connect.WithSchema(controlServiceMethods.ByName("QuoteTask")),
+		connect.WithHandlerOptions(opts...),
+	)
 	controlServicePlanTaskHandler := connect.NewUnaryHandler(
 		ControlServicePlanTaskProcedure,
 		svc.PlanTask,
@@ -288,6 +313,8 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 	)
 	return "/skygo.v1.ControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case ControlServiceQuoteTaskProcedure:
+			controlServiceQuoteTaskHandler.ServeHTTP(w, r)
 		case ControlServicePlanTaskProcedure:
 			controlServicePlanTaskHandler.ServeHTTP(w, r)
 		case ControlServiceSubmitJobProcedure:
@@ -314,6 +341,10 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 
 // UnimplementedControlServiceHandler returns CodeUnimplemented from all methods.
 type UnimplementedControlServiceHandler struct{}
+
+func (UnimplementedControlServiceHandler) QuoteTask(context.Context, *connect.Request[v1.QuoteTaskRequest]) (*connect.Response[v1.QuoteTaskResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.QuoteTask is not implemented"))
+}
 
 func (UnimplementedControlServiceHandler) PlanTask(context.Context, *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.PlanTask is not implemented"))

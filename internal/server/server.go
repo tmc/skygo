@@ -20,8 +20,8 @@ import (
 
 // Config selects durable storage, HTTP exposure, and execution targets.
 type Config struct {
-	DisableLocal                     bool
-	DataDir, Listen, Token, AuthFile string
+	DisableLocal                                  bool
+	DataDir, Listen, Token, AuthFile, TargetFacts string
 
 	// Targets constructs additional targets using the persistent installation ID.
 	// It is called once, after the store opens and before the server listens.
@@ -45,6 +45,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	ip := net.ParseIP(host)
 	if cfg.AuthFile == "" && cfg.Token == "" && (ip == nil || !ip.IsLoopback()) {
 		return errors.New("non-loopback listener requires a bearer token; use a trusted network or TLS proxy")
+	}
+	var facts map[string]*backend.TargetAdvice
+	if cfg.TargetFacts != "" {
+		facts, err = readTargetFacts(cfg.TargetFacts)
+		if err != nil {
+			return err
+		}
 	}
 	s, err := store.Open(cfg.DataDir)
 	if err != nil {
@@ -81,6 +88,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return fmt.Errorf("configure targets: %w", err)
 		}
 		targets = append(targets, extra...)
+	}
+	if err := attachTargetFacts(facts, targets); err != nil {
+		return err
 	}
 	c, err := control.New(s, targets, engine)
 	if err != nil {

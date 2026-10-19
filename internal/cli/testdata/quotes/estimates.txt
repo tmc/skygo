@@ -1,0 +1,45 @@
+planner cpu.yaml
+skygo --json plan -f missing.yaml --objective lowest-rate --currency USD --unit cpu-hour --billable-duration 30m
+stdout 'ESTIMATE_STATUS_QUANTITY_UNSPECIFIED'
+! stdout '"estimated_compute_cost"'
+skygo --json plan -f half.yaml --objective lowest-rate --currency USD --unit cpu-hour
+stdout 'ESTIMATE_STATUS_DURATION_UNSPECIFIED'
+! stdout '"estimated_compute_cost"'
+skygo --json plan -f half.yaml --objective lowest-rate --currency USD --unit cpu-hour --billable-duration 30m
+stdout 'ESTIMATE_STATUS_QUANTITY_UNSPECIFIED'
+! stdout '"estimated_compute_cost"'
+wirebounds
+planner maximum.yaml
+skygo --json plan -f missing.yaml --objective lowest-rate --currency USD --billable-duration 168h
+stdout '"amount_micros":"168000000000000"'
+stdout 'ESTIMATE_STATUS_AVAILABLE'
+planner accelerator.yaml
+skygo --json plan -f missing.yaml --objective lowest-rate --currency USD --unit accelerator-hour --billable-duration 1h
+stdout 'ESTIMATE_STATUS_QUANTITY_UNSPECIFIED'
+! stdout '"estimated_compute_cost"'
+apicalls 0
+rpccalls SubmitJob 0
+rpccalls SubmitRetryJob 0
+
+-- missing.yaml --
+argv: [program]
+image: example.invalid/compute:test
+-- half.yaml --
+argv: [program]
+image: example.invalid/compute:test
+cpu_millis: 500
+-- cpu.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000, currency: USD, unit: cpu-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+-- maximum.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000000000, currency: USD, unit: target-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}
+-- accelerator.yaml --
+version: 1
+targets:
+- name: a
+  quote: {amount_micros: 1000000, currency: USD, unit: accelerator-hour, source: 'operator:a', observed_at: '$FRESH_START', valid_until: '$FRESH_END'}

@@ -4,6 +4,8 @@ option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
 import "google/protobuf/timestamp.proto";
 // ControlService manages finite, single-node jobs on configured targets.
 service ControlService {
+  // QuoteTask returns advisory configured rates; it never changes submission placement.
+  rpc QuoteTask(QuoteTaskRequest) returns (QuoteTaskResponse);
   rpc PlanTask(PlanTaskRequest) returns (PlanTaskResponse);
   // Both submission methods share the accepted task and request identity shape.
   // buf:lint:ignore RPC_REQUEST_RESPONSE_UNIQUE
@@ -146,3 +148,118 @@ message ListTargetsResponse { repeated Target targets = 1; }
 message GetServerInfoRequest {}
 // Capabilities apply only to their named target at this endpoint.
 message GetServerInfoResponse { repeated Target targets = 1; }
+
+// Money is a fixed-point amount. Presence distinguishes explicit zero from unknown.
+message Money {
+  optional int64 amount_micros = 1;
+  string currency = 2;
+}
+// RateUnit is the denominator of an operator-configured rate.
+enum RateUnit {
+  RATE_UNIT_UNSPECIFIED = 0;
+  RATE_UNIT_TARGET_HOUR = 1;
+  RATE_UNIT_CPU_HOUR = 2;
+  RATE_UNIT_ACCELERATOR_HOUR = 3;
+}
+// Gate A facts are configured, never live provider observations.
+enum FactOrigin {
+  FACT_ORIGIN_UNSPECIFIED = 0;
+  FACT_ORIGIN_CONFIGURED = 1;
+}
+message Quote {
+  Money rate = 1;
+  RateUnit unit = 2;
+  FactOrigin origin = 3;
+  string source = 4;
+  google.protobuf.Timestamp observed_at = 5;
+  google.protobuf.Timestamp valid_until = 6;
+}
+enum CapacityState {
+  CAPACITY_STATE_UNSPECIFIED = 0;
+  CAPACITY_STATE_AVAILABLE = 1;
+  CAPACITY_STATE_UNAVAILABLE = 2;
+  CAPACITY_STATE_ERROR = 3;
+}
+enum CapacityFailureReason {
+  CAPACITY_FAILURE_REASON_UNSPECIFIED = 0;
+  CAPACITY_FAILURE_REASON_SOURCE_UNAVAILABLE = 1;
+}
+message CapacitySnapshot {
+  CapacityState state = 1;
+  optional uint32 available_slots = 2;
+  FactOrigin origin = 3;
+  string source = 4;
+  google.protobuf.Timestamp observed_at = 5;
+  google.protobuf.Timestamp valid_until = 6;
+  CapacityFailureReason failure_reason = 7;
+}
+enum QuoteOutcome {
+  QUOTE_OUTCOME_UNSPECIFIED = 0;
+  QUOTE_OUTCOME_SELECTED = 1;
+  QUOTE_OUTCOME_NO_ELIGIBLE_TARGET = 2;
+  QUOTE_OUTCOME_NO_COMPARABLE_QUOTE = 3;
+}
+enum PriceStatus {
+  PRICE_STATUS_UNSPECIFIED = 0;
+  PRICE_STATUS_MISSING = 1;
+  PRICE_STATUS_FUTURE = 2;
+  PRICE_STATUS_STALE = 3;
+  PRICE_STATUS_CURRENCY_MISMATCH = 4;
+  PRICE_STATUS_UNIT_MISMATCH = 5;
+  PRICE_STATUS_COMPARABLE = 6;
+}
+enum FactFreshness {
+  FACT_FRESHNESS_UNSPECIFIED = 0;
+  FACT_FRESHNESS_UNKNOWN = 1;
+  FACT_FRESHNESS_FUTURE = 2;
+  FACT_FRESHNESS_STALE = 3;
+  FACT_FRESHNESS_FRESH = 4;
+}
+enum EstimateStatus {
+  ESTIMATE_STATUS_UNSPECIFIED = 0;
+  ESTIMATE_STATUS_QUOTE_NOT_COMPARABLE = 1;
+  ESTIMATE_STATUS_DURATION_UNSPECIFIED = 2;
+  ESTIMATE_STATUS_QUANTITY_UNSPECIFIED = 3;
+  ESTIMATE_STATUS_AVAILABLE = 4;
+}
+enum ExcludedCharge {
+  EXCLUDED_CHARGE_UNSPECIFIED = 0;
+  EXCLUDED_CHARGE_STORAGE = 1;
+  EXCLUDED_CHARGE_TRANSFER = 2;
+  EXCLUDED_CHARGE_TAX = 3;
+  EXCLUDED_CHARGE_LICENSES = 4;
+  EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS = 5;
+}
+message QuoteCandidate {
+  string target = 1;
+  bool eligible = 2;
+  string rejection = 3;
+  Quote quote = 4;
+  PriceStatus price_status = 5;
+  CapacitySnapshot capacity = 6;
+  FactFreshness capacity_freshness = 7;
+  bool capacity_warning = 8;
+  Money estimated_compute_cost = 9;
+  EstimateStatus estimate_status = 10;
+}
+// QuoteTask always ranks comparable configured rates, with bytewise name ties.
+message QuoteTaskRequest {
+  Task task = 1;
+  string currency = 2;
+  RateUnit unit = 3;
+  // User-declared total billable duration, never inferred from task timeout.
+  optional int64 billable_duration_seconds = 4;
+}
+message QuoteTaskResponse {
+  google.protobuf.Timestamp as_of = 1;
+  string currency = 2;
+  RateUnit unit = 3;
+  optional int64 billable_duration_seconds = 4;
+  QuoteOutcome outcome = 5;
+  string selected_target = 6;
+  uint32 comparison_count = 7;
+  uint32 unpriced_eligible_count = 8;
+  repeated QuoteCandidate candidates = 9;
+  // This advisory compute estimate excludes each of these categories.
+  repeated ExcludedCharge excluded_charges = 10;
+}

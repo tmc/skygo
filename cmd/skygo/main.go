@@ -7,6 +7,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/spf13/cobra"
 	"github.com/tmc/skygo/internal/cli"
 	"github.com/tmc/skygo/internal/server"
 )
@@ -14,12 +15,16 @@ import (
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	cmd := cli.New(func(ctx context.Context, o cli.ServerOptions) error {
-		return server.Run(ctx, server.Config{DisableLocal: o.DisableLocal, DataDir: o.DataDir, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile})
-	})
+	cmd := command(server.Run)
 	err := cmd.ExecuteContext(ctx)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	os.Exit(cli.ExitCode(err))
+}
+
+func command(run func(context.Context, server.Config) error) *cobra.Command {
+	return cli.New(func(ctx context.Context, o cli.ServerOptions) error {
+		return run(ctx, server.Config{DisableLocal: o.DisableLocal, DataDir: o.DataDir, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts})
+	})
 }
