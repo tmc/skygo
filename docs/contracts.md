@@ -207,9 +207,11 @@ binding migration.
 
 The store checks its schema before migration. Format 4 introduced attempt
 history, identity indexes and retry reservation accounting independently of
-legacy/scoped authentication mode. The current format is 5: opening supported
-historical state transactionally adds retention side records, quota accounting
-and indexes. Retention remains disabled until explicit stopped-state activation.
+legacy/scoped authentication mode. Format 5 added retention side records,
+quota accounting and indexes for supported historical state. Retention remains
+disabled until explicit stopped-state activation. The current format is 6: its
+artifact schema fence preserves format 5 state and leaves artifact storage
+dormant until stopped initialization installs a verified companion root.
 Migration preserves accepted Job/Task rows and installation ownership; adding
 side records does not make total accounting or database size unchanged.
 Historical task-counter differences are recorded separately, and activation
@@ -224,15 +226,30 @@ remain readable and replayable but held from execution and backend logs. See
 
 `state backup --data-dir DIR --output FILE` creates a consistent offline database
 snapshot. Stop the writable server first; its database lock blocks backup.
+For snapshots without installed artifact metadata,
 `state restore --input FILE --data-dir NEW_DIR` validates and publishes state in
-a new directory. Neither operation runs, cancels or rewrites workloads, and
-neither overwrites an existing destination. Restoring enabled retention keeps
+a new directory. Snapshots with installed artifact metadata are refused before
+any temporary copy or destination directory is created. Database-only snapshots
+do not recover artifact bytes; see the [artifact guide](artifacts.md) for the
+current recovery limits. Neither operation runs, cancels or rewrites workloads,
+and neither overwrites an existing destination. The separate
+`state artifacts backup` and `state artifacts restore` commands handle an eligible
+stopped database/artifact pair, including all its complete objects. They do not
+copy logs, credentials, workload programs or external resources. They require an
+explicit original-writer handoff and a trusted stable filesystem namespace, with
+an effective-user-owned publication parent lacking group/other writes and special
+mode bits. Staging stays relative to that original parent; source/destination
+overlap is refused. They publish only to a new destination, retaining any created
+failed stage for operator handoff rather than deleting or adopting it. Restore records the new physical object/root
+identities while preserving logical artifact references and installation ownership.
+See the [companion procedure and exclusions](artifacts.md#stopped-companion-backup-and-restore).
+Restoring enabled retention keeps
 accepted job rows and owner identity but issues a fresh request lineage and
 closes legacy replay. Old request domains cannot replay into that restored
 lineage; preserved raw bindings are not a promise that replay authority survives
 restore. See the [retention guide](retention.md#requests-results-and-logs).
 
-Snapshots contain only the database. Copy local retained logs separately if
+Database-only snapshots contain only the database. Copy local retained logs separately if
 needed; workload files, programs and images also need independent preservation.
 Scoped authentication also requires its latest matching private auth file and
 client credential files; snapshots do not contain them. See

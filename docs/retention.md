@@ -79,6 +79,26 @@ Follow returned page tokens for additional pages. Active, unknown and retry-back
 jobs are protected from whole/metadata pruning. Whole pruning requires appropriate
 stop/output proof; age alone does not authorize native execution deletion.
 
+Admins can use `--result-only` with a nonzero, one-based `--attempt` to expire
+one fixed attempt's artifact result while preserving its input, job and attempt
+history, and request replay. For illustration, with `CUTOFF` set to your chosen
+RFC3339 timestamp, preview and execute the same selection:
+
+```sh
+skygo --json jobs prune --result-only --attempt 2 --before "$CUTOFF"
+skygo --json jobs prune --result-only --attempt 2 --before "$CUTOFF" --yes
+```
+
+This selects attempt 2 of each eligible job in the page; it is not a job-ID
+filter. The cutoff compares each job's last update time, not that attempt's
+finish time. Continue preview pages and execution pages separately, using their
+returned page tokens and unchanged selectors. Execution re-evaluates eligibility.
+
+After a successful mark, the selected result is reported as expired and cannot
+start another download. Replaying the original request returns that history
+without rerunning setup or the task. Result expiry does not promise immediate
+physical deletion or released storage reservations.
+
 `--logs-only` expires eligible closed output while retaining history and native
 execution. `--metadata-only --ack-unverified-terminal` expires eligible terminal
 metadata without asserting that execution stopped. It leaves a manual obligation
