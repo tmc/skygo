@@ -43,6 +43,9 @@ type Store struct {
 
 // Open opens or initializes a database in dir. Another writer is refused after
 // one second. The persistent owner identifies this installation to backends.
+// On initialization failure it returns no Store and preserves any error from
+// the single database Close. A close error identifies neither a retained lock
+// nor a handle for another Close attempt; bbolt may have discarded its handle.
 func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return nil, fmt.Errorf("create data directory: %w", err)
@@ -76,7 +79,9 @@ func Open(dir string) (*Store, error) {
 		err = db.View(func(tx *bolt.Tx) error { s.scoped = isScoped(tx); return nil })
 	}
 	if err != nil {
-		db.Close()
+		if closeErr := db.Close(); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close job database after initialization failure: %w", closeErr))
+		}
 		return nil, fmt.Errorf("initialize job database: %w", err)
 	}
 	return s, nil
@@ -179,7 +184,14 @@ func (s *Store) Lookup(actor auth.Actor, requestID string, task backend.Task) (j
 // identical request returns the original job, including its target and binding,
 // before validating the newly proposed route.
 func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, target, binding string) (j backend.Job, err error) {
+	return s.submit(actor, requestID, task, target, binding, false)
+}
+
+func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, target, binding string, workspace bool) (j backend.Job, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
+		return
+	}
+	if err = validateSubmitWorkspace(task, workspace); err != nil {
 		return
 	}
 	task.Retry, err = backend.NormalizeRetry(task.Retry)
@@ -198,6 +210,9 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 		return backend.Job{}, err
 	}
 	now := time.Now().UTC()
+	if workspace {
+		now = s.now().UTC()
+	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		st, e := loadRetention(tx)
 		if e != nil {
@@ -214,75 +229,104 @@ func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, ta
 			j = existing
 			return nil
 		}
-		if target == "" || !validBinding(binding) {
-			return errors.New("new job requires a target and valid binding")
-		}
-		encodedTask, e := backend.TaskBytes(task)
-		if e != nil {
-			return e
-		}
-		metadata := tx.Bucket(metadataBucket)
-		data := metadata.Get(taskBytesKey)
-		if len(data) != 8 {
-			return errors.New("invalid task byte counter")
-		}
-		taskBytes := binary.BigEndian.Uint64(data)
-		if taskBytes >= maxTaskBytes || uint64(len(encodedTask)) > maxTaskBytes-taskBytes {
-			return ErrFull
-		}
-		jobs := tx.Bucket(jobsBucket)
-		seq := tx.Bucket(sequenceBucket)
-		if seq.Sequence() >= maxJobs {
-			return ErrFull
-		}
-		if jobs.Get([]byte(id)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(id)) != nil {
-			return errors.New("random job identity collision")
-		}
-		n, e := seq.NextSequence()
-		if e != nil {
-			return e
-		}
-		accepted := backend.Job{ID: id, Task: task, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
-		if e = acceptAttempts(tx, &accepted); e != nil {
-			return e
-		}
-		data, e = json.Marshal(accepted)
-		if e != nil {
-			return e
-		}
-		if e = jobs.Put([]byte(id), data); e != nil {
-			return e
-		}
-		if e = seq.Put(sequenceKey(n), []byte(id)); e != nil {
-			return e
-		}
-		if e = bindRequest(tx, actor.Principal(), requestID, id); e != nil {
-			return e
-		}
-		if isScoped(tx) {
-			if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(id), []byte(actor.Principal())); e != nil {
-				return e
+		accept := func(art *artifactState) error {
+			if art != nil {
+				ref, e := artifactTaskRef(task)
+				if e != nil {
+					return e
+				}
+				if e := artifactGranted(art, actor.Principal(), ref, now); e != nil {
+					return e
+				}
 			}
-			index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(actor.Principal()))
+			if target == "" || !validBinding(binding) {
+				return errors.New("new job requires a target and valid binding")
+			}
+			encodedTask, e := backend.TaskBytes(task)
 			if e != nil {
 				return e
 			}
-			ordinal, e := index.NextSequence()
+			if workspace && len(encodedTask) > 256<<10 {
+				return errors.New("task exceeds limit")
+			}
+			metadata := tx.Bucket(metadataBucket)
+			data := metadata.Get(taskBytesKey)
+			if len(data) != 8 {
+				return errors.New("invalid task byte counter")
+			}
+			taskBytes := binary.BigEndian.Uint64(data)
+			if taskBytes >= maxTaskBytes || uint64(len(encodedTask)) > maxTaskBytes-taskBytes {
+				return ErrFull
+			}
+			jobs := tx.Bucket(jobsBucket)
+			seq := tx.Bucket(sequenceBucket)
+			if seq.Sequence() >= maxJobs {
+				return ErrFull
+			}
+			if jobs.Get([]byte(id)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(id)) != nil {
+				return errors.New("random job identity collision")
+			}
+			n, e := seq.NextSequence()
 			if e != nil {
 				return e
 			}
-			if e = index.Put(sequenceKey(ordinal), []byte(id)); e != nil {
+			accepted := backend.Job{ID: id, Task: task, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
+			if e = acceptAttempts(tx, &accepted); e != nil {
 				return e
 			}
+			data, e = json.Marshal(accepted)
+			if e != nil {
+				return e
+			}
+			if e = jobs.Put([]byte(id), data); e != nil {
+				return e
+			}
+			if e = seq.Put(sequenceKey(n), []byte(id)); e != nil {
+				return e
+			}
+			if e = bindRequest(tx, actor.Principal(), requestID, id); e != nil {
+				return e
+			}
+			if isScoped(tx) {
+				if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(id), []byte(actor.Principal())); e != nil {
+					return e
+				}
+				index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(actor.Principal()))
+				if e != nil {
+					return e
+				}
+				ordinal, e := index.NextSequence()
+				if e != nil {
+					return e
+				}
+				if e = index.Put(sequenceKey(ordinal), []byte(id)); e != nil {
+					return e
+				}
+			}
+			if e = metadata.Put(taskBytesKey, sequenceKey(taskBytes+uint64(len(encodedTask)))); e != nil {
+				return e
+			}
+			// Decode a fresh value so callers cannot mutate task maps owned by others.
+			if e = trackLegacyAccepted(tx, accepted, actor.Principal(), requestID); e != nil {
+				return e
+			}
+			if art != nil {
+				ref, e := artifactTaskRef(task)
+				if e != nil {
+					return e
+				}
+				if e := artifactAcceptInput(tx, art, actor.Principal(), accepted.ID, ref, now); e != nil {
+					return e
+				}
+			}
+			return json.Unmarshal(data, &j)
 		}
-		if e = metadata.Put(taskBytesKey, sequenceKey(taskBytes+uint64(len(encodedTask)))); e != nil {
+		if workspace {
+			core := artifactAcceptLedger(tx, id, actor.Principal(), requestID, RequestDomain{}, true)
+			_, e := artifactCoreChange(tx, core, maxChangeBytes, 100, accept)
 			return e
 		}
-		// Decode a fresh value so callers cannot mutate task maps owned by others.
-		if e = trackLegacyAccepted(tx, accepted, actor.Principal(), requestID); e != nil {
-			return e
-		}
-		return json.Unmarshal(data, &j)
+		return accept(nil)
 	})
 	return
 }

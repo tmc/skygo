@@ -403,8 +403,10 @@ func TestRetryOutputFailureDrains(t *testing.T) {
 func TestRetryMissingForkHandle(t *testing.T) {
 	for _, mode := range []string{"recovered-handle", "open-failure"} {
 		t.Run(mode, func(t *testing.T) {
-			b := newBackend(t)
+			fixture := newExecutionFixture(t, false)
+			b := fixture.backend
 			requireRetry(t, b)
+			fixture.held = true
 			b.retryOps.prepare = func(*exec.Cmd) {} // Deterministically omit the dedicated fork handle.
 			b.retryOps.kill = func(*exec.Cmd) error { t.Error("group signal on failed startup"); return nil }
 			if mode == "open-failure" {
@@ -412,6 +414,12 @@ func TestRetryMissingForkHandle(t *testing.T) {
 			}
 			id := strings.Repeat("5", 32)
 			err := b.Start(context.Background(), id, retryProgram("bounded-live", ""))
+			b.mu.Lock()
+			original := b.jobs[id]
+			b.mu.Unlock()
+			if original != nil {
+				t.Cleanup(func() { <-original.retry.reaped })
+			}
 			if err == nil || !strings.Contains(err.Error(), "fork did not return") {
 				t.Fatalf("Start=%v", err)
 			}
@@ -428,11 +436,8 @@ func TestRetryMissingForkHandle(t *testing.T) {
 			if _, err := e.output.file.Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
 				t.Fatalf("output not closed: %v", err)
 			}
-			closeErr := b.Close()
-			if mode == "recovered-handle" && closeErr != nil {
-				t.Fatal(closeErr)
-			}
-			if mode == "open-failure" && closeErr == nil {
+			closeErr := fixture.close()
+			if closeErr == nil {
 				t.Fatal("unreaped original child was silently accepted")
 			}
 			select {
@@ -440,8 +445,8 @@ func TestRetryMissingForkHandle(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("bounded original helper did not eventually reap")
 			}
-			if err := b.Close(); err != nil {
-				t.Fatal(err)
+			if err := fixture.close(); err == nil {
+				t.Fatal("late actual reaping supplied missing original terminal pin")
 			}
 			if retryHandleReady(e.cmd) {
 				t.Fatal("dedicated handle was retained after completion")

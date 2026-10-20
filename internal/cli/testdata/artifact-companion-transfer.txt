@@ -1,0 +1,39 @@
+# Real upload, original server join, offline companion copy and rebind.
+# Companion publication requires a private script-owned working directory.
+chmod 0700 .
+server start
+skygo artifacts upload source
+cp stdout ref.json
+upload-id INPUT
+server stop
+! stderr .
+skygo state artifacts backup --data-dir $DATA --artifact-dir $DATA/artifacts --output bundle --ack-writers-stopped
+stdout '^backup complete\n$'
+! stderr .
+exists bundle/objects/$INPUT.tar
+skygo state artifacts restore --input bundle --data-dir restored --ack-writers-stopped
+stdout '^restore complete\n$'
+! stderr .
+exists restored/artifacts/.skygo-artifact-root
+cmp bundle/objects/$INPUT.tar restored/artifacts/$INPUT.tar
+# Re-export validates the REAL restored metadata/inodes/parser before copying.
+skygo state artifacts backup --data-dir restored --artifact-dir restored/artifacts --output second-bundle --ack-writers-stopped
+stdout '^backup complete\n$'
+! stderr .
+cmp bundle/objects/$INPUT.tar second-bundle/objects/$INPUT.tar
+# Corrupt copied archive bytes; a failed restore must not publish a data dir.
+cp damaged.txt bundle/objects/$INPUT.tar
+! skygo state artifacts restore --input bundle --data-dir refused --ack-writers-stopped
+! stdout .
+! exists refused
+cmp damaged.txt bundle/objects/$INPUT.tar
+# Original installation and read grant survived backup and failed restore.
+server start
+skygo artifacts download --ref ref.json downloaded
+cmp source/seed.txt downloaded/seed.txt
+server stop
+! stderr .
+-- source/seed.txt --
+seed
+-- damaged.txt --
+not the archived bytes

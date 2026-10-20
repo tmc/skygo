@@ -72,6 +72,36 @@ const (
 	// ControlServiceStreamRetainedJobLogsProcedure is the fully-qualified name of the ControlService's
 	// StreamRetainedJobLogs RPC.
 	ControlServiceStreamRetainedJobLogsProcedure = "/skygo.v1.ControlService/StreamRetainedJobLogs"
+	// ControlServiceSubmitWorkspaceJobProcedure is the fully-qualified name of the ControlService's
+	// SubmitWorkspaceJob RPC.
+	ControlServiceSubmitWorkspaceJobProcedure = "/skygo.v1.ControlService/SubmitWorkspaceJob"
+	// ControlServiceBeginArtifactUploadProcedure is the fully-qualified name of the ControlService's
+	// BeginArtifactUpload RPC.
+	ControlServiceBeginArtifactUploadProcedure = "/skygo.v1.ControlService/BeginArtifactUpload"
+	// ControlServiceGetArtifactUploadProcedure is the fully-qualified name of the ControlService's
+	// GetArtifactUpload RPC.
+	ControlServiceGetArtifactUploadProcedure = "/skygo.v1.ControlService/GetArtifactUpload"
+	// ControlServiceWriteArtifactChunkProcedure is the fully-qualified name of the ControlService's
+	// WriteArtifactChunk RPC.
+	ControlServiceWriteArtifactChunkProcedure = "/skygo.v1.ControlService/WriteArtifactChunk"
+	// ControlServiceFinalizeArtifactUploadProcedure is the fully-qualified name of the ControlService's
+	// FinalizeArtifactUpload RPC.
+	ControlServiceFinalizeArtifactUploadProcedure = "/skygo.v1.ControlService/FinalizeArtifactUpload"
+	// ControlServiceCancelArtifactUploadProcedure is the fully-qualified name of the ControlService's
+	// CancelArtifactUpload RPC.
+	ControlServiceCancelArtifactUploadProcedure = "/skygo.v1.ControlService/CancelArtifactUpload"
+	// ControlServiceBeginArtifactDownloadProcedure is the fully-qualified name of the ControlService's
+	// BeginArtifactDownload RPC.
+	ControlServiceBeginArtifactDownloadProcedure = "/skygo.v1.ControlService/BeginArtifactDownload"
+	// ControlServiceReadArtifactChunkProcedure is the fully-qualified name of the ControlService's
+	// ReadArtifactChunk RPC.
+	ControlServiceReadArtifactChunkProcedure = "/skygo.v1.ControlService/ReadArtifactChunk"
+	// ControlServiceCloseArtifactDownloadProcedure is the fully-qualified name of the ControlService's
+	// CloseArtifactDownload RPC.
+	ControlServiceCloseArtifactDownloadProcedure = "/skygo.v1.ControlService/CloseArtifactDownload"
+	// ControlServiceRemoveArtifactProcedure is the fully-qualified name of the ControlService's
+	// RemoveArtifact RPC.
+	ControlServiceRemoveArtifactProcedure = "/skygo.v1.ControlService/RemoveArtifact"
 )
 
 // ControlServiceClient is a client for the skygo.v1.ControlService service.
@@ -100,6 +130,18 @@ type ControlServiceClient interface {
 	SubmitRetainedJob(context.Context, *connect.Request[v1.SubmitRetainedJobRequest]) (*connect.Response[v1.SubmitRetainedJobResponse], error)
 	PruneJobs(context.Context, *connect.Request[v1.PruneJobsRequest]) (*connect.Response[v1.PruneJobsResponse], error)
 	StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamRetainedJobLogsResponse], error)
+	// Workspace submission never falls back to an older submit method.
+	SubmitWorkspaceJob(context.Context, *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error)
+	// Artifact transfers use bounded unary chunks, not whole-archive messages.
+	BeginArtifactUpload(context.Context, *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error)
+	GetArtifactUpload(context.Context, *connect.Request[v1.GetArtifactUploadRequest]) (*connect.Response[v1.GetArtifactUploadResponse], error)
+	WriteArtifactChunk(context.Context, *connect.Request[v1.WriteArtifactChunkRequest]) (*connect.Response[v1.WriteArtifactChunkResponse], error)
+	FinalizeArtifactUpload(context.Context, *connect.Request[v1.FinalizeArtifactUploadRequest]) (*connect.Response[v1.FinalizeArtifactUploadResponse], error)
+	CancelArtifactUpload(context.Context, *connect.Request[v1.CancelArtifactUploadRequest]) (*connect.Response[v1.CancelArtifactUploadResponse], error)
+	BeginArtifactDownload(context.Context, *connect.Request[v1.BeginArtifactDownloadRequest]) (*connect.Response[v1.BeginArtifactDownloadResponse], error)
+	ReadArtifactChunk(context.Context, *connect.Request[v1.ReadArtifactChunkRequest]) (*connect.Response[v1.ReadArtifactChunkResponse], error)
+	CloseArtifactDownload(context.Context, *connect.Request[v1.CloseArtifactDownloadRequest]) (*connect.Response[v1.CloseArtifactDownloadResponse], error)
+	RemoveArtifact(context.Context, *connect.Request[v1.RemoveArtifactRequest]) (*connect.Response[v1.RemoveArtifactResponse], error)
 }
 
 // NewControlServiceClient constructs a client for the skygo.v1.ControlService service. By default,
@@ -197,25 +239,95 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(controlServiceMethods.ByName("StreamRetainedJobLogs")),
 			connect.WithClientOptions(opts...),
 		),
+		submitWorkspaceJob: connect.NewClient[v1.SubmitWorkspaceJobRequest, v1.SubmitWorkspaceJobResponse](
+			httpClient,
+			baseURL+ControlServiceSubmitWorkspaceJobProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("SubmitWorkspaceJob")),
+			connect.WithClientOptions(opts...),
+		),
+		beginArtifactUpload: connect.NewClient[v1.BeginArtifactUploadRequest, v1.BeginArtifactUploadResponse](
+			httpClient,
+			baseURL+ControlServiceBeginArtifactUploadProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("BeginArtifactUpload")),
+			connect.WithClientOptions(opts...),
+		),
+		getArtifactUpload: connect.NewClient[v1.GetArtifactUploadRequest, v1.GetArtifactUploadResponse](
+			httpClient,
+			baseURL+ControlServiceGetArtifactUploadProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("GetArtifactUpload")),
+			connect.WithClientOptions(opts...),
+		),
+		writeArtifactChunk: connect.NewClient[v1.WriteArtifactChunkRequest, v1.WriteArtifactChunkResponse](
+			httpClient,
+			baseURL+ControlServiceWriteArtifactChunkProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("WriteArtifactChunk")),
+			connect.WithClientOptions(opts...),
+		),
+		finalizeArtifactUpload: connect.NewClient[v1.FinalizeArtifactUploadRequest, v1.FinalizeArtifactUploadResponse](
+			httpClient,
+			baseURL+ControlServiceFinalizeArtifactUploadProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("FinalizeArtifactUpload")),
+			connect.WithClientOptions(opts...),
+		),
+		cancelArtifactUpload: connect.NewClient[v1.CancelArtifactUploadRequest, v1.CancelArtifactUploadResponse](
+			httpClient,
+			baseURL+ControlServiceCancelArtifactUploadProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("CancelArtifactUpload")),
+			connect.WithClientOptions(opts...),
+		),
+		beginArtifactDownload: connect.NewClient[v1.BeginArtifactDownloadRequest, v1.BeginArtifactDownloadResponse](
+			httpClient,
+			baseURL+ControlServiceBeginArtifactDownloadProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("BeginArtifactDownload")),
+			connect.WithClientOptions(opts...),
+		),
+		readArtifactChunk: connect.NewClient[v1.ReadArtifactChunkRequest, v1.ReadArtifactChunkResponse](
+			httpClient,
+			baseURL+ControlServiceReadArtifactChunkProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("ReadArtifactChunk")),
+			connect.WithClientOptions(opts...),
+		),
+		closeArtifactDownload: connect.NewClient[v1.CloseArtifactDownloadRequest, v1.CloseArtifactDownloadResponse](
+			httpClient,
+			baseURL+ControlServiceCloseArtifactDownloadProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("CloseArtifactDownload")),
+			connect.WithClientOptions(opts...),
+		),
+		removeArtifact: connect.NewClient[v1.RemoveArtifactRequest, v1.RemoveArtifactResponse](
+			httpClient,
+			baseURL+ControlServiceRemoveArtifactProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("RemoveArtifact")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // controlServiceClient implements ControlServiceClient.
 type controlServiceClient struct {
-	quoteTask             *connect.Client[v1.QuoteTaskRequest, v1.QuoteTaskResponse]
-	planTask              *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
-	submitJob             *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
-	submitRetryJob        *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
-	getJob                *connect.Client[v1.GetJobRequest, v1.GetJobResponse]
-	listJobs              *connect.Client[v1.ListJobsRequest, v1.ListJobsResponse]
-	cancelJob             *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
-	streamJobLogs         *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
-	listTargets           *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
-	getServerInfo         *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
-	getRetention          *connect.Client[v1.GetRetentionRequest, v1.GetRetentionResponse]
-	submitRetainedJob     *connect.Client[v1.SubmitRetainedJobRequest, v1.SubmitRetainedJobResponse]
-	pruneJobs             *connect.Client[v1.PruneJobsRequest, v1.PruneJobsResponse]
-	streamRetainedJobLogs *connect.Client[v1.StreamRetainedJobLogsRequest, v1.StreamRetainedJobLogsResponse]
+	quoteTask              *connect.Client[v1.QuoteTaskRequest, v1.QuoteTaskResponse]
+	planTask               *connect.Client[v1.PlanTaskRequest, v1.PlanTaskResponse]
+	submitJob              *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
+	submitRetryJob         *connect.Client[v1.SubmitJobRequest, v1.SubmitJobResponse]
+	getJob                 *connect.Client[v1.GetJobRequest, v1.GetJobResponse]
+	listJobs               *connect.Client[v1.ListJobsRequest, v1.ListJobsResponse]
+	cancelJob              *connect.Client[v1.CancelJobRequest, v1.CancelJobResponse]
+	streamJobLogs          *connect.Client[v1.StreamJobLogsRequest, v1.StreamJobLogsResponse]
+	listTargets            *connect.Client[v1.ListTargetsRequest, v1.ListTargetsResponse]
+	getServerInfo          *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+	getRetention           *connect.Client[v1.GetRetentionRequest, v1.GetRetentionResponse]
+	submitRetainedJob      *connect.Client[v1.SubmitRetainedJobRequest, v1.SubmitRetainedJobResponse]
+	pruneJobs              *connect.Client[v1.PruneJobsRequest, v1.PruneJobsResponse]
+	streamRetainedJobLogs  *connect.Client[v1.StreamRetainedJobLogsRequest, v1.StreamRetainedJobLogsResponse]
+	submitWorkspaceJob     *connect.Client[v1.SubmitWorkspaceJobRequest, v1.SubmitWorkspaceJobResponse]
+	beginArtifactUpload    *connect.Client[v1.BeginArtifactUploadRequest, v1.BeginArtifactUploadResponse]
+	getArtifactUpload      *connect.Client[v1.GetArtifactUploadRequest, v1.GetArtifactUploadResponse]
+	writeArtifactChunk     *connect.Client[v1.WriteArtifactChunkRequest, v1.WriteArtifactChunkResponse]
+	finalizeArtifactUpload *connect.Client[v1.FinalizeArtifactUploadRequest, v1.FinalizeArtifactUploadResponse]
+	cancelArtifactUpload   *connect.Client[v1.CancelArtifactUploadRequest, v1.CancelArtifactUploadResponse]
+	beginArtifactDownload  *connect.Client[v1.BeginArtifactDownloadRequest, v1.BeginArtifactDownloadResponse]
+	readArtifactChunk      *connect.Client[v1.ReadArtifactChunkRequest, v1.ReadArtifactChunkResponse]
+	closeArtifactDownload  *connect.Client[v1.CloseArtifactDownloadRequest, v1.CloseArtifactDownloadResponse]
+	removeArtifact         *connect.Client[v1.RemoveArtifactRequest, v1.RemoveArtifactResponse]
 }
 
 // QuoteTask calls skygo.v1.ControlService.QuoteTask.
@@ -288,6 +400,56 @@ func (c *controlServiceClient) StreamRetainedJobLogs(ctx context.Context, req *c
 	return c.streamRetainedJobLogs.CallServerStream(ctx, req)
 }
 
+// SubmitWorkspaceJob calls skygo.v1.ControlService.SubmitWorkspaceJob.
+func (c *controlServiceClient) SubmitWorkspaceJob(ctx context.Context, req *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error) {
+	return c.submitWorkspaceJob.CallUnary(ctx, req)
+}
+
+// BeginArtifactUpload calls skygo.v1.ControlService.BeginArtifactUpload.
+func (c *controlServiceClient) BeginArtifactUpload(ctx context.Context, req *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error) {
+	return c.beginArtifactUpload.CallUnary(ctx, req)
+}
+
+// GetArtifactUpload calls skygo.v1.ControlService.GetArtifactUpload.
+func (c *controlServiceClient) GetArtifactUpload(ctx context.Context, req *connect.Request[v1.GetArtifactUploadRequest]) (*connect.Response[v1.GetArtifactUploadResponse], error) {
+	return c.getArtifactUpload.CallUnary(ctx, req)
+}
+
+// WriteArtifactChunk calls skygo.v1.ControlService.WriteArtifactChunk.
+func (c *controlServiceClient) WriteArtifactChunk(ctx context.Context, req *connect.Request[v1.WriteArtifactChunkRequest]) (*connect.Response[v1.WriteArtifactChunkResponse], error) {
+	return c.writeArtifactChunk.CallUnary(ctx, req)
+}
+
+// FinalizeArtifactUpload calls skygo.v1.ControlService.FinalizeArtifactUpload.
+func (c *controlServiceClient) FinalizeArtifactUpload(ctx context.Context, req *connect.Request[v1.FinalizeArtifactUploadRequest]) (*connect.Response[v1.FinalizeArtifactUploadResponse], error) {
+	return c.finalizeArtifactUpload.CallUnary(ctx, req)
+}
+
+// CancelArtifactUpload calls skygo.v1.ControlService.CancelArtifactUpload.
+func (c *controlServiceClient) CancelArtifactUpload(ctx context.Context, req *connect.Request[v1.CancelArtifactUploadRequest]) (*connect.Response[v1.CancelArtifactUploadResponse], error) {
+	return c.cancelArtifactUpload.CallUnary(ctx, req)
+}
+
+// BeginArtifactDownload calls skygo.v1.ControlService.BeginArtifactDownload.
+func (c *controlServiceClient) BeginArtifactDownload(ctx context.Context, req *connect.Request[v1.BeginArtifactDownloadRequest]) (*connect.Response[v1.BeginArtifactDownloadResponse], error) {
+	return c.beginArtifactDownload.CallUnary(ctx, req)
+}
+
+// ReadArtifactChunk calls skygo.v1.ControlService.ReadArtifactChunk.
+func (c *controlServiceClient) ReadArtifactChunk(ctx context.Context, req *connect.Request[v1.ReadArtifactChunkRequest]) (*connect.Response[v1.ReadArtifactChunkResponse], error) {
+	return c.readArtifactChunk.CallUnary(ctx, req)
+}
+
+// CloseArtifactDownload calls skygo.v1.ControlService.CloseArtifactDownload.
+func (c *controlServiceClient) CloseArtifactDownload(ctx context.Context, req *connect.Request[v1.CloseArtifactDownloadRequest]) (*connect.Response[v1.CloseArtifactDownloadResponse], error) {
+	return c.closeArtifactDownload.CallUnary(ctx, req)
+}
+
+// RemoveArtifact calls skygo.v1.ControlService.RemoveArtifact.
+func (c *controlServiceClient) RemoveArtifact(ctx context.Context, req *connect.Request[v1.RemoveArtifactRequest]) (*connect.Response[v1.RemoveArtifactResponse], error) {
+	return c.removeArtifact.CallUnary(ctx, req)
+}
+
 // ControlServiceHandler is an implementation of the skygo.v1.ControlService service.
 type ControlServiceHandler interface {
 	// QuoteTask returns advisory configured rates; it never changes submission placement.
@@ -314,6 +476,18 @@ type ControlServiceHandler interface {
 	SubmitRetainedJob(context.Context, *connect.Request[v1.SubmitRetainedJobRequest]) (*connect.Response[v1.SubmitRetainedJobResponse], error)
 	PruneJobs(context.Context, *connect.Request[v1.PruneJobsRequest]) (*connect.Response[v1.PruneJobsResponse], error)
 	StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest], *connect.ServerStream[v1.StreamRetainedJobLogsResponse]) error
+	// Workspace submission never falls back to an older submit method.
+	SubmitWorkspaceJob(context.Context, *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error)
+	// Artifact transfers use bounded unary chunks, not whole-archive messages.
+	BeginArtifactUpload(context.Context, *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error)
+	GetArtifactUpload(context.Context, *connect.Request[v1.GetArtifactUploadRequest]) (*connect.Response[v1.GetArtifactUploadResponse], error)
+	WriteArtifactChunk(context.Context, *connect.Request[v1.WriteArtifactChunkRequest]) (*connect.Response[v1.WriteArtifactChunkResponse], error)
+	FinalizeArtifactUpload(context.Context, *connect.Request[v1.FinalizeArtifactUploadRequest]) (*connect.Response[v1.FinalizeArtifactUploadResponse], error)
+	CancelArtifactUpload(context.Context, *connect.Request[v1.CancelArtifactUploadRequest]) (*connect.Response[v1.CancelArtifactUploadResponse], error)
+	BeginArtifactDownload(context.Context, *connect.Request[v1.BeginArtifactDownloadRequest]) (*connect.Response[v1.BeginArtifactDownloadResponse], error)
+	ReadArtifactChunk(context.Context, *connect.Request[v1.ReadArtifactChunkRequest]) (*connect.Response[v1.ReadArtifactChunkResponse], error)
+	CloseArtifactDownload(context.Context, *connect.Request[v1.CloseArtifactDownloadRequest]) (*connect.Response[v1.CloseArtifactDownloadResponse], error)
+	RemoveArtifact(context.Context, *connect.Request[v1.RemoveArtifactRequest]) (*connect.Response[v1.RemoveArtifactResponse], error)
 }
 
 // NewControlServiceHandler builds an HTTP handler from the service implementation. It returns the
@@ -407,6 +581,66 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		connect.WithSchema(controlServiceMethods.ByName("StreamRetainedJobLogs")),
 		connect.WithHandlerOptions(opts...),
 	)
+	controlServiceSubmitWorkspaceJobHandler := connect.NewUnaryHandler(
+		ControlServiceSubmitWorkspaceJobProcedure,
+		svc.SubmitWorkspaceJob,
+		connect.WithSchema(controlServiceMethods.ByName("SubmitWorkspaceJob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceBeginArtifactUploadHandler := connect.NewUnaryHandler(
+		ControlServiceBeginArtifactUploadProcedure,
+		svc.BeginArtifactUpload,
+		connect.WithSchema(controlServiceMethods.ByName("BeginArtifactUpload")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceGetArtifactUploadHandler := connect.NewUnaryHandler(
+		ControlServiceGetArtifactUploadProcedure,
+		svc.GetArtifactUpload,
+		connect.WithSchema(controlServiceMethods.ByName("GetArtifactUpload")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceWriteArtifactChunkHandler := connect.NewUnaryHandler(
+		ControlServiceWriteArtifactChunkProcedure,
+		svc.WriteArtifactChunk,
+		connect.WithSchema(controlServiceMethods.ByName("WriteArtifactChunk")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceFinalizeArtifactUploadHandler := connect.NewUnaryHandler(
+		ControlServiceFinalizeArtifactUploadProcedure,
+		svc.FinalizeArtifactUpload,
+		connect.WithSchema(controlServiceMethods.ByName("FinalizeArtifactUpload")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceCancelArtifactUploadHandler := connect.NewUnaryHandler(
+		ControlServiceCancelArtifactUploadProcedure,
+		svc.CancelArtifactUpload,
+		connect.WithSchema(controlServiceMethods.ByName("CancelArtifactUpload")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceBeginArtifactDownloadHandler := connect.NewUnaryHandler(
+		ControlServiceBeginArtifactDownloadProcedure,
+		svc.BeginArtifactDownload,
+		connect.WithSchema(controlServiceMethods.ByName("BeginArtifactDownload")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceReadArtifactChunkHandler := connect.NewUnaryHandler(
+		ControlServiceReadArtifactChunkProcedure,
+		svc.ReadArtifactChunk,
+		connect.WithSchema(controlServiceMethods.ByName("ReadArtifactChunk")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceCloseArtifactDownloadHandler := connect.NewUnaryHandler(
+		ControlServiceCloseArtifactDownloadProcedure,
+		svc.CloseArtifactDownload,
+		connect.WithSchema(controlServiceMethods.ByName("CloseArtifactDownload")),
+		connect.WithHandlerOptions(opts...),
+	)
+	controlServiceRemoveArtifactHandler := connect.NewUnaryHandler(
+		ControlServiceRemoveArtifactProcedure,
+		svc.RemoveArtifact,
+		connect.WithSchema(controlServiceMethods.ByName("RemoveArtifact")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/skygo.v1.ControlService/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case ControlServiceQuoteTaskProcedure:
@@ -437,6 +671,26 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServicePruneJobsHandler.ServeHTTP(w, r)
 		case ControlServiceStreamRetainedJobLogsProcedure:
 			controlServiceStreamRetainedJobLogsHandler.ServeHTTP(w, r)
+		case ControlServiceSubmitWorkspaceJobProcedure:
+			controlServiceSubmitWorkspaceJobHandler.ServeHTTP(w, r)
+		case ControlServiceBeginArtifactUploadProcedure:
+			controlServiceBeginArtifactUploadHandler.ServeHTTP(w, r)
+		case ControlServiceGetArtifactUploadProcedure:
+			controlServiceGetArtifactUploadHandler.ServeHTTP(w, r)
+		case ControlServiceWriteArtifactChunkProcedure:
+			controlServiceWriteArtifactChunkHandler.ServeHTTP(w, r)
+		case ControlServiceFinalizeArtifactUploadProcedure:
+			controlServiceFinalizeArtifactUploadHandler.ServeHTTP(w, r)
+		case ControlServiceCancelArtifactUploadProcedure:
+			controlServiceCancelArtifactUploadHandler.ServeHTTP(w, r)
+		case ControlServiceBeginArtifactDownloadProcedure:
+			controlServiceBeginArtifactDownloadHandler.ServeHTTP(w, r)
+		case ControlServiceReadArtifactChunkProcedure:
+			controlServiceReadArtifactChunkHandler.ServeHTTP(w, r)
+		case ControlServiceCloseArtifactDownloadProcedure:
+			controlServiceCloseArtifactDownloadHandler.ServeHTTP(w, r)
+		case ControlServiceRemoveArtifactProcedure:
+			controlServiceRemoveArtifactHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -500,4 +754,44 @@ func (UnimplementedControlServiceHandler) PruneJobs(context.Context, *connect.Re
 
 func (UnimplementedControlServiceHandler) StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest], *connect.ServerStream[v1.StreamRetainedJobLogsResponse]) error {
 	return connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.StreamRetainedJobLogs is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) SubmitWorkspaceJob(context.Context, *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.SubmitWorkspaceJob is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) BeginArtifactUpload(context.Context, *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.BeginArtifactUpload is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) GetArtifactUpload(context.Context, *connect.Request[v1.GetArtifactUploadRequest]) (*connect.Response[v1.GetArtifactUploadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.GetArtifactUpload is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) WriteArtifactChunk(context.Context, *connect.Request[v1.WriteArtifactChunkRequest]) (*connect.Response[v1.WriteArtifactChunkResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.WriteArtifactChunk is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) FinalizeArtifactUpload(context.Context, *connect.Request[v1.FinalizeArtifactUploadRequest]) (*connect.Response[v1.FinalizeArtifactUploadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.FinalizeArtifactUpload is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) CancelArtifactUpload(context.Context, *connect.Request[v1.CancelArtifactUploadRequest]) (*connect.Response[v1.CancelArtifactUploadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.CancelArtifactUpload is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) BeginArtifactDownload(context.Context, *connect.Request[v1.BeginArtifactDownloadRequest]) (*connect.Response[v1.BeginArtifactDownloadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.BeginArtifactDownload is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) ReadArtifactChunk(context.Context, *connect.Request[v1.ReadArtifactChunkRequest]) (*connect.Response[v1.ReadArtifactChunkResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.ReadArtifactChunk is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) CloseArtifactDownload(context.Context, *connect.Request[v1.CloseArtifactDownloadRequest]) (*connect.Response[v1.CloseArtifactDownloadResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.CloseArtifactDownload is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) RemoveArtifact(context.Context, *connect.Request[v1.RemoveArtifactRequest]) (*connect.Response[v1.RemoveArtifactResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.RemoveArtifact is not implemented"))
 }

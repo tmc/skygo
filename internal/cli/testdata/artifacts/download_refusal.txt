@@ -1,0 +1,23 @@
+server start
+skygo artifacts upload source
+cp stdout ref.json
+fault download-offset
+! skygo artifacts download --ref ref.json bad-offset
+stderr 'invalid or partial download chunk'
+! exists bad-offset
+fault download-bytes
+! skygo artifacts download --ref ref.json bad-bytes
+stderr 'validate downloaded archive|digest does not match'
+! exists bad-bytes
+# Both failed reads release their actual fixed leases. A subsequent unmodified
+# transfer succeeds, proving the fault was consumed and bytes were not cached.
+calls CloseArtifactDownload 2
+skygo artifacts download --ref ref.json good
+cmp source/seed.txt good/seed.txt
+calls BeginArtifactDownload 3
+calls CloseArtifactDownload 3
+calls SubmitWorkspaceJob 0
+server stop
+! stderr .
+-- source/seed.txt --
+seed

@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +12,10 @@ import (
 )
 
 func TestDefaultOutputFailureDrains(t *testing.T) {
-	b := newBackend(t)
-	marker := filepath.Join(t.TempDir(), "release")
+	f := newExecutionFixture(t, false)
+	f.held = true
+	b := f.backend
+	marker := filepath.Join(f.directory, "release")
 	id := strings.Repeat("e", 32)
 	task := backend.Task{
 		Argv: []string{os.Args[0], "-test.run=^TestRetryProgram$"},
@@ -41,7 +44,7 @@ func TestDefaultOutputFailureDrains(t *testing.T) {
 	if err != nil || len(chunk.Data) != 0 || !chunk.Complete {
 		t.Fatalf("logs=%+v %v", chunk, err)
 	}
-	if err := b.Close(); err != nil {
-		t.Fatal(err)
+	if err := f.close(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("original log Close uncertainty lost: %v", err)
 	}
 }

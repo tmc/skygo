@@ -81,6 +81,7 @@ func TestStorageHoldPreservesReplayAndEarlyCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	loop := c.newLoop(ctx)
+	defer stopTestLoop(t, cancel, loop)
 	if err = c.schedule(ctx, loop); err != nil {
 		t.Fatal(err)
 	}

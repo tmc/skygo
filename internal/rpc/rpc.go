@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/artifact"
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
@@ -33,9 +34,16 @@ type responseKey struct{}
 
 // NewHandler authenticates and serves the control RPCs. Transport encryption is
 // the caller's responsibility. The control and handler must share one Engine.
-func NewHandler(c *control.Control, engine *auth.Engine) http.Handler {
+func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
 	h := &handler{control: c, engine: engine, streams: make(chan struct{}, 32)}
 	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10), connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
+		if artifactProcedure(info.Procedure) && info.Procedure != skyv1connect.ControlServiceSubmitWorkspaceJobProcedure {
+			limit := 16 << 10
+			if info.Procedure == skyv1connect.ControlServiceWriteArtifactChunkProcedure {
+				limit = 96 << 10
+			}
+			return []connect.HandlerOption{connect.WithReadMaxBytes(limit)}
+		}
 		if info.Procedure != skyv1connect.ControlServiceQuoteTaskProcedure {
 			return nil
 		}
@@ -43,7 +51,8 @@ func NewHandler(c *control.Control, engine *auth.Engine) http.Handler {
 	}))
 	mux := http.NewServeMux()
 	mux.Handle(path, service)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	lifetime := &HTTPHandler{owners: make(map[*artifactResponse]struct{}), terminal: make(chan struct{})}
+	lifetime.serve = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		actor, err := engine.Authenticate(r.Header.Get("Authorization"))
 		if err != nil {
 			h.denialMu.Lock()
@@ -63,6 +72,36 @@ func NewHandler(c *control.Control, engine *auth.Engine) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), actorKey{}, actor)
+		if artifactProcedure(r.URL.Path) {
+			action := artifactAction(r.URL.Path)
+			if _, err := h.artifactActor(ctx, action); err != nil {
+				code := http.StatusForbidden
+				if errors.Is(err, auth.ErrUnauthenticated) {
+					code = http.StatusUnauthorized
+				}
+				if errors.Is(err, auth.ErrUnavailable) {
+					code = http.StatusServiceUnavailable
+				}
+				http.Error(w, "artifact authorization unavailable", code)
+				return
+			}
+			w = &artifactWriter{ResponseWriter: w, ctx: ctx, handler: h, action: action}
+			owner, err := lifetime.admit(c, r.Body, w)
+			if err != nil {
+				code := http.StatusServiceUnavailable
+				if errors.Is(err, control.ErrArtifactBusy) {
+					code = http.StatusTooManyRequests
+				}
+				http.Error(w, "artifact admission unavailable", code)
+				return
+			}
+			// Connect and our finisher share this cached admitted-body result.
+			// net/http already saved its own transport body before handler
+			// entry; replacing r.Body does not intercept that separate Close.
+			r.Body = owner.body
+			ctx = context.WithValue(ctx, artifactResponseKey{}, owner)
+			defer owner.finish()
+		}
 		response := &streamResponse{controller: http.NewResponseController(w), done: make(chan struct{})}
 		ctx = context.WithValue(ctx, responseKey{}, response)
 		// Connect writes and flushes final trailers after the RPC method returns.
@@ -70,6 +109,7 @@ func NewHandler(c *control.Control, engine *auth.Engine) http.Handler {
 		defer response.finish()
 		mux.ServeHTTP(w, r.WithContext(ctx))
 	})
+	return lifetime
 }
 
 func requestActor(ctx context.Context) auth.Actor {
@@ -93,10 +133,10 @@ func task(t *v1.Task) backend.Task {
 	if t == nil {
 		return backend.Task{}
 	}
-	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: retry(t.Retry)}
+	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: retry(t.Retry), Workdir: taskWorkdir(t.Workdir), Setup: slices.Clone(t.Setup), Outputs: slices.Clone(t.Outputs)}
 }
 func wireTask(t backend.Task) *v1.Task {
-	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: wireRetry(t.Retry)}
+	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: wireRetry(t.Retry), Workdir: wireTaskWorkdir(t.Workdir), Setup: slices.Clone(t.Setup), Outputs: slices.Clone(t.Outputs)}
 }
 
 var states = map[backend.State]v1.JobState{backend.Queued: v1.JobState_JOB_STATE_QUEUED, backend.Starting: v1.JobState_JOB_STATE_STARTING, backend.Running: v1.JobState_JOB_STATE_RUNNING, backend.Succeeded: v1.JobState_JOB_STATE_SUCCEEDED, backend.Failed: v1.JobState_JOB_STATE_FAILED, backend.Canceled: v1.JobState_JOB_STATE_CANCELED, backend.Unknown: v1.JobState_JOB_STATE_UNKNOWN, backend.Retrying: v1.JobState_JOB_STATE_RETRYING}
@@ -147,6 +187,12 @@ func rpcError(err error) error {
 	return connect.NewError(code, err)
 }
 func (h *handler) PlanTask(ctx context.Context, r *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error) {
+	if hasWorkspaceTask(r.Msg.Task) {
+		if _, err := h.engine.Check(requestActor(ctx), auth.Read); err != nil {
+			return nil, rpcError(err)
+		}
+		return nil, rpcError(control.ErrUnsupported)
+	}
 	name, rejections, err := h.control.Plan(requestActor(ctx), task(r.Msg.Task))
 	h.record(ctx, "plan", "", err)
 	if err != nil {
@@ -165,12 +211,22 @@ func (h *handler) SubmitRetryJob(ctx context.Context, r *connect.Request[v1.Subm
 	return h.submit(ctx, r)
 }
 func (h *handler) submit(ctx context.Context, r *connect.Request[v1.SubmitJobRequest]) (*connect.Response[v1.SubmitJobResponse], error) {
+	if hasWorkspaceTask(r.Msg.Task) {
+		if _, err := h.engine.Check(requestActor(ctx), auth.Mutate); err != nil {
+			return nil, rpcError(err)
+		}
+		return nil, rpcError(control.ErrUnsupported)
+	}
 	j, err := h.control.Submit(requestActor(ctx), r.Msg.RequestId, task(r.Msg.Task))
 	h.record(ctx, "submit", j.ID, err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
-	return connect.NewResponse(&v1.SubmitJobResponse{Job: job(j)}), nil
+	out, err := h.wireJob(ctx, j)
+	if err != nil {
+		return nil, artifactError(err)
+	}
+	return connect.NewResponse(&v1.SubmitJobResponse{Job: out}), nil
 }
 func (h *handler) GetJob(ctx context.Context, r *connect.Request[v1.GetJobRequest]) (*connect.Response[v1.GetJobResponse], error) {
 	j, err := h.control.Get(requestActor(ctx), r.Msg.Id)
@@ -178,7 +234,11 @@ func (h *handler) GetJob(ctx context.Context, r *connect.Request[v1.GetJobReques
 	if err != nil {
 		return nil, rpcError(err)
 	}
-	return connect.NewResponse(&v1.GetJobResponse{Job: job(j)}), nil
+	out, err := h.wireJob(ctx, j)
+	if err != nil {
+		return nil, artifactError(err)
+	}
+	return connect.NewResponse(&v1.GetJobResponse{Job: out}), nil
 }
 func (h *handler) ListJobs(ctx context.Context, r *connect.Request[v1.ListJobsRequest]) (*connect.Response[v1.ListJobsResponse], error) {
 	jobs, next, err := h.control.List(requestActor(ctx), int(r.Msg.PageSize), r.Msg.PageToken)
@@ -188,7 +248,11 @@ func (h *handler) ListJobs(ctx context.Context, r *connect.Request[v1.ListJobsRe
 	}
 	out := &v1.ListJobsResponse{NextPageToken: next}
 	for _, j := range jobs {
-		out.Jobs = append(out.Jobs, job(j))
+		projected, err := h.wireJob(ctx, j)
+		if err != nil {
+			return nil, artifactError(err)
+		}
+		out.Jobs = append(out.Jobs, projected)
 	}
 	return connect.NewResponse(out), nil
 }
@@ -198,7 +262,11 @@ func (h *handler) CancelJob(ctx context.Context, r *connect.Request[v1.CancelJob
 	if err != nil {
 		return nil, rpcError(err)
 	}
-	return connect.NewResponse(&v1.CancelJobResponse{Job: job(j)}), nil
+	out, err := h.wireJob(ctx, j)
+	if err != nil {
+		return nil, artifactError(err)
+	}
+	return connect.NewResponse(&v1.CancelJobResponse{Job: out}), nil
 }
 func (h *handler) ListTargets(ctx context.Context, r *connect.Request[v1.ListTargetsRequest]) (*connect.Response[v1.ListTargetsResponse], error) {
 	out := &v1.ListTargetsResponse{}
@@ -208,7 +276,7 @@ func (h *handler) ListTargets(ctx context.Context, r *connect.Request[v1.ListTar
 		return nil, rpcError(err)
 	}
 	for _, t := range targets {
-		out.Targets = append(out.Targets, wireTarget(t))
+		out.Targets = append(out.Targets, h.wireTarget(t))
 	}
 	return connect.NewResponse(out), nil
 }
@@ -231,13 +299,36 @@ func wireTarget(t backend.Target) *v1.Target {
 
 func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
 	out := &v1.GetServerInfoResponse{}
+	if h.control.ArtifactsEnabled() {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1)
+	}
 	targets, err := h.control.Targets(requestActor(ctx))
 	h.record(ctx, "info", "", err)
 	if err != nil {
 		return nil, rpcError(err)
 	}
 	for _, t := range targets {
-		out.Targets = append(out.Targets, wireTarget(t))
+		out.Targets = append(out.Targets, h.wireTarget(t))
 	}
 	return connect.NewResponse(out), nil
+}
+
+// Task conversion preserves every workspace value. Validation and the explicit
+// workspace submit path are separate; old submit/plan methods never drop them.
+func taskWorkdir(ref *v1.ArtifactRef) *artifact.Ref {
+	if ref == nil {
+		return nil
+	}
+	return &artifact.Ref{ID: ref.Id, SHA256: ref.Sha256, Size: ref.Size}
+}
+
+func wireTaskWorkdir(ref *artifact.Ref) *v1.ArtifactRef {
+	if ref == nil {
+		return nil
+	}
+	return &v1.ArtifactRef{Id: ref.ID, Sha256: ref.SHA256, Size: ref.Size}
+}
+
+func hasWorkspaceTask(value *v1.Task) bool {
+	return value != nil && (value.Workdir != nil || len(value.Setup) != 0 || len(value.Outputs) != 0)
 }

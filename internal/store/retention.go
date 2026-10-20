@@ -108,6 +108,7 @@ const (
 	Whole PruneMode = iota
 	MetadataOnly
 	OutputOnly
+	ResultOnly
 )
 
 type PruneSelection struct {
@@ -115,6 +116,7 @@ type PruneSelection struct {
 	Mode                          PruneMode
 	AcknowledgeUnverifiedTerminal bool
 	ObligationID                  string
+	Attempt                       uint32
 	After, Max                    uint64
 	Limit                         int
 }

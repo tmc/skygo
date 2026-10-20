@@ -42,6 +42,9 @@ func (h *handler) SubmitRetainedJob(ctx context.Context, request *connect.Reques
 	if request.Msg == nil || !validTaskUTF8(request.Msg.Task) || !retentionRequestID(request.Msg.RequestId) {
 		return nil, rpcError(fmt.Errorf("%w: task and valid request ID required", control.ErrInvalid))
 	}
+	if hasWorkspaceTask(request.Msg.Task) {
+		return nil, rpcError(control.ErrUnsupported)
+	}
 	domain, err := requestDomain(request.Msg.Domain)
 	if err != nil {
 		return nil, rpcError(err)

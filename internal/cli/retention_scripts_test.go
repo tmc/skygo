@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/tmc/skygo/internal/auth"
+	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/store"
 	"rsc.io/script"
 	"rsc.io/script/scripttest"
@@ -152,8 +153,32 @@ func runRetentionDaemonScript(t *testing.T, exe, daemon, file, old string) {
 	if dir := coverDir(t); dir != "" {
 		env = append(env, "GOCOVERDIR="+dir)
 	}
-	data := t.TempDir()
-	authFile := filepath.Join(t.TempDir(), "auth.json")
+	var prefix *retentionStartingPrefix
+	var data, authFile string
+	if filepath.Base(file) == "prune_unknown_protected.txt" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			t.Fatal(err)
+		}
+		parent := filepath.Join(home, "tmp", "skypilot", "20261020-retention-starting-prefix")
+		if err := os.MkdirAll(parent, 0700); err != nil {
+			t.Fatal(err)
+		}
+		dir, err := os.MkdirTemp(parent, "fixture-")
+		if err != nil {
+			t.Fatal(err)
+		}
+		prefix = &retentionStartingPrefix{directory: dir}
+		data, authFile = filepath.Join(dir, "state"), filepath.Join(dir, "auth.json")
+		if err := os.Mkdir(data, 0700); err != nil {
+			prefix.err = err
+			prefix.retain(t)
+			t.Fatal(err)
+		}
+	} else {
+		data = t.TempDir()
+		authFile = filepath.Join(t.TempDir(), "auth.json")
+	}
 	for _, dir := range []string{data, filepath.Dir(authFile)} {
 		if err := os.Chmod(dir, 0700); err != nil {
 			t.Fatal(err)
@@ -163,12 +188,35 @@ func runRetentionDaemonScript(t *testing.T, exe, daemon, file, old string) {
 	if filepath.Base(file) == "request_scope_isolation.txt" {
 		process.args = []string{"--auth-file", authFile}
 	}
-	t.Cleanup(process.cleanup)
-	t.Cleanup(func() {
-		if err := os.Chmod(filepath.Join(data, "logs"), 0700); err != nil && !errors.Is(err, os.ErrNotExist) {
-			t.Error(err)
-		}
-	})
+	if prefix == nil {
+		t.Cleanup(process.cleanup)
+	} else {
+		t.Cleanup(func() {
+			process.mu.Lock()
+			running := process.cmd != nil
+			if running {
+				prefix.command = process.cmd
+			}
+			process.mu.Unlock()
+			if running {
+				_, _, err := process.stop(os.Interrupt)
+				prefix.err = errors.Join(prefix.err, err)
+			}
+			if prefix.err != nil {
+				prefix.retain(t)
+			}
+			// This one modeled recovery fixture deliberately keeps its private stopped
+			// metadata evidence. No independent TempDir cleanup may erase a held Store.
+			t.Logf("preserving stopped Starting-prefix fixture: %s", prefix.directory)
+		})
+	}
+	if prefix == nil {
+		t.Cleanup(func() {
+			if err := os.Chmod(filepath.Join(data, "logs"), 0700); err != nil && !errors.Is(err, os.ErrNotExist) {
+				t.Error(err)
+			}
+		})
+	}
 	target := &url.URL{Scheme: "http", Host: process.address}
 	proxy := httputil.NewSingleHostReverseProxy(target)
 	var mu sync.Mutex
@@ -364,6 +412,10 @@ task-file: "task.json"
 	})
 	e.Cmds["cleanup-checkpoint"] = retentionCleanupCheckpoint(process)
 	e.Cmds["server"] = process.command()
+	if prefix != nil {
+		e.Cmds["starting-prefix"] = prefix.create(process)
+		e.Cmds["server"] = prefix.server(process)
+	}
 	e.Cmds["job-id"] = jobID()
 	e.Cmds["await-file"] = awaitFile()
 	e.Cmds["drop-response"] = fault.command()
@@ -778,5 +830,152 @@ func retentionCleanupCheckpoint(p *serverProcess) script.Cmd {
 			return nil, errors.New("actual pending cleanup identity or quota charges changed across restart")
 		}
 		return nil, nil
+	})
+}
+
+// retentionStartingPrefix models the legitimate committed BeginAttempt frontier
+// BEFORE any backend.Start call. Unknown is produced only by the real daemon's
+// subsequent unowned Local Observe, never written by this fixture. It is not a
+// native crash, stopped-child or writer-closure receipt.
+type retentionStartingPrefix struct {
+	directory      string
+	database       *store.Store
+	closeAttempted bool
+	closeErr       error
+	command        *exec.Cmd
+	err            error
+	once           sync.Once
+}
+
+// Purpose-only test custody, following the existing execution fixture keeper.
+// It retains the SAME Store/Close cause/daemon command/path, never a new worker.
+var retentionStartingPrefixHolds struct {
+	sync.Mutex
+	frames []*retentionStartingPrefix
+}
+
+func (f *retentionStartingPrefix) retain(t *testing.T) {
+	f.once.Do(func() {
+		t.Errorf("retaining original Starting-prefix fixture at %s: %v", f.directory, f.err)
+		retentionStartingPrefixHolds.Lock()
+		retentionStartingPrefixHolds.frames = append(retentionStartingPrefixHolds.frames, f)
+		retentionStartingPrefixHolds.Unlock()
+	})
+}
+
+func (f *retentionStartingPrefix) closeState() error {
+	if f.database == nil {
+		return nil
+	}
+	if !f.closeAttempted {
+		f.closeAttempted = true
+		f.closeErr = f.database.Close()
+	}
+	return f.closeErr
+}
+
+// This wrapper adds only concrete fixture custody. It uses the SAME existing
+// process start/interrupt-stop helpers and creates no new signal/native action.
+func (f *retentionStartingPrefix) server(p *serverProcess) script.Cmd {
+	return script.Command(script.CmdUsage{Summary: "start/stop the actual prefix-recovery daemon", Args: "start|stop"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
+		if len(args) != 1 {
+			return nil, script.ErrUsage
+		}
+		if f.err != nil {
+			return nil, f.err
+		}
+		switch args[0] {
+		case "start":
+			if !f.closeAttempted || f.closeErr != nil {
+				return nil, errors.New("close original prefix Store before daemon start")
+			}
+			err := p.start(s)
+			p.mu.Lock()
+			f.command = p.cmd
+			p.mu.Unlock()
+			f.err = errors.Join(f.err, err)
+			return nil, err
+		case "stop":
+			p.mu.Lock()
+			f.command = p.cmd
+			p.mu.Unlock()
+			out, diag, err := p.stop(os.Interrupt)
+			f.err = errors.Join(f.err, err)
+			return func(*script.State) (string, string, error) { return out, diag, err }, nil
+		}
+		return nil, script.ErrUsage
+	})
+}
+
+func (f *retentionStartingPrefix) create(p *serverProcess) script.Cmd {
+	return script.Command(script.CmdUsage{Summary: "commit a stopped pre-Start durable prefix, never execute a workload", Args: "task-file request-domain request-id variable"}, func(s *script.State, args ...string) (_ script.WaitFunc, result error) {
+		if len(args) != 4 {
+			return nil, script.ErrUsage
+		}
+		p.mu.Lock()
+		defer p.mu.Unlock()
+		if p.cmd != nil || f.database != nil {
+			return nil, errors.New("prefix requires a stopped daemon and one original Store")
+		}
+		if f.err != nil {
+			return nil, f.err
+		}
+		data, err := os.ReadFile(s.Path(args[0]))
+		if err != nil {
+			return nil, err
+		}
+		var task backend.Task
+		if err := json.Unmarshal(data, &task); err != nil {
+			return nil, err
+		}
+		if len(task.Argv) == 0 || task.Retry != nil || task.Workdir != nil {
+			return nil, errors.New("prefix requires one ordinary finite task")
+		}
+		f.database, err = store.Open(p.data)
+		if err != nil {
+			f.err = err
+			return nil, err
+		}
+		defer func() {
+			if closeErr := f.closeState(); closeErr != nil {
+				result = errors.Join(result, closeErr)
+				f.err = result
+			}
+		}()
+		engine := auth.NewLegacy("coverage-token")
+		actor, err := engine.Authenticate("Bearer coverage-token")
+		if err != nil {
+			return nil, err
+		}
+		info, err := f.database.RetentionInfo(actor)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Enabled || !info.Policy.LocalOutputEnabled || info.Policy.OutputUnit == 0 {
+			return nil, errors.New("prefix requires actual enabled local-output policy")
+		}
+		expected := info.Domain.Lineage + ":" + strconv.FormatUint(info.Domain.Epoch, 10)
+		if args[1] != expected {
+			return nil, errors.New("prefix request domain differs from actual Store")
+		}
+		binding, err := backend.LocalBinding(f.database.Owner())
+		if err != nil {
+			return nil, err
+		}
+		// Exact same validated estimate as local.NewRetained, derived from actual
+		// persisted output unit. No output file, writer receipt or native call exists.
+		reserve := uint64(backend.MaxLogBytes) + 4*info.Policy.OutputUnit
+		accepted, err := f.database.SubmitRetained(actor, info.Domain, args[2], task, "local", binding, backend.LocalOutput, reserve)
+		if err != nil {
+			return nil, err
+		}
+		begun, start, err := f.database.BeginAttempt(accepted.ID, accepted.CurrentAttemptID(), reserve, time.Now().UTC())
+		if err != nil {
+			return nil, err
+		}
+		if !start || begun.ID != accepted.ID || begun.Status.State != backend.Starting || begun.CancelRequested {
+			return nil, errors.New("actual durable Starting prefix was not committed")
+		}
+		return nil, s.Setenv(args[3], begun.ID)
 	})
 }

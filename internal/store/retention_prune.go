@@ -24,14 +24,17 @@ func (s *Store) admin(actor auth.Actor) error {
 	return nil
 }
 func validateSelection(sel PruneSelection) error {
-	if sel.Mode > OutputOnly || sel.Limit < 0 || sel.Limit > 100 {
+	if sel.Mode > ResultOnly || sel.Limit < 0 || sel.Limit > 100 {
 		return errors.New("invalid prune selection")
+	}
+	if (sel.Mode == ResultOnly) != (sel.Attempt != 0) {
+		return errors.New("result-only requires an explicit attempt ordinal")
 	}
 	if sel.Mode == MetadataOnly != sel.AcknowledgeUnverifiedTerminal {
 		return errors.New("metadata-only requires acknowledgement")
 	}
 	if sel.ObligationID != "" {
-		if !validAttemptID(sel.ObligationID) || sel.Mode != OutputOnly || !sel.Before.IsZero() || sel.After != 0 || sel.Max != 0 || sel.Limit != 0 {
+		if !validAttemptID(sel.ObligationID) || (sel.Mode != OutputOnly && sel.Mode != ResultOnly) || !sel.Before.IsZero() || sel.After != 0 || sel.Max != 0 || sel.Limit != 0 {
 			return errors.New("invalid obligation selector")
 		}
 	} else if sel.Before.IsZero() {
@@ -100,7 +103,7 @@ func (s *Store) PruneSubjects(actor auth.Actor, sel PruneSelection) (out []Prune
 			return e
 		}
 		for _, id := range ids {
-			x, e := subject(tx, id)
+			x, e := artifactPruneSubject(tx, id, sel.Mode)
 			if e != nil {
 				return e
 			}
@@ -209,6 +212,9 @@ func safeStatuses(j backend.Job) bool {
 	return true
 }
 func classify(tx *bolt.Tx, x PruneSubject, sel PruneSelection, blocked map[string]bool, proofs []backend.OutputReference) (string, []backend.OutputReference) {
+	return classifyQualified(tx, x, sel, blocked, proofs, false)
+}
+func classifyQualified(tx *bolt.Tx, x PruneSubject, sel PruneSelection, blocked map[string]bool, proofs []backend.OutputReference, workspaceRetired bool) (string, []backend.OutputReference) {
 	if x.Obligation != nil {
 		for _, id := range x.Obligation.ExecutionIDs {
 			if blocked[id] {
@@ -252,7 +258,7 @@ func classify(tx *bolt.Tx, x PruneSubject, sel PruneSelection, blocked map[strin
 		return "unavailable", nil
 	}
 	neverStarted := !m.Legacy && !m.Started
-	if sel.Mode == Whole && !neverStarted && !safeStatuses(j) {
+	if sel.Mode == Whole && !neverStarted && !safeStatuses(j) && !workspaceRetired {
 		return "proof_required", nil
 	}
 	if retentionTable(tx, cleanupHeadersBucket).Get([]byte(j.ID)) != nil {
@@ -325,13 +331,25 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 		if e != nil {
 			return e
 		}
-		if !st.Enabled {
+		if !st.Enabled && sel.Mode != ResultOnly {
 			return ErrRetentionDisabled
+		}
+		if sel.Mode == ResultOnly && tx.Bucket(artifactsBucket) == nil {
+			return ErrArtifactsDisabled
 		}
 		plan, e := newRetentionMutation(tx)
 		if e != nil {
 			return e
 		}
+		var artifactInitial, artifactProjected *artifactState
+		if tx.Bucket(artifactsBucket) != nil {
+			artifactInitial, e = artifactLoad(tx)
+			if e != nil {
+				return e
+			}
+			artifactProjected = artifactInitial.clone()
+		}
+		var artifactFinal artifactPrepared
 		ids, after, more, e := pruneIDs(tx, sel)
 		if e != nil {
 			return e
@@ -341,11 +359,60 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 		count := 0
 		for _, id := range ids {
 			out.Inspected++
-			x, e := subject(tx, id)
+			x, e := artifactPruneSubject(tx, id, sel.Mode)
 			if e != nil {
 				return e
 			}
-			reason, refs := classify(tx, x, sel, blockedSet, ephemeral)
+			artifactTrial := artifactProjected
+			if artifactProjected != nil {
+				artifactTrial = artifactProjected.clone()
+			}
+			if sel.Mode == ResultOnly {
+				reason, e := artifactResultSelection(tx, artifactTrial, x, sel, blockedSet, now)
+				if e != nil {
+					return e
+				}
+				if reason != "" {
+					addSkip(&out, reason)
+					continue
+				}
+				n, e := plan.changedBytes()
+				if e != nil {
+					return e
+				}
+				prepared, e := prepareArtifactChange(tx, artifactInitial, artifactTrial, plan, maxChangeBytes-n)
+				if e != nil {
+					var capacity *ArtifactCapacityError
+					if errors.As(e, &capacity) || errors.Is(e, errArtifactMutationBudget) {
+						addSkip(&out, "artifact_full")
+						continue
+					}
+					return e
+				}
+				if count+prepared.newRecords > 100 {
+					addSkip(&out, "cleanup_full")
+					continue
+				}
+				artifactProjected = artifactTrial
+				artifactFinal = prepared
+				out.Selected++
+				if execute {
+					out.Marked++
+				}
+				continue
+			}
+			workspaceRetired := artifactWholeReady(artifactProjected, x.Job)
+			if sel.Mode == Whole && x.Job.Task.Workdir != nil && !workspaceRetired {
+				var tracked retainedJob
+				if e := loadJSON(retentionTable(tx, retainedJobsBucket), []byte(x.Job.ID), &tracked); e != nil {
+					return e
+				}
+				if tracked.Started {
+					addSkip(&out, "workspace_cleanup_pending")
+					continue
+				}
+			}
+			reason, refs := classifyQualified(tx, x, sel, blockedSet, ephemeral, workspaceRetired)
 			if reason != "" {
 				addSkip(&out, reason)
 				continue
@@ -354,7 +421,7 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 			if sel.Mode == MetadataOnly {
 				needed = 0
 			}
-			if sel.Mode == Whole {
+			if sel.Mode == Whole && x.Job.Task.Workdir == nil {
 				if len(x.Job.Attempts) == 0 {
 					if safeStatuses(x.Job) {
 						needed++
@@ -402,6 +469,36 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 				addSkip(&out, "cleanup_full")
 				continue
 			}
+			if artifactTrial != nil {
+				if sel.Mode == Whole {
+					if e := artifactWholePrune(artifactTrial, x.Job, now); e != nil {
+						if errors.Is(e, ErrArtifactConflict) {
+							addSkip(&out, "artifact_in_use")
+							continue
+						}
+						return e
+					}
+				} else if sel.Mode == MetadataOnly {
+					if e := artifactTransferInputPlanned(artifactTrial, trial, x.Job.ID); e != nil {
+						return e
+					}
+				}
+				prepared, e := prepareArtifactChange(tx, artifactInitial, artifactTrial, trial, maxChangeBytes-n)
+				if e != nil {
+					var capacity *ArtifactCapacityError
+					if errors.As(e, &capacity) || errors.Is(e, errArtifactMutationBudget) {
+						addSkip(&out, "artifact_full")
+						continue
+					}
+					return e
+				}
+				if count+needed+prepared.newRecords > 100 {
+					addSkip(&out, "cleanup_full")
+					continue
+				}
+				artifactProjected = artifactTrial
+				artifactFinal = prepared
+			}
 			plan = trial
 			count += needed
 			out.Selected++
@@ -422,7 +519,15 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 		}
 		sortedSkip(&out)
 		if execute && out.Marked > 0 {
-			return plan.commit()
+			if e := plan.commit(); e != nil {
+				return e
+			}
+			if artifactProjected != nil {
+				if e := artifactFinal.apply(tx); e != nil {
+					return e
+				}
+			}
+			return nil
 		}
 		return nil
 	}
@@ -456,7 +561,7 @@ func makeCleanup(tx *bolt.Tx, x PruneSubject, sel PruneSelection, refs []backend
 			ops = append(ops, cleanupOperation{ID: ids[len(ops)], HeaderID: h.ID, Operation: OutputCleanup, AttemptID: r.AttemptID, ClosureID: r.ClosureID, Generation: r.Generation, PayloadReleased: r.PayloadReleased, UpdatedAt: now})
 		}
 	}
-	if sel.Mode == Whole {
+	if sel.Mode == Whole && x.Job.Task.Workdir == nil {
 		add := func(id string, status backend.Status) {
 			proof := status
 			proof.Reason = ""

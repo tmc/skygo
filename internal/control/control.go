@@ -6,11 +6,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"unicode/utf8"
 
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/store"
 )
 
@@ -29,27 +31,54 @@ type Rejection struct{ Target, Reason string }
 
 // Control owns one reconciliation loop. New must precede use.
 type Control struct {
-	store       *store.Store
-	engine      *auth.Engine
-	targets     []backend.Target
-	failed      atomic.Bool
-	auditFailed atomic.Bool
-	auditLost   atomic.Bool
-	access      chan pendingAccess
-	started     atomic.Bool
-	retention   retentionState
+	store                 *store.Store
+	engine                *auth.Engine
+	targets               []backend.Target
+	failed                atomic.Bool
+	auditFailed           atomic.Bool
+	auditLost             atomic.Bool
+	access                chan pendingAccess
+	started               atomic.Bool
+	runMu                 sync.Mutex
+	run                   *runFrame
+	retention             retentionState
+	artifacts             *artifactService
+	workspace             *workspaceTarget
+	producer              store.OriginalServerLifetime
+	recoverStoppedReaders bool
+	shutdown              *shutdownState
+	localBackend          *local.Backend
 }
 
 // New validates targets and orders selection by name.
 func New(s *store.Store, targets []backend.Target, engine *auth.Engine) (*Control, error) {
-	return NewWithLocalOutput(s, targets, engine, LocalOutputConfig{})
+	return NewWithConfig(s, targets, engine, Config{})
 }
 
 // NewWithLocalOutput installs the actual built-in local output binder and sampler.
 // Configuration is immutable after construction; callbacks run outside control locks.
 func NewWithLocalOutput(s *store.Store, targets []backend.Target, engine *auth.Engine, local LocalOutputConfig) (*Control, error) {
+	return NewWithConfig(s, targets, engine, Config{LocalOutput: local})
+}
+
+// NewWithConfig installs the concrete local output, artifact and workspace services.
+// Files and its original root remain owned by the caller through actual drain.
+func NewWithConfig(s *store.Store, targets []backend.Target, engine *auth.Engine, config Config) (*Control, error) {
+	local := config.LocalOutput
 	if s == nil || len(targets) == 0 || len(targets) > 32 || engine == nil {
 		return nil, fmt.Errorf("store, targets and authentication required")
+	}
+	producer, err := workspaceStoreProducer(config.ServerLifetime)
+	if err != nil {
+		return nil, err
+	}
+	if config.RecoverStoppedArtifactReaders {
+		if config.Artifacts == nil {
+			return nil, fmt.Errorf("stopped artifact reader recovery requires artifacts")
+		}
+		if !recoveryProducerKnown(producer) {
+			return nil, fmt.Errorf("stopped artifact reader recovery requires a strict known server lifetime")
+		}
 	}
 	targets = append([]backend.Target(nil), targets...)
 	sort.Slice(targets, func(i, j int) bool { return targets[i].Name < targets[j].Name })
@@ -93,7 +122,20 @@ func NewWithLocalOutput(s *store.Store, targets []backend.Target, engine *auth.E
 			return nil, fmt.Errorf("local output configuration has no matching route")
 		}
 	}
-	control := &Control{store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess), retention: retentionState{leases: make(map[*LogLease]struct{}), pending: make(map[string]struct{}), local: local, enabled: enabled}}
+	control := &Control{shutdown: newShutdownState(), producer: producer, recoverStoppedReaders: config.RecoverStoppedArtifactReaders, store: s, targets: targets, engine: engine, access: make(chan pendingAccess, maxPendingAccess), retention: retentionState{leases: make(map[*LogLease]struct{}), pending: make(map[string]struct{}), local: local, enabled: enabled}}
+	if config.Artifacts != nil {
+		artifacts, err := newArtifactService(s, config.Artifacts)
+		if err != nil {
+			return nil, err
+		}
+		control.artifacts = artifacts
+	}
+	if err := control.configureOwnedLocal(config); err != nil {
+		return nil, err
+	}
+	if err := control.configureWorkspace(config.LocalWorkspace); err != nil {
+		return nil, err
+	}
 	control.retention.wantSample.Store(enabled)
 	return control, nil
 }
@@ -144,6 +186,9 @@ func Validate(t backend.Task) error {
 	if !validLabels(t.TargetLabels, 16) || !validLabels(t.NodeSelector, 16) {
 		return fmt.Errorf("%w: invalid placement labels or selectors", ErrInvalid)
 	}
+	if err := backend.ValidateWorkspace(t); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalid, err)
+	}
 	data, err := backend.TaskBytes(t)
 	if err != nil {
 		return err
@@ -185,7 +230,7 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 	var selected string
 	var rejected []Rejection
 	for _, target := range c.targets {
-		err := checkTarget(t, target, c.retention.enabled)
+		err := checkWorkspaceTarget(t, target, c.retention.enabled, c.workspace)
 		if err != nil {
 			rejected = append(rejected, Rejection{target.Name, err.Error()})
 		} else if selected == "" {
@@ -204,14 +249,18 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 
 // Submit durably accepts a task or returns the job already bound to requestID.
 func (c *Control) Submit(actor auth.Actor, requestID string, t backend.Task) (backend.Job, error) {
-	return c.submit(actor, nil, requestID, t)
+	return c.submit(actor, nil, requestID, t, false)
 }
 
 // SubmitRetained accepts or replays the exact supplied request domain.
 func (c *Control) SubmitRetained(actor auth.Actor, domain store.RequestDomain, requestID string, t backend.Task) (backend.Job, error) {
-	return c.submit(actor, &domain, requestID, t)
+	return c.submit(actor, &domain, requestID, t, false)
 }
-func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestID string, t backend.Task) (backend.Job, error) {
+func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestID string, t backend.Task, workspace bool) (backend.Job, error) {
+	if err := c.beginExternal(); err != nil {
+		return backend.Job{}, err
+	}
+	defer c.endExternal()
 	actor, err := c.engine.Check(actor, auth.Mutate)
 	if err != nil {
 		return backend.Job{}, err
@@ -219,12 +268,22 @@ func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestI
 	if !requestName.MatchString(requestID) {
 		return backend.Job{}, fmt.Errorf("%w: request_id must contain 1..128 letters, digits, underscores or hyphens", ErrInvalid)
 	}
-	t, err = normalizeTask(t)
+	t, err = normalizeTask(cloneTask(t))
 	if err != nil {
 		return backend.Job{}, err
 	}
 	if err := Validate(t); err != nil {
 		return backend.Job{}, err
+	}
+	if workspace {
+		if t.Workdir == nil {
+			return backend.Job{}, fmt.Errorf("%w: workspace input required", ErrInvalid)
+		}
+		if !c.ArtifactsEnabled() {
+			return backend.Job{}, ErrUnsupported
+		}
+	} else if t.Workdir != nil || len(t.Setup) != 0 || len(t.Outputs) != 0 {
+		return backend.Job{}, fmt.Errorf("%w: workspace submission required", ErrInvalid)
 	}
 	if len(t.Env) == 0 {
 		t.Env = nil
@@ -242,7 +301,7 @@ func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestI
 	if domain == nil && c.retention.enabled {
 		return backend.Job{}, &store.ExpiryError{Reason: store.RequestDomainRequired}
 	}
-	if c.failed.Load() {
+	if c.failed.Load() || workspace && c.artifactAdmissionStopped() {
 		return backend.Job{}, ErrUnavailable
 	}
 	if err := c.storageGuard(false, false); err != nil {
@@ -255,7 +314,21 @@ func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestI
 	if err = c.storageGuard(false, false); err != nil {
 		return backend.Job{}, err
 	}
+	actor, err = c.engine.Check(actor, auth.Mutate)
+	if err != nil {
+		return backend.Job{}, err
+	}
+	if workspace && c.artifactAdmissionStopped() {
+		return backend.Job{}, ErrUnavailable
+	}
 	configured, _ := c.target(target)
+	if workspace {
+		job, err := c.store.SubmitWorkspace(actor, domain, requestID, t, target, configured.Binding, configured.OutputStorage, configured.OutputReservation)
+		if err == nil {
+			c.retention.wantSample.Store(c.retention.enabled)
+		}
+		return job, err
+	}
 	if domain != nil {
 		job, err := c.store.SubmitRetained(actor, *domain, requestID, t, target, configured.Binding, configured.OutputStorage, configured.OutputReservation)
 		if err == nil {

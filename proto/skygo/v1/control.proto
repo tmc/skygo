@@ -28,6 +28,18 @@ service ControlService {
   rpc SubmitRetainedJob(SubmitRetainedJobRequest) returns (SubmitRetainedJobResponse);
   rpc PruneJobs(PruneJobsRequest) returns (PruneJobsResponse);
   rpc StreamRetainedJobLogs(StreamRetainedJobLogsRequest) returns (stream StreamRetainedJobLogsResponse);
+  // Workspace submission never falls back to an older submit method.
+  rpc SubmitWorkspaceJob(SubmitWorkspaceJobRequest) returns (SubmitWorkspaceJobResponse);
+  // Artifact transfers use bounded unary chunks, not whole-archive messages.
+  rpc BeginArtifactUpload(BeginArtifactUploadRequest) returns (BeginArtifactUploadResponse);
+  rpc GetArtifactUpload(GetArtifactUploadRequest) returns (GetArtifactUploadResponse);
+  rpc WriteArtifactChunk(WriteArtifactChunkRequest) returns (WriteArtifactChunkResponse);
+  rpc FinalizeArtifactUpload(FinalizeArtifactUploadRequest) returns (FinalizeArtifactUploadResponse);
+  rpc CancelArtifactUpload(CancelArtifactUploadRequest) returns (CancelArtifactUploadResponse);
+  rpc BeginArtifactDownload(BeginArtifactDownloadRequest) returns (BeginArtifactDownloadResponse);
+  rpc ReadArtifactChunk(ReadArtifactChunkRequest) returns (ReadArtifactChunkResponse);
+  rpc CloseArtifactDownload(CloseArtifactDownloadRequest) returns (CloseArtifactDownloadResponse);
+  rpc RemoveArtifact(RemoveArtifactRequest) returns (RemoveArtifactResponse);
 
 }
 // Task is immutable after acceptance. Resource requests and limits are not capacity promises.
@@ -47,6 +59,12 @@ message Task {
   map<string, string> target_labels = 13;
   map<string, string> node_selector = 14;
   RetryPolicy retry = 15;
+  // Requires directory empty; the server chooses each attempt's private root.
+  ArtifactRef workdir = 16;
+  // One explicit argv, at most 64 arguments and 16 KiB encoded; requires workdir.
+  repeated string setup = 17;
+  // At most 16 disjoint canonical relative roots, without glob expansion.
+  repeated string outputs = 18;
 }
 // RetryPolicy selects bounded attempts after qualified stopped failures.
 message RetryPolicy {
@@ -77,6 +95,7 @@ message Job {
   google.protobuf.Timestamp updated_at = 9;
   repeated Attempt attempts = 10;
   google.protobuf.Timestamp next_attempt_at = 11;
+  ArtifactResult result = 12;
 }
 // Attempt describes one execution. Ordinals are one-based; timestamps record
 // durable decisions, not exact native process start or exit times.
@@ -89,6 +108,7 @@ message Attempt {
   google.protobuf.Timestamp created_at = 6;
   google.protobuf.Timestamp starting_at = 7;
   google.protobuf.Timestamp finished_at = 8;
+  ArtifactResult result = 9;
 }
 // Capability identifies implemented execution semantics, not available capacity.
 enum Capability {
@@ -98,6 +118,10 @@ enum Capability {
   CAPABILITY_NODE_SELECTOR_V1 = 3;
   CAPABILITY_TARGET_LABELS_V1 = 4;
   CAPABILITY_FINITE_JOB_RETRY_V1 = 5;
+  // Endpoint-installed service fact, separate from selected-target support.
+  CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1 = 6;
+  // Advertised only by a target implementing the workspace lifecycle.
+  CAPABILITY_WORKDIR_SNAPSHOT_V1 = 7;
 }
 message Target {
   string name = 1;
@@ -154,7 +178,11 @@ message ListTargetsResponse { repeated Target targets = 1; }
 
 message GetServerInfoRequest {}
 // Capabilities apply only to their named target at this endpoint.
-message GetServerInfoResponse { repeated Target targets = 1; }
+message GetServerInfoResponse {
+  repeated Target targets = 1;
+  // Installed endpoint semantics, not capacity or artifact byte authority.
+  repeated Capability capabilities = 2;
+}
 
 // RequestDomain is separate from Task and does not grant authority.
 message RequestDomain {
@@ -246,6 +274,7 @@ enum PruneMode {
   PRUNE_MODE_WHOLE = 1;
   PRUNE_MODE_METADATA_ONLY = 2;
   PRUNE_MODE_OUTPUT_ONLY = 3;
+  PRUNE_MODE_RESULT_ONLY = 4;
 }
 message PruneJobsRequest {
   google.protobuf.Timestamp before = 1;
@@ -255,6 +284,9 @@ message PruneJobsRequest {
   string obligation_id = 5;
   int32 page_size = 6;
   string page_token = 7;
+  // One-based fixed result selector, required and nonzero for result-only.
+  // Must be zero for other modes.
+  uint32 attempt = 8;
 }
 message PruneJobsResponse {
   uint32 inspected = 1;
@@ -424,4 +456,89 @@ message QuoteTaskResponse {
   repeated QuoteCandidate candidates = 9;
   // This advisory compute estimate excludes each of these categories.
   repeated ExcludedCharge excluded_charges = 10;
+}
+
+// ArtifactRef is an immutable snapshot identity, never a path, URL or read grant.
+// ID is 32 lowercase hexadecimal bytes, sha256 is 64, and size is 1..32 MiB.
+message ArtifactRef {
+  string id = 1;
+  string sha256 = 2;
+  int64 size = 3;
+}
+enum ArtifactUploadState {
+  ARTIFACT_UPLOAD_STATE_UNSPECIFIED = 0;
+  ARTIFACT_UPLOAD_STATE_CREATING = 1;
+  ARTIFACT_UPLOAD_STATE_WRITABLE = 2;
+  ARTIFACT_UPLOAD_STATE_FINALIZING = 3;
+  ARTIFACT_UPLOAD_STATE_COMPLETE = 4;
+  ARTIFACT_UPLOAD_STATE_DELETING = 5;
+}
+message ArtifactUpload {
+  string id = 1;
+  ArtifactRef reference = 2;
+  int64 acknowledged = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  ArtifactUploadState state = 5;
+}
+message BeginArtifactUploadRequest {
+  string sha256 = 1;
+  int64 size = 2;
+}
+message BeginArtifactUploadResponse { ArtifactUpload upload = 1; }
+message GetArtifactUploadRequest { string id = 1; }
+message GetArtifactUploadResponse { ArtifactUpload upload = 1; }
+message WriteArtifactChunkRequest {
+  string id = 1;
+  int64 offset = 2;
+  // Nonempty, at most 64 KiB; no sparse holes or partial acknowledged overlap.
+  bytes data = 3;
+}
+message WriteArtifactChunkResponse { ArtifactUpload upload = 1; }
+message FinalizeArtifactUploadRequest { string id = 1; }
+message FinalizeArtifactUploadResponse { ArtifactRef reference = 1; }
+message CancelArtifactUploadRequest { string id = 1; }
+message CancelArtifactUploadResponse {}
+message BeginArtifactDownloadRequest { ArtifactRef reference = 1; }
+message BeginArtifactDownloadResponse {
+  string id = 1;
+  ArtifactRef reference = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+message ReadArtifactChunkRequest {
+  string download_id = 1;
+  int64 offset = 2;
+  // Positive requested bytes, at most 64 KiB.
+  int32 limit = 3;
+}
+message ReadArtifactChunkResponse {
+  bytes data = 1;
+  int64 next_offset = 2;
+  bool complete = 3;
+}
+message CloseArtifactDownloadRequest { string download_id = 1; }
+message CloseArtifactDownloadResponse {}
+message RemoveArtifactRequest { ArtifactRef reference = 1; }
+message RemoveArtifactResponse {}
+message SubmitWorkspaceJobRequest {
+  Task task = 1;
+  string request_id = 2;
+  // Present for retained requests; unchanged replay precedes current placement.
+  RequestDomain domain = 3;
+}
+message SubmitWorkspaceJobResponse { Job job = 1; }
+enum ArtifactResultState {
+  ARTIFACT_RESULT_STATE_UNSPECIFIED = 0;
+  ARTIFACT_RESULT_STATE_ABSENT = 1;
+  ARTIFACT_RESULT_STATE_AVAILABLE = 2;
+  ARTIFACT_RESULT_STATE_EXPIRED = 3;
+  ARTIFACT_RESULT_STATE_HELD = 4;
+}
+// ArtifactResult is authorized metadata for one fixed accepted attempt.
+// EXPIRED is distinct from ABSENT and has no readable reference. A cached raw
+// reference without a surviving grant returns generic not_found on byte access.
+// Existing RetentionExpiry.RESULT_EXPIRED still denotes whole-job/request expiry.
+message ArtifactResult {
+  ArtifactResultState state = 1;
+  ArtifactRef reference = 2;
+  string attempt_id = 3;
 }

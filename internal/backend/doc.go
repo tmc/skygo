@@ -9,4 +9,9 @@
 // explicitly describe supported semantics without claiming available capacity.
 // Retention keeps writer closure, output removal and proved execution removal
 // separate; a closure receipt alone never establishes workload termination.
+//
+// Task snapshot fields describe an immutable input, one setup argv and declared
+// relative output roots. ValidateWorkspace checks their shape separately from
+// execution policy and authority. CloneTask copies mutable task fields without
+// normalization. A Ref alone never grants access to artifact bytes.
 package backend

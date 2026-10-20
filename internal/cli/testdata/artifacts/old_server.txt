@@ -1,0 +1,27 @@
+# Genuine source-archived predecessor, not a mock implementation or rebuilt
+# current daemon with capabilities hidden. Endpoint6 is absent.
+server start
+! skygo artifacts upload source
+stderr 'endpoint does not advertise artifact-snapshot-service-v1|capability discovery'
+! skygo run -f workspace.yaml --request-id old-workspace
+stderr 'endpoint does not advertise artifact-snapshot-service-v1|capability discovery'
+calls BeginArtifactUpload 0
+calls SubmitWorkspaceJob 0
+calls SubmitRetainedJob 0
+calls SubmitRetryJob 0
+calls SubmitJob 0
+calls PlanTask 0
+! exists native-marker
+# Absence of snapshot service must leave actual old default workflow usable.
+artifact-task default default.json
+skygo --json run -f default.json --request-id old-default --wait
+stdout 'JOB_STATE_SUCCEEDED'
+exists native-marker
+calls SubmitJob 1
+server stop
+! stderr .
+-- source/seed.txt --
+seed
+-- workspace.yaml --
+argv: [run]
+workdir: {id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, size: 2048}

@@ -351,6 +351,9 @@ func (b *Backend) removeOutput(ctx context.Context, ref backend.OutputReference)
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	if b.logReaderErr != nil {
+		return b.logReaderErr
+	}
 	if err := b.validOutputReference(ref); err != nil {
 		return err
 	}
@@ -447,6 +450,9 @@ func (b *Backend) removeExecution(ctx context.Context, ref backend.Reference) er
 		// Accepted stopped evidence is the trusted dispatcher's precondition. This
 		// acknowledges only absence of an owned map entry, never process termination.
 		return nil
+	}
+	if e.workspace != nil {
+		return errors.New("workspace cleanup requires its exact root intent")
 	}
 	r := e.retained
 	if r == nil || !r.hasTask || r.taskHash != hash || ref.Instance != e.status.Instance {

@@ -89,7 +89,7 @@ func TestBlockedObservationKeepsOneOwnerAndCleanupGetsNextSlot(t *testing.T) {
 	m := &maintenanceState{input: make(chan maintenanceRequest, 1), results: make(chan maintenanceResult, 1)}
 	exited := make(chan struct{})
 	go func() { defer close(exited); runMaintenance(ctx, m.input, m.results) }()
-	defer func() { unblock(); cancel(); waitValue(t, exited) }()
+	defer func() { unblock(); cancel(); close(m.input); waitValue(t, exited) }()
 	if _, err = c.RetentionInfo(testActor(), 0, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -255,6 +255,7 @@ func TestLocalBinderFailureNeverStartsOrReleasesReservation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	loop := c.newLoop(ctx)
+	defer stopTestLoop(t, cancel, loop)
 	if err = c.schedule(ctx, loop); err != nil {
 		t.Fatal(err)
 	}
@@ -336,15 +337,17 @@ func TestCanceledBinderCannotLaunchAfterItsActualReturn(t *testing.T) {
 	defer unblock()
 	b := &routeBackend{}
 	input, results := make(chan operation, 1), make(chan operationResult, 1)
+	closeInput := sync.OnceFunc(func() { close(input) })
 	go func() {
 		defer close(exited)
 		runWorkerWithOutput(ctx, b, func(backend.OutputReference) error { close(entered); <-release; return nil }, input, results)
 	}()
-	defer func() { unblock(); cancel(); waitValue(t, exited) }()
+	defer func() { unblock(); cancel(); closeInput(); waitValue(t, exited) }()
 	job := backend.Job{ID: "11111111111111111111111111111111", Task: backend.Task{Argv: []string{"work"}}, Status: backend.Status{State: backend.Starting}}
 	input <- operation{kind: startOperation, job: job, output: &backend.OutputReference{AttemptID: job.ID}}
 	waitValue(t, entered)
 	cancel()
+	closeInput()
 	unblock()
 	waitValue(t, exited)
 	if b.starts != 0 {

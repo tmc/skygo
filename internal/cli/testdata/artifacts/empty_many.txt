@@ -1,0 +1,36 @@
+server start
+mkdir empty
+skygo artifacts upload empty
+cp stdout empty.json
+skygo artifacts download --ref empty.json empty-copy
+exists empty-copy
+empty-directory empty-copy
+mkdir many
+many-inputs many
+skygo artifacts upload many
+cp stdout many.json
+skygo artifacts download --ref many.json many-copy
+cmp many/file00 many-copy/file00
+cmp many/file01 many-copy/file01
+cmp many/file02 many-copy/file02
+cmp many/file03 many-copy/file03
+cmp many/file04 many-copy/file04
+cmp many/file05 many-copy/file05
+cmp many/file06 many-copy/file06
+cmp many/file07 many-copy/file07
+cmp many/file08 many-copy/file08
+cmp many/file09 many-copy/file09
+cmp many/file10 many-copy/file10
+cmp many/file11 many-copy/file11
+cmp many/file12 many-copy/file12
+cmp many/file13 many-copy/file13
+cmp many/file14 many-copy/file14
+cmp many/file15 many-copy/file15
+cmp many/file16 many-copy/file16
+exists many-copy/empty
+private-mode many-copy many-copy/file16
+calls ok:BeginArtifactUpload 2
+calls ok:FinalizeArtifactUpload 2
+calls SubmitWorkspaceJob 0
+server stop
+! stderr .

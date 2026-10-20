@@ -323,7 +323,9 @@ func TestDefaultOptionalHandleFailure(t *testing.T) {
 }
 
 func TestDefaultStartFailureNoReplay(t *testing.T) {
-	b := newBackend(t)
+	f := newExecutionFixture(t, false)
+	f.held = true
+	b := f.backend
 	var starts, opens int
 	failure := errors.New("clone was denied before launch")
 	b.defaultOps.start = func(*exec.Cmd) error { starts++; return failure }
@@ -335,6 +337,9 @@ func TestDefaultStartFailureNoReplay(t *testing.T) {
 	s := completed(t, b, id)
 	if s.State != backend.Failed || s.ExitCode != nil || s.Instance != "" || s.Termination != backend.UnknownTermination || starts != 1 || opens != 0 {
 		t.Fatalf("status=%+v starts=%d opens=%d", s, starts, opens)
+	}
+	if err := f.close(); !errors.Is(err, failure) {
+		t.Fatalf("original startup error lost: %v", err)
 	}
 }
 
@@ -459,9 +464,11 @@ func TestDefaultUnresolvedWaitNoHandle(t *testing.T) {
 }
 
 func TestDefaultRealStartFailure(t *testing.T) {
-	b := newBackend(t)
+	fixture := newExecutionFixture(t, false)
+	fixture.held = true
+	b := fixture.backend
 	id := strings.Repeat("c", 32)
-	task := backend.Task{Argv: []string{filepath.Join(t.TempDir(), "missing-program")}}
+	task := backend.Task{Argv: []string{filepath.Join(fixture.directory, "missing-program")}}
 	if err := b.Start(context.Background(), id, task); err == nil {
 		t.Fatal("missing executable started")
 	}
@@ -475,8 +482,8 @@ func TestDefaultRealStartFailure(t *testing.T) {
 	if err := b.Cancel(context.Background(), backend.Reference{ID: id}); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Close(); err != nil {
-		t.Fatal(err)
+	if err := fixture.close(); err == nil {
+		t.Fatal("failed native Start falsely supplied actual Wait closure")
 	}
 	s := completed(t, b, id)
 	if s.State != backend.Failed || s.ExitCode != nil || s.Instance != "" || s.Termination != backend.UnknownTermination {

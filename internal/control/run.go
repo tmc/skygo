@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/store"
 )
 
@@ -16,78 +17,142 @@ type operationKind uint8
 const (
 	startOperation operationKind = iota
 	observeOperation
+	workspaceCommitOperation
+	workspacePrepareOperation
 )
 
 type operation struct {
-	kind   operationKind
-	job    backend.Job
-	output *backend.OutputReference
+	kind         operationKind
+	job          backend.Job
+	output       *backend.OutputReference
+	workspace    *workspaceStart
+	prepareOwner *artifactIO
+	intent       *local.WorkspaceRootIntent
 }
 type operationResult struct {
 	operation  operation
 	status     backend.Status
 	err        error
 	notStarted bool
+	workspace  *local.WorkspaceObservation
+	prepared   *workspacePrepared
 }
 type targetWorker struct {
-	target     backend.Target
-	input      chan operation
-	pending    *operation
-	after      uint64
-	bindOutput func(backend.OutputReference) error
+	target        backend.Target
+	input         chan operation
+	pending       *operation
+	after         uint64
+	bindOutput    func(backend.OutputReference) error
+	completion    *workspacePending
+	done          chan struct{}
+	received      *receivedOperation
+	shutdownStart *receivedOperation // original possible canceled-before-parent pair
 }
 type loopState struct {
-	workers    []targetWorker
-	results    chan operationResult
-	nextTarget int
-	due        map[string]time.Time
+	workers             []targetWorker
+	results             chan operationResult
+	nextTarget          int
+	due                 map[string]time.Time
+	unmatched           *operationResult
+	preparing, prepared bool
 }
 
 // Run reconciles until canceled. It may be called only once per Control,
 // including after cancellation or failure. Calls already inside a backend may
 // outlive Run if that backend ignores cancellation; no replacement is started.
-func (c *Control) Run(ctx context.Context) error {
+// Join waits for the original Run and workers separately. Returned results and
+// their requests remain retained if cancellation or integration fails.
+func (c *Control) Run(ctx context.Context) (result error) {
+	if c == nil || c.shutdown == nil {
+		return fmt.Errorf("%w: control lifecycle is not initialized", ErrUnavailable)
+	}
 	if !c.started.CompareAndSwap(false, true) {
 		return fmt.Errorf("%w: control loop already started", ErrUnavailable)
 	}
 	lifetime, cancel := context.WithCancel(ctx)
-	defer cancel()
 	state := c.newLoop(lifetime)
 	maintenance := newMaintenance(lifetime)
+	frame := &runFrame{state: state, maintenance: maintenance, done: make(chan struct{})}
+	c.runMu.Lock()
+	c.run = frame
+	c.runMu.Unlock()
+	defer func() {
+		cancel()
+		for i := range state.workers {
+			close(state.workers[i].input)
+		}
+		close(maintenance.input)
+		frame.err = result
+		c.shutdownRunReturned(result)
+		close(frame.done)
+	}()
 	tick := time.NewTicker(100 * time.Millisecond)
 	defer tick.Stop()
 	for {
+		request, changed := c.shutdownEvents()
+		if !state.preparing {
+			select {
+			case <-request:
+				state.preparing = true
+			default:
+			}
+		}
+		if state.preparing {
+			request = nil
+		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if err := c.schedule(ctx, state); err != nil {
-			c.failed.Store(true)
-			return err
+		if !state.prepared {
+			if err := c.schedule(ctx, state); err != nil {
+				if ctx.Err() == nil {
+					c.failed.Store(true)
+				}
+				return err
+			}
 		}
-		if err := c.maintain(ctx, maintenance); err != nil {
-			c.failed.Store(true)
-			return err
+		var maintenanceErr error
+		switch {
+		case state.prepared:
+			maintenanceErr = c.maintainShutdownDrain(maintenance)
+		case state.preparing:
+			maintenanceErr = c.maintainShutdownPreparation(state, maintenance)
+		default:
+			maintenanceErr = c.maintain(ctx, maintenance)
 		}
-		c.drainAccess(ctx)
+		if maintenanceErr != nil {
+			c.failed.Store(true)
+			return maintenanceErr
+		}
+		if state.preparing && !state.prepared {
+			if err := c.tryShutdownPrepared(state, maintenance); err != nil {
+				c.failed.Store(true)
+				return err
+			}
+		}
+		if !state.prepared {
+			c.drainAccess(ctx)
+		}
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case result := <-maintenance.results:
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if err := c.integrateMaintenance(maintenance, result); err != nil {
-				c.failed.Store(true)
+			if err := c.receiveMaintenance(ctx, maintenance, result); err != nil {
+				if ctx.Err() == nil {
+					c.failed.Store(true)
+				}
 				return err
 			}
 		case result := <-state.results:
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if err := c.integrate(state, result); err != nil {
-				c.failed.Store(true)
+			if err := c.receiveOperation(ctx, state, result); err != nil {
+				if ctx.Err() == nil {
+					c.failed.Store(true)
+				}
 				return err
 			}
+		case <-request:
+			state.preparing = true
+		case <-changed:
 		case <-tick.C:
 		}
 	}
@@ -95,11 +160,19 @@ func (c *Control) Run(ctx context.Context) error {
 func (c *Control) newLoop(ctx context.Context) *loopState {
 	s := &loopState{workers: make([]targetWorker, len(c.targets)), results: make(chan operationResult, len(c.targets)), due: make(map[string]time.Time)}
 	for i, t := range c.targets {
-		s.workers[i] = targetWorker{target: t, input: make(chan operation, 1)}
+		s.workers[i] = targetWorker{target: t, input: make(chan operation, 1), done: make(chan struct{})}
 		if t.Name == c.retention.local.Target && t.Binding == c.retention.local.Binding && t.OutputStorage == backend.LocalOutput {
 			s.workers[i].bindOutput = c.retention.local.BindOutput
 		}
-		go runWorkerWithOutput(ctx, t.Backend, s.workers[i].bindOutput, s.workers[i].input, s.results)
+		var workspace *workspaceTarget
+		if c.workspace != nil && c.workspace.name == t.Name && c.workspace.binding == t.Binding && t.Backend == c.workspace.backend {
+			workspace = c.workspace
+		}
+		w := &s.workers[i]
+		go func() {
+			defer close(w.done)
+			runWorkspaceWorker(ctx, w.target.Backend, w.bindOutput, workspace, w.input, s.results)
+		}()
 	}
 	return s
 }
@@ -107,53 +180,103 @@ func runWorker(ctx context.Context, b backend.Backend, input <-chan operation, r
 	runWorkerWithOutput(ctx, b, nil, input, results)
 }
 func runWorkerWithOutput(ctx context.Context, b backend.Backend, bind func(backend.OutputReference) error, input <-chan operation, results chan<- operationResult) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case op := <-input:
-			if ctx.Err() != nil {
-				return
+	runWorkspaceWorker(ctx, b, bind, nil, input, results)
+}
+
+func runWorkspaceWorker(ctx context.Context, b backend.Backend, bind func(backend.OutputReference) error, workspace *workspaceTarget, input <-chan operation, results chan<- operationResult) {
+	for op := range input {
+		result := operationResult{operation: op}
+		if ctx.Err() != nil {
+			if op.workspace != nil {
+				op.workspace.owner.finish(nil)
 			}
-			result := operationResult{operation: op}
-			if op.kind == startOperation {
-				call, cancel := context.WithTimeout(ctx, 10*time.Second)
-				if op.output != nil {
-					if bind == nil {
-						result.err = errors.New("local output binding unavailable")
-					} else {
-						result.err = bind(*op.output)
-					}
-					result.notStarted = result.err != nil
+			if op.prepareOwner != nil {
+				op.prepareOwner.finish(nil)
+			}
+			result.err = ctx.Err()
+			result.notStarted = op.kind == startOperation
+			results <- result
+			continue
+		}
+		if op.kind == workspaceCommitOperation {
+			if workspace == nil || op.intent == nil {
+				result.err = ErrUnsupported
+			} else {
+				result.err = workspace.backend.CommitWorkspace(reference(op.job), *op.intent)
+			}
+		} else if op.kind == workspacePrepareOperation {
+			if workspace == nil || op.prepareOwner == nil {
+				result.err = ErrUnsupported
+			} else {
+				observation, origin, err := workspace.backend.PrepareWorkspaceCompletion(reference(op.job))
+				result.prepared = &workspacePrepared{observation: observation, origin: origin}
+				result.err = err
+			}
+			if op.prepareOwner != nil {
+				op.prepareOwner.finish(result.err)
+			}
+		} else if op.kind == startOperation {
+			call, cancel := context.WithTimeout(ctx, 10*time.Second)
+			if op.output != nil {
+				if bind == nil {
+					result.err = errors.New("local output binding unavailable")
+				} else {
+					result.err = bind(*op.output)
 				}
-				if result.err == nil && call.Err() != nil {
-					result.err = call.Err()
+				result.notStarted = result.err != nil
+			}
+			if result.err == nil && call.Err() != nil {
+				result.err = call.Err()
+				result.notStarted = true
+			}
+			if op.workspace != nil {
+				if result.err == nil {
+					result.err = bindWorkspaceStart(workspace, op)
+				}
+				if result.err != nil {
+					// No ownership transferred unless Bind returned nil.
+					op.workspace.owner.finish(result.err)
 					result.notStarted = true
 				}
-				if result.err == nil {
-					result.err = b.Start(call, op.job.CurrentAttemptID(), cloneTask(op.job.Task))
-				}
-				cancel()
-			} else {
-				if op.job.CancelRequested {
-					call, cancel := context.WithTimeout(ctx, 10*time.Second)
-					_ = b.Cancel(call, reference(op.job))
-					cancel()
-				}
-				if ctx.Err() != nil {
-					return
-				}
+			}
+			if result.err == nil {
+				result.err = b.Start(call, op.job.CurrentAttemptID(), cloneTask(op.job.Task))
+			}
+			cancel()
+		} else {
+			if op.job.CancelRequested {
 				call, cancel := context.WithTimeout(ctx, 10*time.Second)
-				result.status, result.err = b.Observe(call, reference(op.job))
-				result.status = cloneStatus(result.status)
+				result.err = b.Cancel(call, reference(op.job))
 				cancel()
 			}
-			select {
-			case <-ctx.Done():
-				return
-			case results <- result:
+			if ctx.Err() != nil {
+				result.err = errors.Join(result.err, ctx.Err())
+				results <- result
+				continue
 			}
+			call, cancel := context.WithTimeout(ctx, 10*time.Second)
+			cancelErr := result.err
+			if op.job.Task.Workdir != nil && currentStatus(op.job).Instance != "" {
+				if workspace == nil {
+					result.err = ErrUnsupported
+				} else {
+					if err := workspace.backend.ResumeWorkspacePublication(reference(op.job)); err != nil {
+						result.err = err
+					} else {
+						observation, err := workspace.backend.WorkspaceObservation(reference(op.job))
+						result.workspace, result.err = &observation, err
+					}
+				}
+			} else {
+				result.status, result.err = b.Observe(call, reference(op.job))
+			}
+			result.status = cloneStatus(result.status)
+			result.err = errors.Join(cancelErr, result.err)
+			cancel()
 		}
+		// One pending request per worker bounds outstanding results by the
+		// existing channel capacity, even after Run stops receiving.
+		results <- result
 	}
 }
 func (c *Control) schedule(ctx context.Context, s *loopState) error {
@@ -162,12 +285,18 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 	for i := 0; i < len(s.workers); i++ {
 		select {
 		case result := <-s.results:
-			if err := c.integrate(s, result); err != nil {
+			if err := c.receiveOperation(ctx, s, result); err != nil {
 				return err
 			}
 		default:
 			i = len(s.workers)
 		}
+	}
+	if err := c.advanceWorkspaces(ctx, s); err != nil {
+		return err
+	}
+	if s.preparing {
+		return c.scheduleShutdownLocal(ctx, s)
 	}
 	jobs, err := c.store.Active()
 	if err != nil {
@@ -221,6 +350,9 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 			continue
 		}
 		target, reason := c.boundTarget(j)
+		if reason == "" && j.Task.Workdir != nil && !c.WorkspaceTargetEnabled(j.Target, j.TargetBinding) {
+			reason = "local workspace service is unsupported"
+		}
 		if reason == "" && needsStart(j) && j.Task.Retry != nil && !target.SupportsRetry {
 			reason = unsupportedRetryTarget
 		}
@@ -250,7 +382,7 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 		}
 		i := (begin + n) % len(s.workers)
 		w := &s.workers[i]
-		if w.pending != nil {
+		if w.pending != nil || w.completion != nil && !w.completion.acked {
 			continue
 		}
 		candidates := eligible[w.target.Name]
@@ -269,6 +401,9 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				return err
 			}
 			j = current
+			if j.Task.Workdir != nil && w.completion != nil {
+				continue
+			}
 			if j.Status.State.Terminal() {
 				continue
 			}
@@ -284,6 +419,7 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				continue
 			}
 			kind := observeOperation
+			var materialization *artifactIO
 			if needsStart(j) {
 				if active >= 32 || (j.Task.Retry != nil && !target.SupportsRetry) {
 					continue
@@ -307,12 +443,19 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				if c.retention.enabled {
 					reserve = target.OutputReservation
 				}
+				if j.Task.Workdir != nil {
+					materialization, err = c.tryArtifactIO()
+					if err != nil {
+						continue
+					} // No durable attempt before the shared slot.
+				}
 				previousReason := j.Status.Reason
-				var began bool
-				j, began, err = c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), reserve, now.UTC())
+				begun, began, err := c.store.BeginAttempt(j.ID, j.CurrentAttemptID(), reserve, now.UTC())
 				if err != nil {
+					materialization.finish(nil)
 					var capacity *store.CapacityError
-					if errors.As(err, &capacity) {
+					var artifactCapacity *store.ArtifactCapacityError
+					if errors.As(err, &capacity) || errors.As(err, &artifactCapacity) {
 						const held = "retention capacity unavailable; execution held"
 						if previousReason != held {
 							if _, e := c.store.Update(j.ID, func(current *backend.Job) error { current.Status.Reason = held; return nil }); e != nil && !errors.Is(e, store.ErrNotFound) {
@@ -324,8 +467,10 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 					return err
 				}
 				if !began {
+					materialization.finish(nil)
 					continue
 				}
+				j = begun
 				active++
 				if c.retention.enabled {
 					c.retention.wantSample.Store(true)
@@ -339,9 +484,21 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				}
 			}
 			op := operation{kind: kind, job: cloneJob(j)}
+			if kind == startOperation {
+				w.pending = &op
+			}
+			if kind == startOperation && j.Task.Workdir != nil {
+				reservation, e := c.store.GetWorkspaceReservation(j.ID, j.CurrentAttemptID())
+				if e != nil {
+					materialization.finish(nil)                                                                 // No filesystem owner was created.
+					return fmt.Errorf("%w: committed workspace reservation unavailable: %w", ErrUnavailable, e) // Original pending Start remains retained.
+				}
+				op.workspace = &workspaceStart{reservation: reservation, owner: materialization}
+			}
 			if kind == startOperation && c.retention.enabled && target.OutputStorage == backend.LocalOutput {
 				ref, e := c.store.OutputReference(j.ID, j.CurrentAttemptID())
 				if e != nil {
+					materialization.finish(nil)
 					return e
 				}
 				op.output = &ref
@@ -379,6 +536,18 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 	}
 	if worker == nil || worker.pending == nil || worker.pending.kind != r.operation.kind || !sameExecution(worker.pending.job, r.operation.job) {
 		return nil
+	}
+	if c.ownedLocalJob(r.operation.job) && r.operation.kind == startOperation && r.operation.workspace != nil && !r.notStarted && worker.received != nil && (errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded)) {
+		worker.shutdownStart = worker.received
+	}
+	if s.preparing && c.ownedLocalJob(r.operation.job) && r.err != nil && r.operation.kind != workspaceCommitOperation {
+		noCall := r.operation.kind == startOperation && r.operation.workspace != nil && !r.notStarted && (errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded))
+		if !noCall {
+			return fmt.Errorf("%w: original owned Local operation failed: %w", ErrUnavailable, r.err)
+		}
+	}
+	if r.operation.job.Task.Workdir != nil {
+		return c.integrateWorkspace(s, worker, r)
 	}
 	c.retention.mu.Lock()
 	worker.pending = nil

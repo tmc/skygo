@@ -17,7 +17,7 @@ func (o *options) infoCommand() *cobra.Command {
 	var target string
 	var names []string
 	cmd := &cobra.Command{Use: "info", Short: "Show capabilities advertised by this server", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
-		var required []v1.Capability
+		var required, endpointRequired []v1.Capability
 		for _, name := range names {
 			var capability v1.Capability
 			switch name {
@@ -31,10 +31,18 @@ func (o *options) infoCommand() *cobra.Command {
 				capability = v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1
 			case "target-labels-v1":
 				capability = v1.Capability_CAPABILITY_TARGET_LABELS_V1
+			case "artifact-snapshot-service-v1":
+				capability = v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1
+			case "workdir-snapshot-v1":
+				capability = v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1
 			default:
 				return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown capability %q", name))
 			}
-			required = append(required, capability)
+			if endpointCapability(capability) {
+				endpointRequired = append(endpointRequired, capability)
+			} else {
+				required = append(required, capability)
+			}
 		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
 		defer cancel()
@@ -42,16 +50,28 @@ func (o *options) infoCommand() *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if err := checkEndpointCapabilities(info, endpointRequired...); err != nil {
+			return err
+		}
 		if target != "" {
 			for _, t := range info.Targets {
 				if t.GetName() == target {
-					info = &v1.GetServerInfoResponse{Targets: []*v1.Target{t}}
+					info = &v1.GetServerInfoResponse{Targets: []*v1.Target{t}, Capabilities: info.Capabilities}
 					break
 				}
 			}
 		}
 		if o.json {
 			return writeJSON(cmd.OutOrStdout(), info)
+		}
+		if len(info.Capabilities) != 0 {
+			var names []string
+			for _, capability := range info.Capabilities {
+				names = append(names, capabilityName(capability))
+			}
+			if _, err := fmt.Fprintf(cmd.OutOrStdout(), "endpoint-capabilities: %s\n", strings.Join(names, ",")); err != nil {
+				return err
+			}
 		}
 		w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
 		fmt.Fprintln(w, "NAME\tKIND\tCAPABILITIES")
@@ -65,7 +85,7 @@ func (o *options) infoCommand() *cobra.Command {
 		return w.Flush()
 	}}
 	cmd.Flags().StringVar(&target, "target", "", "Select one named target")
-	cmd.Flags().StringSliceVar(&names, "require", nil, "Require capabilities on --target (finite-jobs-v1, resource-limits-v1, node-selector-v1, target-labels-v1, finite-job-retry-v1)")
+	cmd.Flags().StringSliceVar(&names, "require", nil, "Require endpoint snapshot capabilities or existing target capabilities with --target")
 	return cmd
 }
 
@@ -81,6 +101,10 @@ func capabilityName(capability v1.Capability) string {
 		return "finite-job-retry-v1"
 	case v1.Capability_CAPABILITY_TARGET_LABELS_V1:
 		return "target-labels-v1"
+	case v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1:
+		return "artifact-snapshot-service-v1"
+	case v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1:
+		return "workdir-snapshot-v1"
 	}
 	return fmt.Sprintf("unknown(%d)", capability)
 }
@@ -93,7 +117,7 @@ func (o *options) requireCapabilities(ctx context.Context, target string, requir
 	}
 	for _, capability := range required {
 		switch capability {
-		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1:
+		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1, v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1:
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown required capability %d", capability))
 		}
@@ -169,4 +193,42 @@ func (o *options) planTask(ctx context.Context, client skyv1connect.ControlServi
 		}
 	}
 	return r.Msg, nil
+}
+
+// Endpoint facts describe protocol semantics, independently of target placement.
+func endpointCapability(capability v1.Capability) bool {
+	return capability == v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1
+}
+
+func checkEndpointCapabilities(info *v1.GetServerInfoResponse, required ...v1.Capability) error {
+	if info == nil {
+		return errors.New("server returned no capability information")
+	}
+	for _, capability := range required {
+		if !endpointCapability(capability) {
+			return fmt.Errorf("invalid endpoint capability %d", capability)
+		}
+		found := false
+		for _, advertised := range info.Capabilities {
+			if advertised == capability {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("endpoint does not advertise %s", capabilityName(capability)))
+		}
+	}
+	return nil
+}
+
+func (o *options) requireEndpointCapabilities(ctx context.Context, required ...v1.Capability) (*v1.GetServerInfoResponse, error) {
+	info, err := o.requireCapabilities(ctx, "")
+	if err != nil {
+		return nil, err
+	}
+	if err := checkEndpointCapabilities(info, required...); err != nil {
+		return nil, err
+	}
+	return info, nil
 }

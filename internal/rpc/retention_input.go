@@ -30,7 +30,7 @@ func pruneSelection(message *v1.PruneJobsRequest) (store.PruneSelection, error) 
 	if err := retentionPage(message.PageSize, message.PageToken); err != nil {
 		return store.PruneSelection{}, err
 	}
-	selection := store.PruneSelection{AcknowledgeUnverifiedTerminal: message.AcknowledgeUnverifiedTerminal, ObligationID: message.ObligationId, Limit: int(message.PageSize)}
+	selection := store.PruneSelection{AcknowledgeUnverifiedTerminal: message.AcknowledgeUnverifiedTerminal, ObligationID: message.ObligationId, Limit: int(message.PageSize), Attempt: message.Attempt}
 	switch message.Mode {
 	case v1.PruneMode_PRUNE_MODE_UNSPECIFIED, v1.PruneMode_PRUNE_MODE_WHOLE:
 		selection.Mode = store.Whole
@@ -38,14 +38,19 @@ func pruneSelection(message *v1.PruneJobsRequest) (store.PruneSelection, error) 
 		selection.Mode = store.MetadataOnly
 	case v1.PruneMode_PRUNE_MODE_OUTPUT_ONLY:
 		selection.Mode = store.OutputOnly
+	case v1.PruneMode_PRUNE_MODE_RESULT_ONLY:
+		selection.Mode = store.ResultOnly
 	default:
 		return selection, fmt.Errorf("%w: unsupported prune mode", control.ErrInvalid)
+	}
+	if (selection.Mode == store.ResultOnly) != (selection.Attempt != 0) {
+		return selection, fmt.Errorf("%w: result-only requires a nonzero attempt; other modes require zero", control.ErrInvalid)
 	}
 	if selection.AcknowledgeUnverifiedTerminal != (selection.Mode == store.MetadataOnly) {
 		return selection, fmt.Errorf("%w: metadata-only acknowledgement required only for metadata-only mode", control.ErrInvalid)
 	}
 	if message.ObligationId != "" {
-		if selection.Mode != store.OutputOnly || !utf8.ValidString(message.ObligationId) || !hexID(message.ObligationId) || message.Before != nil || message.PageToken != "" || message.PageSize != 0 {
+		if (selection.Mode != store.OutputOnly && selection.Mode != store.ResultOnly) || !utf8.ValidString(message.ObligationId) || !hexID(message.ObligationId) || message.Before != nil || message.PageToken != "" || message.PageSize != 0 {
 			return selection, fmt.Errorf("%w: invalid output obligation selector", control.ErrInvalid)
 		}
 		return selection, nil

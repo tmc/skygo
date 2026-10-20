@@ -1,0 +1,37 @@
+# Actual production CLI help must not start a service or resolve remote auth.
+skygo server --help
+stdout '--recover-stopped-artifact-readers'
+stdout 'ALL[[:space:]]+historical[[:space:]]+producers'
+stdout 'no[[:space:]]+surviving[[:space:]]+descriptor[[:space:]]+copy[[:space:]]+or[[:space:]]+use'
+stdout 'same-domain[[:space:]]+kernel[[:space:]]+is[[:space:]]+qualified'
+! stderr .
+
+# Opt-in without artifacts refuses before Store/Local/listener acquisition.
+# Both boolean spellings must reach the real server validator, not nil startup.
+! skygo server --data-dir unopened --listen 127.0.0.1:0 --recover-stopped-artifact-readers
+stderr '^stopped artifact reader recovery requires artifacts\n$'
+! stdout .
+! exists unopened
+! skygo server --data-dir unopened --listen invalid --recover-stopped-artifact-readers=true
+stderr '^stopped artifact reader recovery requires artifacts\n$'
+! stdout .
+! exists unopened
+
+# Default and explicit false preserve ordinary listener validation. No service
+# can bind this invalid address, and neither path may create durable state.
+! skygo server --data-dir default-state --listen invalid
+stderr '^listen address:'
+! stdout .
+! exists default-state
+! skygo server --data-dir false-state --listen invalid --recover-stopped-artifact-readers=false
+stderr '^listen address:'
+! stdout .
+! exists false-state
+
+# An invalid boolean or a positional argument never starts a server.
+! skygo server --data-dir grammar-state --recover-stopped-artifact-readers=maybe
+stderr 'invalid argument.*maybe.*recover-stopped-artifact-readers'
+! exists grammar-state
+! skygo server unexpected --data-dir grammar-state --recover-stopped-artifact-readers
+stderr 'unknown command|accepts 0 arg'
+! exists grammar-state

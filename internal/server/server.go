@@ -7,9 +7,9 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
-	"sync/atomic"
 	"time"
 
+	"github.com/tmc/skygo/internal/artifact"
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
@@ -20,7 +20,23 @@ import (
 
 // Config selects durable storage, HTTP exposure, and execution targets.
 type Config struct {
-	DisableLocal                                  bool
+	DisableLocal bool
+
+	// Artifacts is an optional actual marker-verified service installed while
+	// stopped. The caller owns Files and its borrowed root. HTTP completion
+	// alone does not prove its descriptors or Control operations have drained.
+	// No endpoint or target workspace capability follows from this pointer.
+	Artifacts *artifact.Files
+
+	// RecoverStoppedArtifactReaders acknowledges that ALL historical producers
+	// had no surviving descriptor copy/use and the same-domain kernel is qualified.
+	// It is restricted to isolated artifact-only/no-child/no-transfer deployments.
+	RecoverStoppedArtifactReaders bool
+
+	// ArtifactDir opens an existing initialized private root matching Store.
+	// It is mutually exclusive with Artifacts and never initializes a root.
+	// Only this owned route configures the built-in local workspace target.
+	ArtifactDir                                   string
 	DataDir, Listen, Token, AuthFile, TargetFacts string
 
 	// Targets constructs additional targets using the persistent installation ID.
@@ -31,7 +47,37 @@ type Config struct {
 
 // Run serves until cancellation, rejects new work before draining, and closes
 // local processes. Kubernetes workloads remain independent of server lifetime.
-func Run(ctx context.Context, cfg Config) (result error) {
+func Run(ctx context.Context, cfg Config) error {
+	frame := &serverRun{}
+	if err := frame.start(ctx, cfg); err != nil {
+		return frame.closeStartup(err)
+	}
+	var cause error
+	select {
+	case <-ctx.Done():
+	case <-frame.runDone:
+		cause = frame.runErr
+		if cause == nil {
+			cause = errors.New("control returned before shutdown")
+		}
+	case <-frame.serveDone:
+		cause = frame.serveErr
+		if errors.Is(cause, http.ErrServerClosed) {
+			cause = nil
+		}
+	}
+	return frame.shutdown(cause)
+}
+
+// start publishes all original resources into one frame before the next stage.
+// No caller cancellation is inherited by Run, authentication or HTTP handlers.
+func (f *serverRun) start(ctx context.Context, cfg Config) error {
+	if cfg.RecoverStoppedArtifactReaders && cfg.ArtifactDir == "" && cfg.Artifacts == nil {
+		return errors.New("stopped artifact reader recovery requires artifacts")
+	}
+	if cfg.ArtifactDir != "" && cfg.Artifacts != nil {
+		return errors.New("artifact directory conflicts with borrowed files")
+	}
 	if cfg.AuthFile != "" && cfg.Token != "" {
 		return errors.New("auth file conflicts with legacy token")
 	}
@@ -53,11 +99,34 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return err
 		}
 	}
+	f.cfg = cfg
+	if cfg.ArtifactDir != "" || cfg.Artifacts != nil {
+		f.lifetime, f.captureErr = local.CaptureServerLifetime()
+		if err := acceptServerLifetime(f.lifetime, f.captureErr); err != nil {
+			return err
+		}
+	}
+	if cfg.RecoverStoppedArtifactReaders && (f.captureErr != nil || f.lifetime.NamespaceDevice == 0 || f.lifetime.StartTicks == 0) {
+		return errors.New("stopped artifact reader recovery requires a strict known server lifetime")
+	}
 	s, err := store.Open(cfg.DataDir)
 	if err != nil {
-		return err
+		// Store returns no original on failure. Preserve its whole error chain;
+		// dependency-hidden cleanup/lock state supplies no retry authority.
+		return f.hold("state acquisition failed", err)
 	}
-	defer func() { result = errors.Join(result, s.Close()) }()
+	f.store = s
+	f.files = cfg.Artifacts
+	if cfg.ArtifactDir != "" {
+		if err := f.openArtifacts(cfg.ArtifactDir); err != nil {
+			return err
+		}
+	}
+	if f.files != nil {
+		if err := f.preflightArtifacts(); err != nil {
+			return err
+		}
+	}
 	if s.Scoped() != (cfg.AuthFile != "") {
 		return errors.New("scoped state requires its auth file; activate legacy state with auth init first")
 	}
@@ -68,6 +137,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return fmt.Errorf("load authentication: %w", err)
 		}
 	}
+	f.engine = engine
 	var targets []backend.Target
 	var localBinding string
 	var localOutput control.LocalOutputConfig
@@ -111,7 +181,7 @@ func Run(ctx context.Context, cfg Config) (result error) {
 				return err
 			}
 		}
-		defer func() { result = errors.Join(result, localBackend.Close()) }()
+		f.localBackend = localBackend
 		target := backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding, SupportsRetry: localBackend.SupportsRetry()}
 		if retentionEnabled {
 			target.OutputStorage = backend.LocalOutput
@@ -127,13 +197,19 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		targets = append(targets, extra...)
 	}
+	f.targets = targets
 	if err := attachTargetFacts(facts, targets); err != nil {
 		return err
 	}
-	c, err := control.NewWithLocalOutput(s, targets, engine, localOutput)
+	config := control.Config{RecoverStoppedArtifactReaders: cfg.RecoverStoppedArtifactReaders, LocalBackend: f.localBackend, ServerLifetime: f.lifetime, LocalOutput: localOutput, Artifacts: f.files}
+	if f.root != nil && f.localBackend != nil {
+		config.LocalWorkspace = &control.LocalWorkspaceConfig{Target: "local", Binding: localBinding, Backend: f.localBackend, Roots: f.root}
+	}
+	c, err := control.NewWithConfig(s, targets, engine, config)
 	if err != nil {
 		return err
 	}
+	f.control = c
 	// Only the built-in backend constructed above authorizes legacy local binding.
 	if localBinding != "" {
 		if err := s.BindLegacyLocal(localBinding); err != nil {
@@ -154,7 +230,8 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	if err != nil {
 		return fmt.Errorf("listen: %w", err)
 	}
-	var ready atomic.Bool
+	f.listener = &serverListener{Listener: listener}
+	ready := &f.ready
 	mux := http.NewServeMux()
 	mux.HandleFunc("/startup", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("/live", func(w http.ResponseWriter, r *http.Request) {
@@ -174,7 +251,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	api := rpc.NewHandler(c, engine)
+	rpcHTTP := rpc.NewHandler(c, engine)
+	f.rpcHTTP = rpcHTTP
+	var api http.Handler = rpcHTTP
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !ready.Load() || !c.Healthy() {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
@@ -182,62 +261,25 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		api.ServeHTTP(w, r)
 	}))
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	authDone := make(chan struct{})
+	f.outer = newArtifactHTTPDrain(mux)
+	base := context.WithoutCancel(ctx)
+	runCtx, cancelRun := context.WithCancel(base)
+	authCtx, cancelAuth := context.WithCancel(base)
+	f.cancelRun, f.cancelAuth = cancelRun, cancelAuth
+	f.authDone = make(chan struct{})
 	if cfg.AuthFile != "" {
-		go func() { defer close(authDone); engine.Run(runCtx) }()
+		go func() { defer close(f.authDone); engine.Run(authCtx) }()
 	} else {
-		close(authDone)
+		close(f.authDone)
 	}
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return runCtx }}
-	reconciled := make(chan error, 1)
-	runDone := make(chan struct{})
-	served := make(chan error, 1)
-	go func() { defer close(runDone); reconciled <- c.Run(runCtx) }()
+	f.http = &http.Server{Handler: f.outer, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return base }}
+	f.runDone, f.serveDone = make(chan struct{}), make(chan struct{})
+	go func() { defer close(f.runDone); f.runErr = c.Run(runCtx) }()
 	ready.Store(true)
-	go func() { served <- srv.Serve(listener) }()
-	select {
-	case <-ctx.Done():
-	case err := <-reconciled:
-		if ctx.Err() == nil || !errors.Is(err, ctx.Err()) {
-			result = err
-		}
-	case err := <-served:
-		if !errors.Is(err, http.ErrServerClosed) {
-			result = err
-		}
-	}
-	ready.Store(false)
-	cancel()
-	drain, stop := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stop()
-	if err := srv.Shutdown(drain); err != nil {
-		_ = srv.Close()
-		if result == nil {
-			result = err
-		}
-	}
-	select {
-	case <-authDone:
-	case <-drain.Done():
-		if result == nil {
-			result = errors.New("authentication refresh shutdown timed out")
-		}
-	}
-	// Canceling runCtx bounds backend I/O; await the loop before closing its store.
-	select {
-	case <-runDone:
-	case <-time.After(11 * time.Second):
-		if result == nil {
-			result = errors.New("reconciler shutdown timed out")
-		}
-	}
-	return result
+	go func() { defer close(f.serveDone); f.serveErr = f.http.Serve(f.listener) }()
+	return nil
 }
 
-// retainedOutputs transfers only store-validated identities. File names never
-// grant ownership or closure, and the absolute domain bound also limits startup.
 func retainedOutputs(s *store.Store) ([]backend.OutputReference, error) {
 	var outputs []backend.OutputReference
 	var after string

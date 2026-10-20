@@ -1,0 +1,43 @@
+# Required acknowledgement and grammar fail before any state/root mutation.
+! skygo state artifacts init --data-dir untouched --artifact-dir absent
+stderr 'requires --ack-writers-stopped'
+! exists untouched
+! exists absent
+! skygo state artifacts init --data-dir untouched --ack-writers-stopped
+stderr 'required flag.*artifact-dir'
+! exists untouched
+
+# The real stopped initializer and its persisted readback use no remote auth.
+mkdir root
+chmod 0700 root
+skygo --json state artifacts init --data-dir state --artifact-dir root --ack-writers-stopped
+stdout '^\{"enabled":true,"policy":"default-v1","restart_required":true\}\n$'
+! stderr .
+exists root/.skygo-artifact-root
+exists state/jobs.db
+
+# An installed state refuses before touching a different empty root.
+mkdir other
+chmod 0700 other
+! skygo state artifacts init --data-dir state --artifact-dir other --ack-writers-stopped
+stderr '^artifact initialization: already installed\n$'
+! exists other/.skygo-artifact-root
+
+# A nonempty operator root is not adopted or cleaned.
+mkdir nonempty
+chmod 0700 nonempty
+cp kept.txt nonempty/kept
+! skygo state artifacts init --data-dir second-state --artifact-dir nonempty --ack-writers-stopped
+stderr '^artifact initialization: initialize root marker\n$'
+cmp nonempty/kept kept.txt
+! exists nonempty/.skygo-artifact-root
+
+# Text readback has the same three public facts and no root identity/path.
+mkdir text-root
+chmod 0700 text-root
+skygo state artifacts init --data-dir text-state --artifact-dir text-root --ack-writers-stopped
+stdout '^enabled: true\npolicy: default-v1\nrestart_required: true\n$'
+! stderr .
+
+-- kept.txt --
+original evidence

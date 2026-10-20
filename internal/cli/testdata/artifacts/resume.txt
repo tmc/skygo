@@ -1,0 +1,37 @@
+server start
+# A status acknowledgment is a fence. The CLI replays the identical write and
+# requires its actual response, without beginning another upload.
+fault write-lost
+skygo artifacts upload source
+cp stdout first.json
+calls ok:BeginArtifactUpload 1
+calls ok:WriteArtifactChunk 2
+calls GetArtifactUpload 1
+# A completed Finalize response is lost; automatic recovery replays the same ID.
+fault finalize-lost
+skygo artifacts upload source
+cp stdout second.json
+upload-id UPLOAD
+cp source/seed.txt original.txt
+cp changed.txt source/seed.txt
+! skygo artifacts upload source --resume $UPLOAD
+stderr 'does not match the snapshot'
+calls ok:WriteArtifactChunk 3
+cp original.txt source/seed.txt
+skygo artifacts upload source --resume $UPLOAD
+cp stdout resumed.json
+cmp second.json resumed.json
+skygo artifacts download --ref resumed.json restored
+cmp original.txt restored/seed.txt
+calls ok:BeginArtifactUpload 2
+calls GetArtifactUpload 3
+calls ok:WriteArtifactChunk 3
+# Finalize can also return Busy for its first publishing transition; its exact
+# count depends on real physical sampling, so only the stable ID/ref is asserted.
+calls SubmitWorkspaceJob 0
+server stop
+! stderr .
+-- source/seed.txt --
+seed
+-- changed.txt --
+changed

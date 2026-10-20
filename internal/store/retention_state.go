@@ -385,35 +385,40 @@ func freshenRestored(path string) error {
 	if e = db.View(validateSnapshot); e != nil {
 		return e
 	}
+	now := time.Now().UTC()
 	return db.Update(func(tx *bolt.Tx) error {
-		if schemaNumber(tx) < 5 {
-			return nil
-		}
-		st, e := loadRetention(tx)
-		if e != nil {
-			return e
-		}
-		if !st.Enabled {
-			return nil
-		}
-		now := time.Now().UTC()
-		if st.LineageSerial == ^uint64(0) {
-			return errors.New("lineage issuance exhausted")
-		}
-		st.LineageSerial++
-		st.Lineage = lineage
-		st.Current = 1
-		st.RetiredThrough = 0
-		st.LegacyReplayOpen = false
-		st.LegacyCutoff = now
-		st.Restored = true
-		st.Epochs = []requestEpoch{{Number: 1, AcceptUntil: now.Add(st.Policy.Window), RetryUntil: now.Add(2 * st.Policy.Window)}}
-		if e = putJSON(retentionRoot(tx), retentionStateKey, st); e != nil {
-			return e
-		}
-		return validateRetention(tx)
+		return freshenRestoredTx(tx, lineage, now)
 	})
 }
+
+func freshenRestoredTx(tx *bolt.Tx, lineage string, now time.Time) error {
+	if schemaNumber(tx) < 5 {
+		return nil
+	}
+	st, e := loadRetention(tx)
+	if e != nil {
+		return e
+	}
+	if !st.Enabled {
+		return nil
+	}
+	if st.LineageSerial == ^uint64(0) {
+		return errors.New("lineage issuance exhausted")
+	}
+	st.LineageSerial++
+	st.Lineage = lineage
+	st.Current = 1
+	st.RetiredThrough = 0
+	st.LegacyReplayOpen = false
+	st.LegacyCutoff = now
+	st.Restored = true
+	st.Epochs = []requestEpoch{{Number: 1, AcceptUntil: now.Add(st.Policy.Window), RetryUntil: now.Add(2 * st.Policy.Window)}}
+	if e = putJSON(retentionRoot(tx), retentionStateKey, st); e != nil {
+		return e
+	}
+	return validateRetention(tx)
+}
+
 func syncDirectory(dir string) error {
 	f, e := os.Open(dir)
 	if e != nil {

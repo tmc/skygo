@@ -21,24 +21,69 @@ var validID = regexp.MustCompile(`^[0-9a-f]{32}$`)
 
 // Backend owns programs launched during one server lifetime. Use New to create one.
 type Backend struct {
-	mu             sync.Mutex
-	directory      string
-	jobs           map[string]*execution
-	closed         bool
-	retryOps       retryProcessOps
-	retryAvailable bool
-	defaultOps     defaultProcessOps
-	retention      *retentionState
+	mu        sync.Mutex
+	directory string
+	jobs      map[string]*execution
+	closed    bool
+	// One failed pre-execution Close blocks further ordinary output creation.
+	// These retain the original Go owner/error, not a recoverable numeric FD.
+	unstartedOutput    *output
+	unstartedOutputErr error
+	// The first uncertain public log-reader Close blocks opens and removal.
+	logReaderErr        *logReaderCloseError
+	retryOps            retryProcessOps
+	retryAvailable      bool
+	defaultOps          defaultProcessOps
+	retention           *retentionState
+	workspaces          *workspaceState
+	workspaceCleanupOps workspaceCleanupOps
 }
 
 type execution struct {
-	cmd      *exec.Cmd
-	status   backend.Status
-	done     chan struct{}
-	output   *output
-	retry    *retryExecution
-	owned    *defaultExecution
-	retained *retainedOutput
+	cmd       *exec.Cmd
+	status    backend.Status
+	done      chan struct{}
+	output    *output
+	retry     *retryExecution
+	owned     *defaultExecution
+	retained  *retainedOutput
+	workspace *workspaceExecution
+	phase     *workspacePhase
+	// workspaceClosed records positive original Local producer/cleanup-handle
+	// closure before detachment, under Backend.mu; no namespace/Store credit.
+	workspaceClosed bool
+	// Final ordinary execution snapshot, guarded by Backend.mu. Diagnostics
+	// survive payload shedding independently of positive physical closure.
+	shutdownPublished, shutdownClosed bool
+	shutdownErr                       error
+	stdioWriter                       *os.File
+	stdioWriterErr                    error
+	readerCloseOnce                   sync.Once
+	readerCloseErr                    error
+}
+
+// closeReader closes the one original pipe reader at most once. Competing
+// waiter/pump callers must not hold Backend.mu while joining the same Close.
+// A cached error retains the original Go owner, not a recoverable numeric FD.
+func (e *execution) closeReader() error {
+	e.readerCloseOnce.Do(func() {
+		if e.owned != nil {
+			e.readerCloseErr = e.owned.reader.Close()
+		} else {
+			e.readerCloseErr = e.retry.reader.Close()
+		}
+	})
+	return e.readerCloseErr
+}
+
+// closeWriter is called only by the original startup owner before producers
+// launch. An uncertain original Close is never retried or discarded.
+func (e *execution) closeWriter() error {
+	e.stdioWriterErr = e.stdioWriter.Close()
+	if e.stdioWriterErr == nil {
+		e.stdioWriter = nil
+	}
+	return e.stdioWriterErr
 }
 
 type output struct {
@@ -49,6 +94,7 @@ type output struct {
 	truncated      bool
 	err            error
 	markerCloseErr error
+	markerFile     *os.File
 	closed         bool
 	retained       *retainedOutput
 }
@@ -69,6 +115,12 @@ func New(directory string) (*Backend, error) {
 
 // Check rejects requirements that local processes cannot enforce.
 func (b *Backend) Check(t backend.Task) error {
+	if err := backend.ValidateWorkspace(t); err != nil {
+		return err
+	}
+	if t.Workdir != nil && !b.SupportsWorkspace() {
+		return errors.New("local workspace ownership is unavailable")
+	}
 	policy, err := backend.NormalizeRetry(t.Retry)
 	if err != nil {
 		return err
@@ -115,6 +167,9 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if err := b.Check(t); err != nil {
 		return err
 	}
+	if t.Workdir != nil {
+		return b.startWorkspace(ctx, id, t)
+	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -125,6 +180,9 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	}
 	if b.closed {
 		return errors.New("local backend is closed")
+	}
+	if b.unstartedOutput != nil {
+		return fmt.Errorf("local output close remains held: %w", b.unstartedOutputErr)
 	}
 	if _, ok := b.jobs[id]; ok {
 		return errors.New("job already started")
@@ -142,8 +200,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 		out.retained = b.retention.outputs[id]
 		info, err := f.Stat()
 		if err != nil {
-			b.closeUnstartedOutput(out)
-			return fmt.Errorf("identify output file: %w", err)
+			return errors.Join(fmt.Errorf("identify output file: %w", err), b.closeUnstartedOutput(out))
 		}
 		out.retained.log = info
 	}
@@ -166,6 +223,9 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 func (b *Backend) stop(e *execution, state backend.State, reason string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if e.workspace != nil {
+		return b.stopWorkspace(e.workspace, state, reason)
+	}
 	if e.retry != nil {
 		select {
 		case <-e.done:
@@ -198,12 +258,18 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 	if err := checkInstance(e, ref.Instance); err != nil {
 		return backend.Status{}, err
 	}
+	if e.workspace != nil && !e.workspace.committed {
+		return backend.Status{State: backend.Running, Instance: e.status.Instance}, nil
+	}
 	select {
 	case <-e.done:
 	default:
 		return backend.Status{State: backend.Running, Instance: e.status.Instance}, nil
 	}
 	s := e.status
+	// Bound the public diagnostic independently of original-owner custody.
+	// The held execution and its exact errors remain unchanged.
+	s.Reason = strings.Clone(retryReason(s.Reason))
 	if s.ExitCode != nil {
 		code := *s.ExitCode
 		s.ExitCode = &code
@@ -235,29 +301,87 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	return b.stop(e, backend.Canceled, "canceled by operator")
 }
 
-// Close kills owned groups and waits at most three seconds for their reaping.
+// Close kills owned groups and uses a three-second timer for execution joins.
+// Mutex acquisition, file I/O and cancellation callbacks have no time bound.
+// An uncertain original log-reader Close remains held and is not retried.
+// Workspace roots retain original ownership until explicit cleanup; Ready or a
+// durable completion acknowledgement alone cannot make their drain successful.
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	b.closed = true
+	var unstarted []func()
+	if b.workspaces != nil {
+		for _, w := range b.workspaces.bindings {
+			if w.parent == nil && w.release != nil {
+				unstarted = append(unstarted, w.release)
+				w.release = nil
+				w.startAttempted = true
+			}
+		}
+	}
 	jobs := make([]*execution, 0, len(b.jobs))
 	for _, e := range b.jobs {
 		jobs = append(jobs, e)
 	}
 	b.mu.Unlock()
+	for _, release := range unstarted {
+		release()
+	} // no materializer or filesystem owner was installed
 	var result error
+	b.mu.Lock()
+	result = errors.Join(result, b.unstartedOutputErr)
+	if b.logReaderErr != nil {
+		result = errors.Join(result, b.logReaderErr)
+	}
+	if b.workspaces != nil {
+		for _, c := range b.workspaces.cleanupFrames {
+			if c.busy || c.owned {
+				result = errors.Join(result, errors.New("workspace root cleanup remains pending"))
+			}
+			if c.closeHeld {
+				result = errors.Join(result, errors.New("workspace ownership remains held"))
+			}
+		}
+	}
+	b.mu.Unlock()
 	for _, e := range jobs {
-		result = errors.Join(result, b.stop(e, backend.Canceled, "server shutting down"))
+		err := b.stop(e, backend.Canceled, "server shutting down")
+		// Ordinary owners cache their first delivery cause. Report it only if
+		// the actual joined physical snapshot remains held, not merely because
+		// a later positively resolved delivery once returned a diagnostic.
+		if e.owned == nil && e.retry == nil {
+			result = errors.Join(result, err)
+		}
 	}
 	timer := time.NewTimer(3 * time.Second)
 	defer timer.Stop()
 	for _, e := range jobs {
 		select {
 		case <-e.done:
-			if e.owned != nil {
-				b.mu.Lock()
-				result = errors.Join(result, e.owned.cleanupErr)
-				b.mu.Unlock()
+			if e.output != nil {
+				e.output.mu.Lock()
+				result = errors.Join(result, e.output.markerCloseErr)
+				e.output.mu.Unlock()
 			}
+			b.mu.Lock()
+			if w := e.workspace; w != nil {
+				if w.root != nil || w.directory != nil || w.rootAttempted && (!w.created || w.rootErr != nil) || w.cleanupOwned || w.cleanupBusy {
+					result = errors.Join(result, errors.New("workspace root cleanup remains pending"))
+				}
+				if w.observation.Held || w.cleanup != nil && w.cleanup.closeHeld {
+					result = errors.Join(result, errors.New("workspace ownership remains held"))
+				}
+			}
+			b.mu.Unlock()
+			b.mu.Lock()
+			if e.owned != nil || e.retry != nil {
+				if !e.shutdownPublished || !e.shutdownClosed {
+					result = errors.Join(result, errors.New("local execution ownership remains held"), e.shutdownErr)
+				}
+			} else if e.workspace == nil && !e.workspaceClosed {
+				result = errors.Join(result, errors.New("local workspace closure receipt is unavailable"))
+			}
+			b.mu.Unlock()
 			if e.retry != nil {
 				select {
 				case <-e.retry.reaped:
@@ -266,6 +390,14 @@ func (b *Backend) Close() error {
 				}
 			}
 		case <-timer.C:
+			b.mu.Lock()
+			for _, pending := range jobs {
+				result = errors.Join(result, pending.shutdownErr)
+				if pending.owned != nil && !pending.shutdownPublished {
+					result = errors.Join(result, pending.owned.cleanupErr)
+				}
+			}
+			b.mu.Unlock()
 			return errors.Join(result, errors.New("timed out waiting for local processes or output cleanup"))
 		}
 	}
@@ -290,26 +422,67 @@ func (o *output) Write(p []byte) (int, error) {
 	}
 	if int64(n) > keep && !o.truncated {
 		o.truncated = true
-		if o.retained == nil {
-			o.err = os.WriteFile(o.marker, []byte("truncated\n"), 0600)
-		} else {
-			f, err := os.OpenFile(o.marker, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-			if err == nil {
-				_, err = f.Write([]byte("truncated\n"))
-				info, statErr := f.Stat()
-				closeErr := f.Close()
-				o.markerCloseErr = closeErr
-				o.retained.marker = info
-				err = errors.Join(err, statErr, closeErr)
-			}
-			o.err = err
+		flags := os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+		if o.retained != nil {
+			flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
 		}
+		f, err := os.OpenFile(o.marker, flags, 0600)
+		if err == nil {
+			o.markerFile = f
+			_, writeErr := f.Write([]byte("truncated\n"))
+			var statErr error
+			if o.retained != nil {
+				o.retained.marker, statErr = f.Stat()
+			}
+			err = errors.Join(writeErr, statErr, o.closeMarker())
+		}
+		o.err = err
 	}
 	return n, nil
 }
 
-// Logs reads the retained combined output prefix without blocking execution.
-func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64, limit int) (backend.LogChunk, error) {
+// closeMarker holds o.mu and never retries an uncertain original Close. The
+// retained *os.File does not promise that Go kept its internal descriptor open.
+func (o *output) closeMarker() error {
+	if o.markerCloseErr != nil || o.markerFile == nil {
+		return o.markerCloseErr
+	}
+	o.markerCloseErr = o.markerFile.Close()
+	if o.markerCloseErr == nil {
+		o.markerFile = nil
+	}
+	return o.markerCloseErr
+}
+
+// logReaderCloseError retains the original Go file and first Close cause.
+// It does not establish whether an underlying native descriptor remains open.
+type logReaderCloseError struct {
+	file *os.File
+	err  error
+}
+
+func (e *logReaderCloseError) Error() string { return "close log reader: " + e.err.Error() }
+func (e *logReaderCloseError) Unwrap() error { return e.err }
+
+// finishLogReader holds b.mu. Its caller owns one original Close attempt;
+// admission has already excluded a previous held reader. Never retry it.
+func (b *Backend) finishLogReader(f *os.File, chunk *backend.LogChunk, result *error) {
+	if b.logReaderErr != nil {
+		*chunk = backend.LogChunk{}
+		*result = errors.Join(*result, b.logReaderErr)
+		return
+	}
+	if err := f.Close(); err != nil {
+		b.logReaderErr = &logReaderCloseError{file: f, err: err}
+		*chunk = backend.LogChunk{}
+		*result = errors.Join(*result, b.logReaderErr)
+	}
+}
+
+// Logs reads the retained combined output prefix. Reads serialize with Backend
+// operations after Observe; file I/O and mutex acquisition have no time bound.
+// Close or an uncertain reader Close prevents further opens.
+func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64, limit int) (chunk backend.LogChunk, result error) {
 	id := ref.ID
 	if err := ctx.Err(); err != nil {
 		return backend.LogChunk{}, err
@@ -324,11 +497,20 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if err != nil {
 		return backend.LogChunk{}, err
 	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return backend.LogChunk{}, err
+	}
+	if b.logReaderErr != nil {
+		return backend.LogChunk{}, b.logReaderErr
+	}
+	if b.closed {
+		return backend.LogChunk{}, errors.New("local backend is closed")
+	}
 	var expected, expectedMarker os.FileInfo
 	var closedDomain bool
 	if b.retention != nil {
-		b.mu.Lock()
-		defer b.mu.Unlock()
 		if err := b.checkOutputRoot(); err != nil {
 			return backend.LogChunk{}, err
 		}
@@ -356,7 +538,7 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if err != nil {
 		return backend.LogChunk{}, fmt.Errorf("open output: %w", err)
 	}
-	defer f.Close()
+	defer b.finishLogReader(f, &chunk, &result)
 	info, err := f.Stat()
 	if err != nil {
 		return backend.LogChunk{}, err

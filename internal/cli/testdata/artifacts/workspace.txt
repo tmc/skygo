@@ -1,0 +1,38 @@
+server start
+# Darwin advertises no Local workspace capability; refusal is explicit.
+[GOOS:darwin] ! skygo info --target local --require workdir-snapshot-v1
+[GOOS:darwin] stderr 'target "local" does not advertise workdir-snapshot-v1'
+[GOOS:darwin] calls SubmitWorkspaceJob 0
+[GOOS:darwin] ! exists native-marker
+[GOOS:linux] skygo artifacts upload source
+[GOOS:linux] cp stdout input.json
+[GOOS:linux] artifact-task input.json task.json
+[GOOS:linux] skygo --json run -f task.json --request-id artifact-workspace --wait
+[GOOS:linux] cp stdout job.json
+[GOOS:linux] stderr 'request-id: artifact-workspace'
+[GOOS:linux] exists native-marker
+[GOOS:linux] artifact-result job.json result.json
+[GOOS:linux] skygo artifacts download --ref result.json result
+[GOOS:linux] cmp expected.txt result/out/result.txt
+# Existing replay must not inspect/reupload the missing local input or execute
+# setup/program again; the native helper refuses a second exclusive marker.
+[GOOS:linux] rm source/seed.txt
+[GOOS:linux] server stop
+[GOOS:linux] ! stderr .
+[GOOS:linux] server start
+[GOOS:linux] skygo --json run -f task.json --request-id artifact-workspace --wait
+[GOOS:linux] cp stdout replayed.json
+[GOOS:linux] cmp job.json replayed.json
+[GOOS:linux] calls SubmitWorkspaceJob 2
+[GOOS:linux] calls ok:BeginArtifactUpload 1
+[GOOS:linux] calls PlanTask 0
+[GOOS:linux] calls SubmitJob 0
+[GOOS:linux] calls SubmitRetryJob 0
+[GOOS:linux] calls SubmitRetainedJob 0
+server stop
+! stderr .
+-- source/seed.txt --
+seed
+-- expected.txt --
+seed
+prepared

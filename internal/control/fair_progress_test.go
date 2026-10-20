@@ -217,7 +217,7 @@ func TestRunCannotReplaceContextIgnoringWorker(t *testing.T) {
 	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
-	} // Workers never own the store.
+	} // This blocked backend callback does not use the store.
 	close(bad.release)
 	waitValue(t, bad.exited)
 }
@@ -350,14 +350,18 @@ func TestWorkerDoesNotBlockOnAbandonedResults(t *testing.T) {
 	b := newBlockedBackend()
 	ctx, cancel := context.WithCancel(context.Background())
 	input := make(chan operation, 1)
-	results := make(chan operationResult) // No receiver after cancellation.
+	results := make(chan operationResult, 1) // The production one-pending bound.
 	done := make(chan struct{})
 	go func() { defer close(done); runWorker(ctx, b, input, results) }()
 	input <- operation{kind: observeOperation, job: backend.Job{ID: "one"}}
 	waitValue(t, b.entered)
 	cancel()
+	close(input)
 	close(b.release)
 	waitValue(t, done)
+	if result := waitValue(t, results); result.operation.job.ID != "one" || result.status.State != backend.Running {
+		t.Fatal("original returned observation was discarded", result)
+	}
 }
 
 func TestForeignResultCannotClearPendingIdentity(t *testing.T) {

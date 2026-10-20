@@ -40,15 +40,18 @@ func (c *Control) Prune(ctx context.Context, actor auth.Actor, selection store.P
 	if err != nil {
 		return store.PrunePage{}, "", err
 	}
-	if selection.Mode > store.OutputOnly || selection.Limit < 0 || selection.Limit > 100 || (selection.Mode == store.MetadataOnly) != selection.AcknowledgeUnverifiedTerminal || selection.After != 0 || selection.Max != 0 {
+	if selection.Mode > store.ResultOnly || selection.Limit < 0 || selection.Limit > 100 || (selection.Mode == store.MetadataOnly) != selection.AcknowledgeUnverifiedTerminal || selection.After != 0 || selection.Max != 0 || (selection.Mode == store.ResultOnly) != (selection.Attempt != 0) {
 		return store.PrunePage{}, "", fmt.Errorf("%w: invalid prune selection", ErrInvalid)
 	}
 	if selection.ObligationID != "" {
-		if !jobName.MatchString(selection.ObligationID) || selection.Mode != store.OutputOnly || !selection.Before.IsZero() || selection.Limit != 0 || token != "" {
+		if !jobName.MatchString(selection.ObligationID) || (selection.Mode != store.OutputOnly && selection.Mode != store.ResultOnly) || !selection.Before.IsZero() || selection.Limit != 0 || token != "" {
 			return store.PrunePage{}, "", fmt.Errorf("%w: invalid obligation selector", ErrInvalid)
 		}
 	} else if selection.Before.IsZero() || selection.Before.Year() < 1 || selection.Before.Year() > 9999 {
 		return store.PrunePage{}, "", fmt.Errorf("%w: invalid prune cutoff", ErrInvalid)
+	}
+	if selection.Mode == store.ResultOnly {
+		return c.pruneArtifactResults(ctx, actor, selection, execute, token)
 	}
 	c.retention.mu.Lock()
 	if c.retention.inspecting {

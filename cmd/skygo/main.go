@@ -25,6 +25,6 @@ func main() {
 
 func command(run func(context.Context, server.Config) error) *cobra.Command {
 	return cli.New(func(ctx context.Context, o cli.ServerOptions) error {
-		return run(ctx, server.Config{DisableLocal: o.DisableLocal, DataDir: o.DataDir, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts})
+		return run(ctx, server.Config{DisableLocal: o.DisableLocal, DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts})
 	})
 }

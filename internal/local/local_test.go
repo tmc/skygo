@@ -204,9 +204,11 @@ func TestInheritedOutputPipes(t *testing.T) {
 }
 
 func TestOutputRetentionFailure(t *testing.T) {
-	b := newBackend(t)
+	f := newExecutionFixture(t, false)
+	f.held = true
+	b := f.backend
 	id := strings.Repeat("f", 32)
-	release := filepath.Join(t.TempDir(), "release")
+	release := filepath.Join(f.directory, "release")
 	task := task("retention")
 	task.Env["SKYGO_RELEASE"] = release
 	if err := b.Start(context.Background(), id, task); err != nil {
@@ -228,6 +230,9 @@ func TestOutputRetentionFailure(t *testing.T) {
 	s := completed(t, b, id)
 	if s.State != backend.Failed || !strings.HasPrefix(s.Reason, "retain output: ") {
 		t.Fatalf("status = %+v", s)
+	}
+	if err := f.close(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("original log Close uncertainty lost: %v", err)
 	}
 }
 

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	"github.com/tmc/skygo/internal/artifact"
 )
 
 // Task describes one program. Zero resource quantities mean unspecified.
@@ -23,6 +25,9 @@ type Task struct {
 	TargetLabels     map[string]string `json:"target_labels,omitempty" yaml:"target_labels,omitempty"`
 	NodeSelector     map[string]string `json:"node_selector,omitempty" yaml:"node_selector,omitempty"`
 	Retry            *RetryPolicy      `json:"retry,omitempty" yaml:"retry,omitempty"`
+	Workdir          *artifact.Ref     `json:"workdir,omitempty" yaml:"workdir,omitempty"`
+	Setup            []string          `json:"setup,omitempty" yaml:"setup,omitempty"`
+	Outputs          []string          `json:"outputs,omitempty" yaml:"outputs,omitempty"`
 }
 
 // State records an observed execution state. Unknown does not imply termination.

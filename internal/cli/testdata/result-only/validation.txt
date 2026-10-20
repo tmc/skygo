@@ -1,0 +1,18 @@
+# Every refusal is local; the suite's counted HTTP endpoint must see zero calls.
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only
+stderr '--result-only requires --attempt N greater than zero'
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only --attempt 0
+! skygo jobs prune --before 2030-01-02T03:04:05Z --attempt 1
+! skygo jobs prune --before 2030-01-02T03:04:05Z --attempt 0
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only --attempt -1
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only --attempt 4294967296
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only --attempt 1 --logs-only
+stderr 'choose only one'
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only --attempt 1 --metadata-only --ack-unverified-terminal
+! skygo jobs prune --before 2030-01-02T03:04:05Z --result-only --attempt 1 --ack-unverified-terminal
+! skygo jobs prune --result-only --attempt 1
+stderr 'prune requires --before'
+! skygo jobs prune --result-only --attempt 1 --obligation 11111111111111111111111111111111 --page-size 1
+stderr '--obligation requires'
+! skygo jobs prune --result-only --attempt 1 --obligation 11111111111111111111111111111111 --before 2030-01-02T03:04:05Z
+! skygo jobs prune --result-only --attempt 1 --obligation 11111111111111111111111111111111 --page-token opaque

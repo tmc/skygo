@@ -70,9 +70,13 @@ func (s *Store) BeginAttempt(jobID, expectedAttemptID string, outputReserve uint
 	if err != nil {
 		return j, false, err
 	}
+	resultCandidate, err := newID()
+	if err != nil {
+		return j, false, err
+	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		var e error
-		j, start, e = beginAttempt(tx, jobID, expectedAttemptID, candidate, outputReserve, now.UTC())
+		j, start, e = beginAttempt(tx, jobID, expectedAttemptID, candidate, resultCandidate, outputReserve, now.UTC())
 		return e
 	})
 	if err != nil {
@@ -81,7 +85,36 @@ func (s *Store) BeginAttempt(jobID, expectedAttemptID string, outputReserve uint
 	return
 }
 
-func beginAttempt(tx *bolt.Tx, id, expected, candidate string, outputReserve uint64, now time.Time) (j backend.Job, start bool, err error) {
+func beginAttempt(tx *bolt.Tx, id, expected, candidate, resultCandidate string, outputReserve uint64, now time.Time) (j backend.Job, start bool, err error) {
+	j, err = get(tx, id)
+	if err != nil || j.CurrentAttemptID() != expected {
+		return
+	}
+	if j.Task.Workdir == nil || j.CancelRequested || now.IsZero() || j.Status.State != backend.Queued && j.Status.State != backend.Retrying || j.Status.State == backend.Retrying && (j.NextAttemptAt == nil || now.Before(*j.NextAttemptAt)) {
+		return beginAttemptCore(tx, id, expected, candidate, outputReserve, now)
+	}
+	_, err = artifactCoreChange(tx, artifactAttemptLedger(tx, id, candidate), maxChangeBytes, 100, func(st *artifactState) error {
+		if used := artifactCompletionCount(st); used >= 1024 {
+			return &ArtifactCapacityError{Domain: "completion records", Used: uint64(used), Limit: 1024}
+		}
+		var e error
+		j, start, e = beginAttemptCore(tx, id, expected, candidate, outputReserve, now)
+		if e != nil || !start {
+			return e
+		}
+		resultID := ""
+		if len(j.Task.Outputs) != 0 {
+			resultID = resultCandidate
+		}
+		return artifactBeginWorkspace(tx, st, id, j.CurrentAttemptID(), resultID, len(j.Task.Outputs) != 0, now)
+	})
+	if err != nil {
+		start = false
+	}
+	return
+}
+
+func beginAttemptCore(tx *bolt.Tx, id, expected, candidate string, outputReserve uint64, now time.Time) (j backend.Job, start bool, err error) {
 	j, err = get(tx, id)
 	if err != nil || j.CurrentAttemptID() != expected {
 		return
@@ -160,6 +193,50 @@ func (s *Store) ObserveAttempt(jobID, expectedAttemptID string, status backend.S
 
 func observeAttempt(tx *bolt.Tx, id, expected string, status backend.Status, now time.Time) (backend.Job, error) {
 	j, err := get(tx, id)
+	if err != nil || j.CurrentAttemptID() != expected || j.Status.State.Terminal() || j.Status.State == backend.Retrying {
+		return j, err
+	}
+	if j.Task.Workdir == nil {
+		return observeAttemptCore(tx, id, expected, status, now)
+	}
+	if status.State.Terminal() && status.State != backend.Unknown {
+		return j, errors.New("workspace terminal observation requires completion")
+	}
+	_, err = artifactCoreChange(tx, artifactAttemptLedger(tx, id, ""), maxChangeBytes, 100, func(st *artifactState) error {
+		w, ok := st.Workspaces[expected]
+		if !ok {
+			return ErrArtifactConflict
+		}
+		if status.State == backend.Unknown {
+			w.Held = true
+			w.Diagnostic = artifactDiagnostic(status.Reason)
+			st.Workspaces[expected] = w
+			return nil
+		}
+		if status.Instance != "" {
+			if w.Instance == "" {
+				if err := artifactWorkspaceBound(st, expected, j.TargetBinding, status.Instance); err != nil {
+					return err
+				}
+			} else if status.Instance != w.Instance {
+				return ErrArtifactConflict
+			}
+		}
+		var e error
+		j, e = observeAttemptCore(tx, id, expected, status, now)
+		if e != nil {
+			return e
+		}
+		if j.Status.State == backend.Unknown {
+			return ErrArtifactConflict
+		}
+		return nil
+	})
+	return j, err
+}
+
+func observeAttemptCore(tx *bolt.Tx, id, expected string, status backend.Status, now time.Time) (backend.Job, error) {
+	j, err := get(tx, id)
 	if err != nil {
 		return j, err
 	}
@@ -231,6 +308,9 @@ func validateUpdate(before, after backend.Job) error {
 	}
 	if before.Task.Retry != nil && (before.Status.State != after.Status.State || !reflect.DeepEqual(before.Status.ExitCode, after.Status.ExitCode)) {
 		return errors.New("retry state requires an attempt transition")
+	}
+	if before.Task.Workdir != nil && (before.Status.State != after.Status.State || !reflect.DeepEqual(before.Status.ExitCode, after.Status.ExitCode)) {
+		return errors.New("workspace state requires an attempt transition")
 	}
 	if before.Task.Retry != nil {
 		return validateAttemptJob(after)

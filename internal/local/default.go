@@ -36,7 +36,7 @@ func systemDefaultProcessOps() defaultProcessOps {
 // aliases os.Process's private descriptor and is never reconstructed after wait.
 type defaultHandle struct{ fd int }
 
-type defaultOutputResult struct{ readErr, retainErr, closeErr error }
+type defaultOutputResult struct{ readErr, retainErr, closeErr, rawCloseErr, readerCloseErr error }
 
 type defaultExecution struct {
 	reader       *os.File
@@ -60,17 +60,16 @@ type defaultExecution struct {
 func (b *Backend) startDefault(cmd *exec.Cmd, out *output, id string, seconds int64) error {
 	reader, writer, err := os.Pipe()
 	if err != nil {
-		b.closeUnstartedOutput(out)
-		return fmt.Errorf("create output pipe: %w", err)
+		return errors.Join(fmt.Errorf("create output pipe: %w", err), b.closeUnstartedOutput(out))
 	}
 	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = writer, writer, 0
-	e := &execution{cmd: cmd, status: backend.Status{State: backend.Starting}, done: make(chan struct{}), output: out,
+	e := &execution{cmd: cmd, stdioWriter: writer, status: backend.Status{State: backend.Starting}, done: make(chan struct{}), output: out,
 		owned: &defaultExecution{reader: reader, outputDone: make(chan struct{}), readDone: make(chan struct{}), reaped: make(chan struct{}), handle: defaultHandle{fd: -1}}}
 	b.jobs[id] = e
 	b.attachRetention(e, id)
 	if err := b.defaultOps.start(cmd); err != nil {
-		reader.Close()
-		writer.Close()
+		readerErr := e.closeReader()
+		writerErr := e.closeWriter()
 		closeErr := out.file.Close()
 		if closeErr == nil {
 			out.closed = true
@@ -80,12 +79,14 @@ func (b *Backend) startDefault(cmd *exec.Cmd, out *output, id string, seconds in
 		e.owned.handleClosed = true
 		close(e.owned.readDone)
 		close(e.owned.outputDone)
-		close(e.owned.reaped)
+		close(e.owned.reaped) // Start failure is not an actual Wait receipt.
+		e.shutdownPublished = true
+		e.shutdownErr = errors.Join(err, readerErr, writerErr, closeErr)
 		b.finishPayload(e)
 		close(e.done)
-		return fmt.Errorf("start program: %w", err)
+		return fmt.Errorf("start program: %w", e.shutdownErr)
 	}
-	writer.Close()
+	e.closeWriter()
 	// No waiter/reaper exists yet. This exclusively owned unreaped child's PID
 	// is still reserved even when the program has already exited.
 	e.owned.handle, e.owned.handleErr = b.defaultOps.openHandle(cmd)
@@ -98,11 +99,16 @@ func (b *Backend) startDefault(cmd *exec.Cmd, out *output, id string, seconds in
 func (b *Backend) readDefaultOutput(e *execution) {
 	owned := e.owned
 	defer func() {
-		owned.reader.Close()
+		readerCloseErr := e.closeReader()
+		owned.outputResult.readerCloseErr = readerCloseErr
+		if e.phase != nil {
+			close(owned.outputDone)
+			return
+		}
 		b.mu.Lock()
 		if e.retained != nil {
 			e.output.mu.Lock()
-			if e.output.closed && e.output.markerCloseErr == nil {
+			if e.output.closed && e.output.markerCloseErr == nil && e.output.markerFile == nil && readerCloseErr == nil && e.stdioWriterErr == nil && e.stdioWriter == nil {
 				b.publishOutputClosure(e.retained)
 			}
 			e.output.mu.Unlock()
@@ -125,13 +131,23 @@ func (b *Backend) readDefaultOutput(e *execution) {
 		}
 	}
 	close(owned.readDone)
+	if e.phase != nil {
+		e.output.mu.Lock()
+		if e.output.err != nil {
+			result.retainErr = e.output.err
+		}
+		e.output.mu.Unlock()
+		owned.outputResult = result
+		return
+	}
 	// This goroutine alone finalizes the retained file. A blocked Write/Close
 	// retains its original handles; the coordinator never closes underneath it.
 	e.output.mu.Lock()
 	if e.output.err != nil {
 		result.retainErr = e.output.err
 	}
-	result.closeErr = b.defaultOps.closeOutput(e.output)
+	result.rawCloseErr = b.defaultOps.closeOutput(e.output)
+	result.closeErr = result.rawCloseErr
 	if result.closeErr == nil {
 		e.output.closed = true
 	}
@@ -154,6 +170,9 @@ func (b *Backend) stopDefault(e *execution, state backend.State, reason string) 
 		return nil
 	}
 	if err := b.defaultOps.kill(e.cmd); err != nil {
+		if e.phase == nil && e.shutdownErr == nil {
+			e.shutdownErr = err
+		}
 		return fmt.Errorf("kill process group: %w", err)
 	}
 	e.owned.intent = true
@@ -169,13 +188,13 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 	}
 	pinErr := b.defaultOps.wait(e.cmd)
 	discarded := false
-	if pinErr == nil {
+	if pinErr == nil && e.phase == nil {
 		grace := time.NewTimer(250 * time.Millisecond)
 		select {
 		case <-owned.readDone:
 		case <-grace.C:
 			discarded = true
-			owned.reader.Close()
+			e.closeReader()
 		}
 		grace.Stop()
 	}
@@ -190,7 +209,7 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 		timer.Stop()
 	}
 	if pinErr != nil {
-		owned.reader.Close()
+		e.closeReader()
 		// A failed terminal record never authorizes numeric group delivery. Only
 		// an already retained original handle can assist exceptional leader cleanup.
 		cleanupErr = errors.Join(pinErr, owned.handleErr, owned.handle.signal())
@@ -206,11 +225,13 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 	// No shared lock is held during a reaper, writer or filesystem finalizer join.
 	// Close uses its own total deadline and reports these pending original handles.
 	<-owned.reaped
-	if pinErr == nil && groupErr != nil {
+	var workspaceAbsenceErr error
+	if pinErr == nil && (groupErr != nil || e.phase != nil) {
 		// Darwin may refuse delivery to a group containing only its zombie leader.
 		// Resolve ONLY that delivery error, using absence-only checks after reap.
 		// A reused/live group or an uncertain probe never authorizes another signal.
 		absenceErr := b.waitDefaultAbsent(e.cmd)
+		workspaceAbsenceErr = absenceErr
 		b.mu.Lock()
 		if absenceErr == nil {
 			owned.cleanupErr = handleCloseErr
@@ -218,6 +239,16 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 			owned.cleanupErr = errors.Join(groupErr, handleCloseErr, absenceErr)
 		}
 		b.mu.Unlock()
+	}
+	if e.phase != nil {
+		grace := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-owned.readDone:
+		case <-grace.C:
+			discarded = true
+			e.closeReader()
+		}
+		grace.Stop()
 	}
 	<-owned.outputDone
 	result := owned.outputResult
@@ -245,10 +276,40 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 	if result.retainErr != nil {
 		e.status.State, e.status.Reason = backend.Failed, "retain output: "+result.retainErr.Error()
 	}
+	var processErr error
 	if e.cmd.ProcessState == nil {
-		owned.cleanupErr = errors.Join(owned.cleanupErr, errors.New("local process result is unavailable"))
+		processErr = errors.New("local process result is unavailable")
+		owned.cleanupErr = errors.Join(owned.cleanupErr, processErr)
 	}
-	b.finishPayload(e)
+	if e.phase != nil {
+		e.phase.writerClosed = workspaceWriterPlatform() && pinErr == nil && workspaceAbsenceErr == nil && owned.cleanupErr == nil && owned.handleErr == nil && owned.handleClosed && !discarded && result.readErr == nil && result.readerCloseErr == nil && result.retainErr == nil && e.cmd.ProcessState != nil
+		var exitErr *exec.ExitError
+		ordinaryWait := owned.waitErr == nil || errors.As(owned.waitErr, &exitErr)
+		if e.phase.taskRetry && e.phase.writerClosed && !owned.intent && ordinaryWait && e.status.ExitCode != nil && *e.status.ExitCode >= 0 {
+			e.status.Termination = backend.StoppedWithExitCode
+		}
+	} else {
+		var exitErr *exec.ExitError
+		ordinaryWait := owned.waitErr == nil || errors.As(owned.waitErr, &exitErr)
+		e.output.mu.Lock()
+		outputClosed := e.output.closed && e.output.markerCloseErr == nil && e.output.markerFile == nil
+		markerErr := e.output.markerCloseErr
+		e.output.mu.Unlock()
+		// Returned data errors and ordinary ExitError remain diagnostics. Only
+		// original joins, Close receipts and the existing native/group fence
+		// establish physical closure; neither status nor cancellation does.
+		e.shutdownClosed = pinErr == nil && ordinaryWait && processErr == nil &&
+			owned.signalClosed && handleCloseErr == nil &&
+			(groupErr == nil || workspaceAbsenceErr == nil) &&
+			result.readerCloseErr == nil && e.stdioWriterErr == nil && e.stdioWriter == nil &&
+			result.rawCloseErr == nil && outputClosed
+		e.shutdownErr = errors.Join(e.shutdownErr, pinErr, groupErr, owned.handleErr,
+			handleCloseErr, workspaceAbsenceErr, owned.waitErr, processErr,
+			result.readErr, result.retainErr, result.rawCloseErr,
+			result.readerCloseErr, e.stdioWriterErr, markerErr)
+		e.shutdownPublished = true
+		b.finishPayload(e)
+	}
 	close(e.done)
 }
 

@@ -99,6 +99,10 @@ const (
 	Capability_CAPABILITY_NODE_SELECTOR_V1    Capability = 3
 	Capability_CAPABILITY_TARGET_LABELS_V1    Capability = 4
 	Capability_CAPABILITY_FINITE_JOB_RETRY_V1 Capability = 5
+	// Endpoint-installed service fact, separate from selected-target support.
+	Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1 Capability = 6
+	// Advertised only by a target implementing the workspace lifecycle.
+	Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1 Capability = 7
 )
 
 // Enum value maps for Capability.
@@ -110,14 +114,18 @@ var (
 		3: "CAPABILITY_NODE_SELECTOR_V1",
 		4: "CAPABILITY_TARGET_LABELS_V1",
 		5: "CAPABILITY_FINITE_JOB_RETRY_V1",
+		6: "CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1",
+		7: "CAPABILITY_WORKDIR_SNAPSHOT_V1",
 	}
 	Capability_value = map[string]int32{
-		"CAPABILITY_UNSPECIFIED":         0,
-		"CAPABILITY_FINITE_JOBS_V1":      1,
-		"CAPABILITY_RESOURCE_LIMITS_V1":  2,
-		"CAPABILITY_NODE_SELECTOR_V1":    3,
-		"CAPABILITY_TARGET_LABELS_V1":    4,
-		"CAPABILITY_FINITE_JOB_RETRY_V1": 5,
+		"CAPABILITY_UNSPECIFIED":                  0,
+		"CAPABILITY_FINITE_JOBS_V1":               1,
+		"CAPABILITY_RESOURCE_LIMITS_V1":           2,
+		"CAPABILITY_NODE_SELECTOR_V1":             3,
+		"CAPABILITY_TARGET_LABELS_V1":             4,
+		"CAPABILITY_FINITE_JOB_RETRY_V1":          5,
+		"CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1": 6,
+		"CAPABILITY_WORKDIR_SNAPSHOT_V1":          7,
 	}
 )
 
@@ -283,6 +291,7 @@ const (
 	PruneMode_PRUNE_MODE_WHOLE         PruneMode = 1
 	PruneMode_PRUNE_MODE_METADATA_ONLY PruneMode = 2
 	PruneMode_PRUNE_MODE_OUTPUT_ONLY   PruneMode = 3
+	PruneMode_PRUNE_MODE_RESULT_ONLY   PruneMode = 4
 )
 
 // Enum value maps for PruneMode.
@@ -292,12 +301,14 @@ var (
 		1: "PRUNE_MODE_WHOLE",
 		2: "PRUNE_MODE_METADATA_ONLY",
 		3: "PRUNE_MODE_OUTPUT_ONLY",
+		4: "PRUNE_MODE_RESULT_ONLY",
 	}
 	PruneMode_value = map[string]int32{
 		"PRUNE_MODE_UNSPECIFIED":   0,
 		"PRUNE_MODE_WHOLE":         1,
 		"PRUNE_MODE_METADATA_ONLY": 2,
 		"PRUNE_MODE_OUTPUT_ONLY":   3,
+		"PRUNE_MODE_RESULT_ONLY":   4,
 	}
 )
 
@@ -865,6 +876,119 @@ func (ExcludedCharge) EnumDescriptor() ([]byte, []int) {
 	return file_skygo_v1_control_proto_rawDescGZIP(), []int{14}
 }
 
+type ArtifactUploadState int32
+
+const (
+	ArtifactUploadState_ARTIFACT_UPLOAD_STATE_UNSPECIFIED ArtifactUploadState = 0
+	ArtifactUploadState_ARTIFACT_UPLOAD_STATE_CREATING    ArtifactUploadState = 1
+	ArtifactUploadState_ARTIFACT_UPLOAD_STATE_WRITABLE    ArtifactUploadState = 2
+	ArtifactUploadState_ARTIFACT_UPLOAD_STATE_FINALIZING  ArtifactUploadState = 3
+	ArtifactUploadState_ARTIFACT_UPLOAD_STATE_COMPLETE    ArtifactUploadState = 4
+	ArtifactUploadState_ARTIFACT_UPLOAD_STATE_DELETING    ArtifactUploadState = 5
+)
+
+// Enum value maps for ArtifactUploadState.
+var (
+	ArtifactUploadState_name = map[int32]string{
+		0: "ARTIFACT_UPLOAD_STATE_UNSPECIFIED",
+		1: "ARTIFACT_UPLOAD_STATE_CREATING",
+		2: "ARTIFACT_UPLOAD_STATE_WRITABLE",
+		3: "ARTIFACT_UPLOAD_STATE_FINALIZING",
+		4: "ARTIFACT_UPLOAD_STATE_COMPLETE",
+		5: "ARTIFACT_UPLOAD_STATE_DELETING",
+	}
+	ArtifactUploadState_value = map[string]int32{
+		"ARTIFACT_UPLOAD_STATE_UNSPECIFIED": 0,
+		"ARTIFACT_UPLOAD_STATE_CREATING":    1,
+		"ARTIFACT_UPLOAD_STATE_WRITABLE":    2,
+		"ARTIFACT_UPLOAD_STATE_FINALIZING":  3,
+		"ARTIFACT_UPLOAD_STATE_COMPLETE":    4,
+		"ARTIFACT_UPLOAD_STATE_DELETING":    5,
+	}
+)
+
+func (x ArtifactUploadState) Enum() *ArtifactUploadState {
+	p := new(ArtifactUploadState)
+	*p = x
+	return p
+}
+
+func (x ArtifactUploadState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ArtifactUploadState) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[15].Descriptor()
+}
+
+func (ArtifactUploadState) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[15]
+}
+
+func (x ArtifactUploadState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ArtifactUploadState.Descriptor instead.
+func (ArtifactUploadState) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{15}
+}
+
+type ArtifactResultState int32
+
+const (
+	ArtifactResultState_ARTIFACT_RESULT_STATE_UNSPECIFIED ArtifactResultState = 0
+	ArtifactResultState_ARTIFACT_RESULT_STATE_ABSENT      ArtifactResultState = 1
+	ArtifactResultState_ARTIFACT_RESULT_STATE_AVAILABLE   ArtifactResultState = 2
+	ArtifactResultState_ARTIFACT_RESULT_STATE_EXPIRED     ArtifactResultState = 3
+	ArtifactResultState_ARTIFACT_RESULT_STATE_HELD        ArtifactResultState = 4
+)
+
+// Enum value maps for ArtifactResultState.
+var (
+	ArtifactResultState_name = map[int32]string{
+		0: "ARTIFACT_RESULT_STATE_UNSPECIFIED",
+		1: "ARTIFACT_RESULT_STATE_ABSENT",
+		2: "ARTIFACT_RESULT_STATE_AVAILABLE",
+		3: "ARTIFACT_RESULT_STATE_EXPIRED",
+		4: "ARTIFACT_RESULT_STATE_HELD",
+	}
+	ArtifactResultState_value = map[string]int32{
+		"ARTIFACT_RESULT_STATE_UNSPECIFIED": 0,
+		"ARTIFACT_RESULT_STATE_ABSENT":      1,
+		"ARTIFACT_RESULT_STATE_AVAILABLE":   2,
+		"ARTIFACT_RESULT_STATE_EXPIRED":     3,
+		"ARTIFACT_RESULT_STATE_HELD":        4,
+	}
+)
+
+func (x ArtifactResultState) Enum() *ArtifactResultState {
+	p := new(ArtifactResultState)
+	*p = x
+	return p
+}
+
+func (x ArtifactResultState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ArtifactResultState) Descriptor() protoreflect.EnumDescriptor {
+	return file_skygo_v1_control_proto_enumTypes[16].Descriptor()
+}
+
+func (ArtifactResultState) Type() protoreflect.EnumType {
+	return &file_skygo_v1_control_proto_enumTypes[16]
+}
+
+func (x ArtifactResultState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ArtifactResultState.Descriptor instead.
+func (ArtifactResultState) EnumDescriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{16}
+}
+
 // Task is immutable after acceptance. Resource requests and limits are not capacity promises.
 type Task struct {
 	state            protoimpl.MessageState `protogen:"open.v1"`
@@ -883,8 +1007,14 @@ type Task struct {
 	TargetLabels     map[string]string      `protobuf:"bytes,13,rep,name=target_labels,json=targetLabels,proto3" json:"target_labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	NodeSelector     map[string]string      `protobuf:"bytes,14,rep,name=node_selector,json=nodeSelector,proto3" json:"node_selector,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	Retry            *RetryPolicy           `protobuf:"bytes,15,opt,name=retry,proto3" json:"retry,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// Requires directory empty; the server chooses each attempt's private root.
+	Workdir *ArtifactRef `protobuf:"bytes,16,opt,name=workdir,proto3" json:"workdir,omitempty"`
+	// One explicit argv, at most 64 arguments and 16 KiB encoded; requires workdir.
+	Setup []string `protobuf:"bytes,17,rep,name=setup,proto3" json:"setup,omitempty"`
+	// At most 16 disjoint canonical relative roots, without glob expansion.
+	Outputs       []string `protobuf:"bytes,18,rep,name=outputs,proto3" json:"outputs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Task) Reset() {
@@ -1022,6 +1152,27 @@ func (x *Task) GetRetry() *RetryPolicy {
 	return nil
 }
 
+func (x *Task) GetWorkdir() *ArtifactRef {
+	if x != nil {
+		return x.Workdir
+	}
+	return nil
+}
+
+func (x *Task) GetSetup() []string {
+	if x != nil {
+		return x.Setup
+	}
+	return nil
+}
+
+func (x *Task) GetOutputs() []string {
+	if x != nil {
+		return x.Outputs
+	}
+	return nil
+}
+
 // RetryPolicy selects bounded attempts after qualified stopped failures.
 type RetryPolicy struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1096,6 +1247,7 @@ type Job struct {
 	UpdatedAt       *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=updated_at,json=updatedAt,proto3" json:"updated_at,omitempty"`
 	Attempts        []*Attempt             `protobuf:"bytes,10,rep,name=attempts,proto3" json:"attempts,omitempty"`
 	NextAttemptAt   *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=next_attempt_at,json=nextAttemptAt,proto3" json:"next_attempt_at,omitempty"`
+	Result          *ArtifactResult        `protobuf:"bytes,12,opt,name=result,proto3" json:"result,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -1207,6 +1359,13 @@ func (x *Job) GetNextAttemptAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *Job) GetResult() *ArtifactResult {
+	if x != nil {
+		return x.Result
+	}
+	return nil
+}
+
 // Attempt describes one execution. Ordinals are one-based; timestamps record
 // durable decisions, not exact native process start or exit times.
 type Attempt struct {
@@ -1219,6 +1378,7 @@ type Attempt struct {
 	CreatedAt     *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
 	StartingAt    *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=starting_at,json=startingAt,proto3" json:"starting_at,omitempty"`
 	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
+	Result        *ArtifactResult        `protobuf:"bytes,9,opt,name=result,proto3" json:"result,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1305,6 +1465,13 @@ func (x *Attempt) GetStartingAt() *timestamppb.Timestamp {
 func (x *Attempt) GetFinishedAt() *timestamppb.Timestamp {
 	if x != nil {
 		return x.FinishedAt
+	}
+	return nil
+}
+
+func (x *Attempt) GetResult() *ArtifactResult {
+	if x != nil {
+		return x.Result
 	}
 	return nil
 }
@@ -2175,8 +2342,10 @@ func (*GetServerInfoRequest) Descriptor() ([]byte, []int) {
 
 // Capabilities apply only to their named target at this endpoint.
 type GetServerInfoResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Targets       []*Target              `protobuf:"bytes,1,rep,name=targets,proto3" json:"targets,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Targets []*Target              `protobuf:"bytes,1,rep,name=targets,proto3" json:"targets,omitempty"`
+	// Installed endpoint semantics, not capacity or artifact byte authority.
+	Capabilities  []Capability `protobuf:"varint,2,rep,packed,name=capabilities,proto3,enum=skygo.v1.Capability" json:"capabilities,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2214,6 +2383,13 @@ func (*GetServerInfoResponse) Descriptor() ([]byte, []int) {
 func (x *GetServerInfoResponse) GetTargets() []*Target {
 	if x != nil {
 		return x.Targets
+	}
+	return nil
+}
+
+func (x *GetServerInfoResponse) GetCapabilities() []Capability {
+	if x != nil {
+		return x.Capabilities
 	}
 	return nil
 }
@@ -2922,8 +3098,11 @@ type PruneJobsRequest struct {
 	ObligationId                  string                 `protobuf:"bytes,5,opt,name=obligation_id,json=obligationId,proto3" json:"obligation_id,omitempty"`
 	PageSize                      int32                  `protobuf:"varint,6,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`
 	PageToken                     string                 `protobuf:"bytes,7,opt,name=page_token,json=pageToken,proto3" json:"page_token,omitempty"`
-	unknownFields                 protoimpl.UnknownFields
-	sizeCache                     protoimpl.SizeCache
+	// One-based fixed result selector, required and nonzero for result-only.
+	// Must be zero for other modes.
+	Attempt       uint32 `protobuf:"varint,8,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *PruneJobsRequest) Reset() {
@@ -3003,6 +3182,13 @@ func (x *PruneJobsRequest) GetPageToken() string {
 		return x.PageToken
 	}
 	return ""
+}
+
+func (x *PruneJobsRequest) GetAttempt() uint32 {
+	if x != nil {
+		return x.Attempt
+	}
+	return 0
 }
 
 type PruneJobsResponse struct {
@@ -4024,11 +4210,1160 @@ func (x *QuoteTaskResponse) GetExcludedCharges() []ExcludedCharge {
 	return nil
 }
 
+// ArtifactRef is an immutable snapshot identity, never a path, URL or read grant.
+// ID is 32 lowercase hexadecimal bytes, sha256 is 64, and size is 1..32 MiB.
+type ArtifactRef struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Sha256        string                 `protobuf:"bytes,2,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Size          int64                  `protobuf:"varint,3,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArtifactRef) Reset() {
+	*x = ArtifactRef{}
+	mi := &file_skygo_v1_control_proto_msgTypes[45]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArtifactRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArtifactRef) ProtoMessage() {}
+
+func (x *ArtifactRef) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[45]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArtifactRef.ProtoReflect.Descriptor instead.
+func (*ArtifactRef) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{45}
+}
+
+func (x *ArtifactRef) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ArtifactRef) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *ArtifactRef) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type ArtifactUpload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Reference     *ArtifactRef           `protobuf:"bytes,2,opt,name=reference,proto3" json:"reference,omitempty"`
+	Acknowledged  int64                  `protobuf:"varint,3,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	State         ArtifactUploadState    `protobuf:"varint,5,opt,name=state,proto3,enum=skygo.v1.ArtifactUploadState" json:"state,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArtifactUpload) Reset() {
+	*x = ArtifactUpload{}
+	mi := &file_skygo_v1_control_proto_msgTypes[46]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArtifactUpload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArtifactUpload) ProtoMessage() {}
+
+func (x *ArtifactUpload) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[46]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArtifactUpload.ProtoReflect.Descriptor instead.
+func (*ArtifactUpload) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{46}
+}
+
+func (x *ArtifactUpload) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *ArtifactUpload) GetReference() *ArtifactRef {
+	if x != nil {
+		return x.Reference
+	}
+	return nil
+}
+
+func (x *ArtifactUpload) GetAcknowledged() int64 {
+	if x != nil {
+		return x.Acknowledged
+	}
+	return 0
+}
+
+func (x *ArtifactUpload) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+func (x *ArtifactUpload) GetState() ArtifactUploadState {
+	if x != nil {
+		return x.State
+	}
+	return ArtifactUploadState_ARTIFACT_UPLOAD_STATE_UNSPECIFIED
+}
+
+type BeginArtifactUploadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sha256        string                 `protobuf:"bytes,1,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BeginArtifactUploadRequest) Reset() {
+	*x = BeginArtifactUploadRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[47]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginArtifactUploadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginArtifactUploadRequest) ProtoMessage() {}
+
+func (x *BeginArtifactUploadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[47]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BeginArtifactUploadRequest.ProtoReflect.Descriptor instead.
+func (*BeginArtifactUploadRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{47}
+}
+
+func (x *BeginArtifactUploadRequest) GetSha256() string {
+	if x != nil {
+		return x.Sha256
+	}
+	return ""
+}
+
+func (x *BeginArtifactUploadRequest) GetSize() int64 {
+	if x != nil {
+		return x.Size
+	}
+	return 0
+}
+
+type BeginArtifactUploadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Upload        *ArtifactUpload        `protobuf:"bytes,1,opt,name=upload,proto3" json:"upload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BeginArtifactUploadResponse) Reset() {
+	*x = BeginArtifactUploadResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[48]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginArtifactUploadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginArtifactUploadResponse) ProtoMessage() {}
+
+func (x *BeginArtifactUploadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[48]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BeginArtifactUploadResponse.ProtoReflect.Descriptor instead.
+func (*BeginArtifactUploadResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{48}
+}
+
+func (x *BeginArtifactUploadResponse) GetUpload() *ArtifactUpload {
+	if x != nil {
+		return x.Upload
+	}
+	return nil
+}
+
+type GetArtifactUploadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetArtifactUploadRequest) Reset() {
+	*x = GetArtifactUploadRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[49]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetArtifactUploadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetArtifactUploadRequest) ProtoMessage() {}
+
+func (x *GetArtifactUploadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[49]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetArtifactUploadRequest.ProtoReflect.Descriptor instead.
+func (*GetArtifactUploadRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{49}
+}
+
+func (x *GetArtifactUploadRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type GetArtifactUploadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Upload        *ArtifactUpload        `protobuf:"bytes,1,opt,name=upload,proto3" json:"upload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetArtifactUploadResponse) Reset() {
+	*x = GetArtifactUploadResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[50]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetArtifactUploadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetArtifactUploadResponse) ProtoMessage() {}
+
+func (x *GetArtifactUploadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[50]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetArtifactUploadResponse.ProtoReflect.Descriptor instead.
+func (*GetArtifactUploadResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{50}
+}
+
+func (x *GetArtifactUploadResponse) GetUpload() *ArtifactUpload {
+	if x != nil {
+		return x.Upload
+	}
+	return nil
+}
+
+type WriteArtifactChunkRequest struct {
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Id     string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Offset int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Nonempty, at most 64 KiB; no sparse holes or partial acknowledged overlap.
+	Data          []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WriteArtifactChunkRequest) Reset() {
+	*x = WriteArtifactChunkRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[51]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WriteArtifactChunkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteArtifactChunkRequest) ProtoMessage() {}
+
+func (x *WriteArtifactChunkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[51]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteArtifactChunkRequest.ProtoReflect.Descriptor instead.
+func (*WriteArtifactChunkRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{51}
+}
+
+func (x *WriteArtifactChunkRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *WriteArtifactChunkRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *WriteArtifactChunkRequest) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+type WriteArtifactChunkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Upload        *ArtifactUpload        `protobuf:"bytes,1,opt,name=upload,proto3" json:"upload,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *WriteArtifactChunkResponse) Reset() {
+	*x = WriteArtifactChunkResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[52]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WriteArtifactChunkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WriteArtifactChunkResponse) ProtoMessage() {}
+
+func (x *WriteArtifactChunkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[52]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WriteArtifactChunkResponse.ProtoReflect.Descriptor instead.
+func (*WriteArtifactChunkResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{52}
+}
+
+func (x *WriteArtifactChunkResponse) GetUpload() *ArtifactUpload {
+	if x != nil {
+		return x.Upload
+	}
+	return nil
+}
+
+type FinalizeArtifactUploadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FinalizeArtifactUploadRequest) Reset() {
+	*x = FinalizeArtifactUploadRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[53]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FinalizeArtifactUploadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FinalizeArtifactUploadRequest) ProtoMessage() {}
+
+func (x *FinalizeArtifactUploadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[53]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FinalizeArtifactUploadRequest.ProtoReflect.Descriptor instead.
+func (*FinalizeArtifactUploadRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{53}
+}
+
+func (x *FinalizeArtifactUploadRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type FinalizeArtifactUploadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reference     *ArtifactRef           `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *FinalizeArtifactUploadResponse) Reset() {
+	*x = FinalizeArtifactUploadResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[54]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *FinalizeArtifactUploadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*FinalizeArtifactUploadResponse) ProtoMessage() {}
+
+func (x *FinalizeArtifactUploadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[54]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use FinalizeArtifactUploadResponse.ProtoReflect.Descriptor instead.
+func (*FinalizeArtifactUploadResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{54}
+}
+
+func (x *FinalizeArtifactUploadResponse) GetReference() *ArtifactRef {
+	if x != nil {
+		return x.Reference
+	}
+	return nil
+}
+
+type CancelArtifactUploadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelArtifactUploadRequest) Reset() {
+	*x = CancelArtifactUploadRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[55]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelArtifactUploadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelArtifactUploadRequest) ProtoMessage() {}
+
+func (x *CancelArtifactUploadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[55]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelArtifactUploadRequest.ProtoReflect.Descriptor instead.
+func (*CancelArtifactUploadRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{55}
+}
+
+func (x *CancelArtifactUploadRequest) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+type CancelArtifactUploadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelArtifactUploadResponse) Reset() {
+	*x = CancelArtifactUploadResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[56]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelArtifactUploadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelArtifactUploadResponse) ProtoMessage() {}
+
+func (x *CancelArtifactUploadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[56]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelArtifactUploadResponse.ProtoReflect.Descriptor instead.
+func (*CancelArtifactUploadResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{56}
+}
+
+type BeginArtifactDownloadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reference     *ArtifactRef           `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BeginArtifactDownloadRequest) Reset() {
+	*x = BeginArtifactDownloadRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[57]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginArtifactDownloadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginArtifactDownloadRequest) ProtoMessage() {}
+
+func (x *BeginArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[57]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BeginArtifactDownloadRequest.ProtoReflect.Descriptor instead.
+func (*BeginArtifactDownloadRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{57}
+}
+
+func (x *BeginArtifactDownloadRequest) GetReference() *ArtifactRef {
+	if x != nil {
+		return x.Reference
+	}
+	return nil
+}
+
+type BeginArtifactDownloadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Reference     *ArtifactRef           `protobuf:"bytes,2,opt,name=reference,proto3" json:"reference,omitempty"`
+	ExpiresAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *BeginArtifactDownloadResponse) Reset() {
+	*x = BeginArtifactDownloadResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[58]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BeginArtifactDownloadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BeginArtifactDownloadResponse) ProtoMessage() {}
+
+func (x *BeginArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[58]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BeginArtifactDownloadResponse.ProtoReflect.Descriptor instead.
+func (*BeginArtifactDownloadResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{58}
+}
+
+func (x *BeginArtifactDownloadResponse) GetId() string {
+	if x != nil {
+		return x.Id
+	}
+	return ""
+}
+
+func (x *BeginArtifactDownloadResponse) GetReference() *ArtifactRef {
+	if x != nil {
+		return x.Reference
+	}
+	return nil
+}
+
+func (x *BeginArtifactDownloadResponse) GetExpiresAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return nil
+}
+
+type ReadArtifactChunkRequest struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	DownloadId string                 `protobuf:"bytes,1,opt,name=download_id,json=downloadId,proto3" json:"download_id,omitempty"`
+	Offset     int64                  `protobuf:"varint,2,opt,name=offset,proto3" json:"offset,omitempty"`
+	// Positive requested bytes, at most 64 KiB.
+	Limit         int32 `protobuf:"varint,3,opt,name=limit,proto3" json:"limit,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadArtifactChunkRequest) Reset() {
+	*x = ReadArtifactChunkRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[59]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadArtifactChunkRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadArtifactChunkRequest) ProtoMessage() {}
+
+func (x *ReadArtifactChunkRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[59]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadArtifactChunkRequest.ProtoReflect.Descriptor instead.
+func (*ReadArtifactChunkRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{59}
+}
+
+func (x *ReadArtifactChunkRequest) GetDownloadId() string {
+	if x != nil {
+		return x.DownloadId
+	}
+	return ""
+}
+
+func (x *ReadArtifactChunkRequest) GetOffset() int64 {
+	if x != nil {
+		return x.Offset
+	}
+	return 0
+}
+
+func (x *ReadArtifactChunkRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+type ReadArtifactChunkResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Data          []byte                 `protobuf:"bytes,1,opt,name=data,proto3" json:"data,omitempty"`
+	NextOffset    int64                  `protobuf:"varint,2,opt,name=next_offset,json=nextOffset,proto3" json:"next_offset,omitempty"`
+	Complete      bool                   `protobuf:"varint,3,opt,name=complete,proto3" json:"complete,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReadArtifactChunkResponse) Reset() {
+	*x = ReadArtifactChunkResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReadArtifactChunkResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReadArtifactChunkResponse) ProtoMessage() {}
+
+func (x *ReadArtifactChunkResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReadArtifactChunkResponse.ProtoReflect.Descriptor instead.
+func (*ReadArtifactChunkResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *ReadArtifactChunkResponse) GetData() []byte {
+	if x != nil {
+		return x.Data
+	}
+	return nil
+}
+
+func (x *ReadArtifactChunkResponse) GetNextOffset() int64 {
+	if x != nil {
+		return x.NextOffset
+	}
+	return 0
+}
+
+func (x *ReadArtifactChunkResponse) GetComplete() bool {
+	if x != nil {
+		return x.Complete
+	}
+	return false
+}
+
+type CloseArtifactDownloadRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	DownloadId    string                 `protobuf:"bytes,1,opt,name=download_id,json=downloadId,proto3" json:"download_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseArtifactDownloadRequest) Reset() {
+	*x = CloseArtifactDownloadRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseArtifactDownloadRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseArtifactDownloadRequest) ProtoMessage() {}
+
+func (x *CloseArtifactDownloadRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseArtifactDownloadRequest.ProtoReflect.Descriptor instead.
+func (*CloseArtifactDownloadRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *CloseArtifactDownloadRequest) GetDownloadId() string {
+	if x != nil {
+		return x.DownloadId
+	}
+	return ""
+}
+
+type CloseArtifactDownloadResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CloseArtifactDownloadResponse) Reset() {
+	*x = CloseArtifactDownloadResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CloseArtifactDownloadResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CloseArtifactDownloadResponse) ProtoMessage() {}
+
+func (x *CloseArtifactDownloadResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CloseArtifactDownloadResponse.ProtoReflect.Descriptor instead.
+func (*CloseArtifactDownloadResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{62}
+}
+
+type RemoveArtifactRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reference     *ArtifactRef           `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveArtifactRequest) Reset() {
+	*x = RemoveArtifactRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[63]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveArtifactRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveArtifactRequest) ProtoMessage() {}
+
+func (x *RemoveArtifactRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[63]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveArtifactRequest.ProtoReflect.Descriptor instead.
+func (*RemoveArtifactRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{63}
+}
+
+func (x *RemoveArtifactRequest) GetReference() *ArtifactRef {
+	if x != nil {
+		return x.Reference
+	}
+	return nil
+}
+
+type RemoveArtifactResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RemoveArtifactResponse) Reset() {
+	*x = RemoveArtifactResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[64]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RemoveArtifactResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RemoveArtifactResponse) ProtoMessage() {}
+
+func (x *RemoveArtifactResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[64]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RemoveArtifactResponse.ProtoReflect.Descriptor instead.
+func (*RemoveArtifactResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{64}
+}
+
+type SubmitWorkspaceJobRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	Task      *Task                  `protobuf:"bytes,1,opt,name=task,proto3" json:"task,omitempty"`
+	RequestId string                 `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// Present for retained requests; unchanged replay precedes current placement.
+	Domain        *RequestDomain `protobuf:"bytes,3,opt,name=domain,proto3" json:"domain,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitWorkspaceJobRequest) Reset() {
+	*x = SubmitWorkspaceJobRequest{}
+	mi := &file_skygo_v1_control_proto_msgTypes[65]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitWorkspaceJobRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitWorkspaceJobRequest) ProtoMessage() {}
+
+func (x *SubmitWorkspaceJobRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[65]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitWorkspaceJobRequest.ProtoReflect.Descriptor instead.
+func (*SubmitWorkspaceJobRequest) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{65}
+}
+
+func (x *SubmitWorkspaceJobRequest) GetTask() *Task {
+	if x != nil {
+		return x.Task
+	}
+	return nil
+}
+
+func (x *SubmitWorkspaceJobRequest) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *SubmitWorkspaceJobRequest) GetDomain() *RequestDomain {
+	if x != nil {
+		return x.Domain
+	}
+	return nil
+}
+
+type SubmitWorkspaceJobResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Job           *Job                   `protobuf:"bytes,1,opt,name=job,proto3" json:"job,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SubmitWorkspaceJobResponse) Reset() {
+	*x = SubmitWorkspaceJobResponse{}
+	mi := &file_skygo_v1_control_proto_msgTypes[66]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SubmitWorkspaceJobResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SubmitWorkspaceJobResponse) ProtoMessage() {}
+
+func (x *SubmitWorkspaceJobResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[66]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SubmitWorkspaceJobResponse.ProtoReflect.Descriptor instead.
+func (*SubmitWorkspaceJobResponse) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{66}
+}
+
+func (x *SubmitWorkspaceJobResponse) GetJob() *Job {
+	if x != nil {
+		return x.Job
+	}
+	return nil
+}
+
+// ArtifactResult is authorized metadata for one fixed accepted attempt.
+// EXPIRED is distinct from ABSENT and has no readable reference. A cached raw
+// reference without a surviving grant returns generic not_found on byte access.
+// Existing RetentionExpiry.RESULT_EXPIRED still denotes whole-job/request expiry.
+type ArtifactResult struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	State         ArtifactResultState    `protobuf:"varint,1,opt,name=state,proto3,enum=skygo.v1.ArtifactResultState" json:"state,omitempty"`
+	Reference     *ArtifactRef           `protobuf:"bytes,2,opt,name=reference,proto3" json:"reference,omitempty"`
+	AttemptId     string                 `protobuf:"bytes,3,opt,name=attempt_id,json=attemptId,proto3" json:"attempt_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ArtifactResult) Reset() {
+	*x = ArtifactResult{}
+	mi := &file_skygo_v1_control_proto_msgTypes[67]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ArtifactResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ArtifactResult) ProtoMessage() {}
+
+func (x *ArtifactResult) ProtoReflect() protoreflect.Message {
+	mi := &file_skygo_v1_control_proto_msgTypes[67]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ArtifactResult.ProtoReflect.Descriptor instead.
+func (*ArtifactResult) Descriptor() ([]byte, []int) {
+	return file_skygo_v1_control_proto_rawDescGZIP(), []int{67}
+}
+
+func (x *ArtifactResult) GetState() ArtifactResultState {
+	if x != nil {
+		return x.State
+	}
+	return ArtifactResultState_ARTIFACT_RESULT_STATE_UNSPECIFIED
+}
+
+func (x *ArtifactResult) GetReference() *ArtifactRef {
+	if x != nil {
+		return x.Reference
+	}
+	return nil
+}
+
+func (x *ArtifactResult) GetAttemptId() string {
+	if x != nil {
+		return x.AttemptId
+	}
+	return ""
+}
+
 var File_skygo_v1_control_proto protoreflect.FileDescriptor
 
 const file_skygo_v1_control_proto_rawDesc = "" +
 	"\n" +
-	"\x16skygo/v1/control.proto\x12\bskygo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\x98\x06\n" +
+	"\x16skygo/v1/control.proto\x12\bskygo.v1\x1a\x1fgoogle/protobuf/timestamp.proto\"\xf9\x06\n" +
 	"\x04Task\x12\x12\n" +
 	"\x04argv\x18\x01 \x03(\tR\x04argv\x12)\n" +
 	"\x03env\x18\x02 \x03(\v2\x17.skygo.v1.Task.EnvEntryR\x03env\x12\x1c\n" +
@@ -4046,7 +5381,10 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x12memory_limit_bytes\x18\f \x01(\x03R\x10memoryLimitBytes\x12E\n" +
 	"\rtarget_labels\x18\r \x03(\v2 .skygo.v1.Task.TargetLabelsEntryR\ftargetLabels\x12E\n" +
 	"\rnode_selector\x18\x0e \x03(\v2 .skygo.v1.Task.NodeSelectorEntryR\fnodeSelector\x12+\n" +
-	"\x05retry\x18\x0f \x01(\v2\x15.skygo.v1.RetryPolicyR\x05retry\x1a6\n" +
+	"\x05retry\x18\x0f \x01(\v2\x15.skygo.v1.RetryPolicyR\x05retry\x12/\n" +
+	"\aworkdir\x18\x10 \x01(\v2\x15.skygo.v1.ArtifactRefR\aworkdir\x12\x14\n" +
+	"\x05setup\x18\x11 \x03(\tR\x05setup\x12\x18\n" +
+	"\aoutputs\x18\x12 \x03(\tR\aoutputs\x1a6\n" +
 	"\bEnvEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a?\n" +
@@ -4060,7 +5398,7 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\fmax_attempts\x18\x01 \x01(\rR\vmaxAttempts\x12#\n" +
 	"\rdelay_seconds\x18\x02 \x01(\rR\fdelaySeconds\x12\x1d\n" +
 	"\n" +
-	"exit_codes\x18\x03 \x03(\x05R\texitCodes\"\xd7\x03\n" +
+	"exit_codes\x18\x03 \x03(\x05R\texitCodes\"\x89\x04\n" +
 	"\x03Job\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\"\n" +
 	"\x04task\x18\x02 \x01(\v2\x0e.skygo.v1.TaskR\x04task\x12\x16\n" +
@@ -4075,9 +5413,10 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"updated_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12-\n" +
 	"\battempts\x18\n" +
 	" \x03(\v2\x11.skygo.v1.AttemptR\battempts\x12B\n" +
-	"\x0fnext_attempt_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\rnextAttemptAtB\f\n" +
+	"\x0fnext_attempt_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\rnextAttemptAt\x120\n" +
+	"\x06result\x18\f \x01(\v2\x18.skygo.v1.ArtifactResultR\x06resultB\f\n" +
 	"\n" +
-	"_exit_code\"\xda\x02\n" +
+	"_exit_code\"\x8c\x03\n" +
 	"\aAttempt\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x18\n" +
 	"\aordinal\x18\x02 \x01(\rR\aordinal\x12(\n" +
@@ -4089,7 +5428,8 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\vstarting_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"startingAt\x12;\n" +
 	"\vfinished_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"finishedAtB\f\n" +
+	"finishedAt\x120\n" +
+	"\x06result\x18\t \x01(\v2\x18.skygo.v1.ArtifactResultR\x06resultB\f\n" +
 	"\n" +
 	"_exit_code\"\x88\x02\n" +
 	"\x06Target\x12\x12\n" +
@@ -4148,9 +5488,10 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x12ListTargetsRequest\"A\n" +
 	"\x13ListTargetsResponse\x12*\n" +
 	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\"\x16\n" +
-	"\x14GetServerInfoRequest\"C\n" +
+	"\x14GetServerInfoRequest\"}\n" +
 	"\x15GetServerInfoResponse\x12*\n" +
-	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\"?\n" +
+	"\atargets\x18\x01 \x03(\v2\x10.skygo.v1.TargetR\atargets\x128\n" +
+	"\fcapabilities\x18\x02 \x03(\x0e2\x14.skygo.v1.CapabilityR\fcapabilities\"?\n" +
 	"\rRequestDomain\x12\x18\n" +
 	"\alineage\x18\x01 \x01(\tR\alineage\x12\x14\n" +
 	"\x05epoch\x18\x02 \x01(\x04R\x05epoch\"Q\n" +
@@ -4219,7 +5560,7 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12/\n" +
 	"\x06domain\x18\x03 \x01(\v2\x17.skygo.v1.RequestDomainR\x06domain\"<\n" +
 	"\x19SubmitRetainedJobResponse\x12\x1f\n" +
-	"\x03job\x18\x01 \x01(\v2\r.skygo.v1.JobR\x03job\"\xb2\x02\n" +
+	"\x03job\x18\x01 \x01(\v2\r.skygo.v1.JobR\x03job\"\xcc\x02\n" +
 	"\x10PruneJobsRequest\x122\n" +
 	"\x06before\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x06before\x12'\n" +
 	"\x04mode\x18\x02 \x01(\x0e2\x13.skygo.v1.PruneModeR\x04mode\x12F\n" +
@@ -4228,7 +5569,8 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\robligation_id\x18\x05 \x01(\tR\fobligationId\x12\x1b\n" +
 	"\tpage_size\x18\x06 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
-	"page_token\x18\a \x01(\tR\tpageToken\"\xaf\x02\n" +
+	"page_token\x18\a \x01(\tR\tpageToken\x12\x18\n" +
+	"\aattempt\x18\b \x01(\rR\aattempt\"\xaf\x02\n" +
 	"\x11PruneJobsResponse\x12\x1c\n" +
 	"\tinspected\x18\x01 \x01(\rR\tinspected\x12\x1a\n" +
 	"\bselected\x18\x02 \x01(\rR\bselected\x12\x16\n" +
@@ -4323,7 +5665,76 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"candidates\x12C\n" +
 	"\x10excluded_charges\x18\n" +
 	" \x03(\x0e2\x18.skygo.v1.ExcludedChargeR\x0fexcludedChargesB\x1c\n" +
-	"\x1a_billable_duration_seconds*\xe0\x01\n" +
+	"\x1a_billable_duration_seconds\"I\n" +
+	"\vArtifactRef\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
+	"\x06sha256\x18\x02 \x01(\tR\x06sha256\x12\x12\n" +
+	"\x04size\x18\x03 \x01(\x03R\x04size\"\xe9\x01\n" +
+	"\x0eArtifactUpload\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x123\n" +
+	"\treference\x18\x02 \x01(\v2\x15.skygo.v1.ArtifactRefR\treference\x12\"\n" +
+	"\facknowledged\x18\x03 \x01(\x03R\facknowledged\x129\n" +
+	"\n" +
+	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x123\n" +
+	"\x05state\x18\x05 \x01(\x0e2\x1d.skygo.v1.ArtifactUploadStateR\x05state\"H\n" +
+	"\x1aBeginArtifactUploadRequest\x12\x16\n" +
+	"\x06sha256\x18\x01 \x01(\tR\x06sha256\x12\x12\n" +
+	"\x04size\x18\x02 \x01(\x03R\x04size\"O\n" +
+	"\x1bBeginArtifactUploadResponse\x120\n" +
+	"\x06upload\x18\x01 \x01(\v2\x18.skygo.v1.ArtifactUploadR\x06upload\"*\n" +
+	"\x18GetArtifactUploadRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"M\n" +
+	"\x19GetArtifactUploadResponse\x120\n" +
+	"\x06upload\x18\x01 \x01(\v2\x18.skygo.v1.ArtifactUploadR\x06upload\"W\n" +
+	"\x19WriteArtifactChunkRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x12\n" +
+	"\x04data\x18\x03 \x01(\fR\x04data\"N\n" +
+	"\x1aWriteArtifactChunkResponse\x120\n" +
+	"\x06upload\x18\x01 \x01(\v2\x18.skygo.v1.ArtifactUploadR\x06upload\"/\n" +
+	"\x1dFinalizeArtifactUploadRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"U\n" +
+	"\x1eFinalizeArtifactUploadResponse\x123\n" +
+	"\treference\x18\x01 \x01(\v2\x15.skygo.v1.ArtifactRefR\treference\"-\n" +
+	"\x1bCancelArtifactUploadRequest\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\"\x1e\n" +
+	"\x1cCancelArtifactUploadResponse\"S\n" +
+	"\x1cBeginArtifactDownloadRequest\x123\n" +
+	"\treference\x18\x01 \x01(\v2\x15.skygo.v1.ArtifactRefR\treference\"\x9f\x01\n" +
+	"\x1dBeginArtifactDownloadResponse\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x123\n" +
+	"\treference\x18\x02 \x01(\v2\x15.skygo.v1.ArtifactRefR\treference\x129\n" +
+	"\n" +
+	"expires_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"i\n" +
+	"\x18ReadArtifactChunkRequest\x12\x1f\n" +
+	"\vdownload_id\x18\x01 \x01(\tR\n" +
+	"downloadId\x12\x16\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\x12\x14\n" +
+	"\x05limit\x18\x03 \x01(\x05R\x05limit\"l\n" +
+	"\x19ReadArtifactChunkResponse\x12\x12\n" +
+	"\x04data\x18\x01 \x01(\fR\x04data\x12\x1f\n" +
+	"\vnext_offset\x18\x02 \x01(\x03R\n" +
+	"nextOffset\x12\x1a\n" +
+	"\bcomplete\x18\x03 \x01(\bR\bcomplete\"?\n" +
+	"\x1cCloseArtifactDownloadRequest\x12\x1f\n" +
+	"\vdownload_id\x18\x01 \x01(\tR\n" +
+	"downloadId\"\x1f\n" +
+	"\x1dCloseArtifactDownloadResponse\"L\n" +
+	"\x15RemoveArtifactRequest\x123\n" +
+	"\treference\x18\x01 \x01(\v2\x15.skygo.v1.ArtifactRefR\treference\"\x18\n" +
+	"\x16RemoveArtifactResponse\"\x8f\x01\n" +
+	"\x19SubmitWorkspaceJobRequest\x12\"\n" +
+	"\x04task\x18\x01 \x01(\v2\x0e.skygo.v1.TaskR\x04task\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12/\n" +
+	"\x06domain\x18\x03 \x01(\v2\x17.skygo.v1.RequestDomainR\x06domain\"=\n" +
+	"\x1aSubmitWorkspaceJobResponse\x12\x1f\n" +
+	"\x03job\x18\x01 \x01(\v2\r.skygo.v1.JobR\x03job\"\x99\x01\n" +
+	"\x0eArtifactResult\x123\n" +
+	"\x05state\x18\x01 \x01(\x0e2\x1d.skygo.v1.ArtifactResultStateR\x05state\x123\n" +
+	"\treference\x18\x02 \x01(\v2\x15.skygo.v1.ArtifactRefR\treference\x12\x1d\n" +
+	"\n" +
+	"attempt_id\x18\x03 \x01(\tR\tattemptId*\xe0\x01\n" +
 	"\bJobState\x12\x19\n" +
 	"\x15JOB_STATE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10JOB_STATE_QUEUED\x10\x01\x12\x16\n" +
@@ -4333,7 +5744,7 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x10JOB_STATE_FAILED\x10\x05\x12\x16\n" +
 	"\x12JOB_STATE_CANCELED\x10\x06\x12\x15\n" +
 	"\x11JOB_STATE_UNKNOWN\x10\a\x12\x16\n" +
-	"\x12JOB_STATE_RETRYING\x10\b*\xd0\x01\n" +
+	"\x12JOB_STATE_RETRYING\x10\b*\xa1\x02\n" +
 	"\n" +
 	"Capability\x12\x1a\n" +
 	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
@@ -4341,7 +5752,9 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x1dCAPABILITY_RESOURCE_LIMITS_V1\x10\x02\x12\x1f\n" +
 	"\x1bCAPABILITY_NODE_SELECTOR_V1\x10\x03\x12\x1f\n" +
 	"\x1bCAPABILITY_TARGET_LABELS_V1\x10\x04\x12\"\n" +
-	"\x1eCAPABILITY_FINITE_JOB_RETRY_V1\x10\x05*d\n" +
+	"\x1eCAPABILITY_FINITE_JOB_RETRY_V1\x10\x05\x12+\n" +
+	"'CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1\x10\x06\x12\"\n" +
+	"\x1eCAPABILITY_WORKDIR_SNAPSHOT_V1\x10\a*d\n" +
 	"\rOutputStorage\x12\x1e\n" +
 	"\x1aOUTPUT_STORAGE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14OUTPUT_STORAGE_LOCAL\x10\x01\x12\x19\n" +
@@ -4360,12 +5773,13 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"%RETENTION_QUOTA_DOMAIN_OUTPUT_DOMAINS\x10\n" +
 	"\x12'\n" +
 	"#RETENTION_QUOTA_DOMAIN_OUTPUT_FILES\x10\v\x12+\n" +
-	"'RETENTION_QUOTA_DOMAIN_PRINCIPAL_SCOPES\x10\f*w\n" +
+	"'RETENTION_QUOTA_DOMAIN_PRINCIPAL_SCOPES\x10\f*\x93\x01\n" +
 	"\tPruneMode\x12\x1a\n" +
 	"\x16PRUNE_MODE_UNSPECIFIED\x10\x00\x12\x14\n" +
 	"\x10PRUNE_MODE_WHOLE\x10\x01\x12\x1c\n" +
 	"\x18PRUNE_MODE_METADATA_ONLY\x10\x02\x12\x1a\n" +
-	"\x16PRUNE_MODE_OUTPUT_ONLY\x10\x03*\xb3\x02\n" +
+	"\x16PRUNE_MODE_OUTPUT_ONLY\x10\x03\x12\x1a\n" +
+	"\x16PRUNE_MODE_RESULT_ONLY\x10\x04*\xb3\x02\n" +
 	"\x15RetentionExpiryReason\x12'\n" +
 	"#RETENTION_EXPIRY_REASON_UNSPECIFIED\x10\x00\x12*\n" +
 	"&RETENTION_EXPIRY_REASON_RESULT_EXPIRED\x10\x01\x121\n" +
@@ -4421,7 +5835,20 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x18EXCLUDED_CHARGE_TRANSFER\x10\x02\x12\x17\n" +
 	"\x13EXCLUDED_CHARGE_TAX\x10\x03\x12\x1c\n" +
 	"\x18EXCLUDED_CHARGE_LICENSES\x10\x04\x12(\n" +
-	"$EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS\x10\x052\xc1\b\n" +
+	"$EXCLUDED_CHARGE_PROVIDER_ADJUSTMENTS\x10\x05*\xf2\x01\n" +
+	"\x13ArtifactUploadState\x12%\n" +
+	"!ARTIFACT_UPLOAD_STATE_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eARTIFACT_UPLOAD_STATE_CREATING\x10\x01\x12\"\n" +
+	"\x1eARTIFACT_UPLOAD_STATE_WRITABLE\x10\x02\x12$\n" +
+	" ARTIFACT_UPLOAD_STATE_FINALIZING\x10\x03\x12\"\n" +
+	"\x1eARTIFACT_UPLOAD_STATE_COMPLETE\x10\x04\x12\"\n" +
+	"\x1eARTIFACT_UPLOAD_STATE_DELETING\x10\x05*\xc6\x01\n" +
+	"\x13ArtifactResultState\x12%\n" +
+	"!ARTIFACT_RESULT_STATE_UNSPECIFIED\x10\x00\x12 \n" +
+	"\x1cARTIFACT_RESULT_STATE_ABSENT\x10\x01\x12#\n" +
+	"\x1fARTIFACT_RESULT_STATE_AVAILABLE\x10\x02\x12!\n" +
+	"\x1dARTIFACT_RESULT_STATE_EXPIRED\x10\x03\x12\x1e\n" +
+	"\x1aARTIFACT_RESULT_STATE_HELD\x10\x042\xa0\x10\n" +
 	"\x0eControlService\x12D\n" +
 	"\tQuoteTask\x12\x1a.skygo.v1.QuoteTaskRequest\x1a\x1b.skygo.v1.QuoteTaskResponse\x12A\n" +
 	"\bPlanTask\x12\x19.skygo.v1.PlanTaskRequest\x1a\x1a.skygo.v1.PlanTaskResponse\x12D\n" +
@@ -4436,7 +5863,17 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\fGetRetention\x12\x1d.skygo.v1.GetRetentionRequest\x1a\x1e.skygo.v1.GetRetentionResponse\x12\\\n" +
 	"\x11SubmitRetainedJob\x12\".skygo.v1.SubmitRetainedJobRequest\x1a#.skygo.v1.SubmitRetainedJobResponse\x12D\n" +
 	"\tPruneJobs\x12\x1a.skygo.v1.PruneJobsRequest\x1a\x1b.skygo.v1.PruneJobsResponse\x12j\n" +
-	"\x15StreamRetainedJobLogs\x12&.skygo.v1.StreamRetainedJobLogsRequest\x1a'.skygo.v1.StreamRetainedJobLogsResponse0\x01B)Z'github.com/tmc/skygo/gen/skygo/v1;skyv1b\x06proto3"
+	"\x15StreamRetainedJobLogs\x12&.skygo.v1.StreamRetainedJobLogsRequest\x1a'.skygo.v1.StreamRetainedJobLogsResponse0\x01\x12_\n" +
+	"\x12SubmitWorkspaceJob\x12#.skygo.v1.SubmitWorkspaceJobRequest\x1a$.skygo.v1.SubmitWorkspaceJobResponse\x12b\n" +
+	"\x13BeginArtifactUpload\x12$.skygo.v1.BeginArtifactUploadRequest\x1a%.skygo.v1.BeginArtifactUploadResponse\x12\\\n" +
+	"\x11GetArtifactUpload\x12\".skygo.v1.GetArtifactUploadRequest\x1a#.skygo.v1.GetArtifactUploadResponse\x12_\n" +
+	"\x12WriteArtifactChunk\x12#.skygo.v1.WriteArtifactChunkRequest\x1a$.skygo.v1.WriteArtifactChunkResponse\x12k\n" +
+	"\x16FinalizeArtifactUpload\x12'.skygo.v1.FinalizeArtifactUploadRequest\x1a(.skygo.v1.FinalizeArtifactUploadResponse\x12e\n" +
+	"\x14CancelArtifactUpload\x12%.skygo.v1.CancelArtifactUploadRequest\x1a&.skygo.v1.CancelArtifactUploadResponse\x12h\n" +
+	"\x15BeginArtifactDownload\x12&.skygo.v1.BeginArtifactDownloadRequest\x1a'.skygo.v1.BeginArtifactDownloadResponse\x12\\\n" +
+	"\x11ReadArtifactChunk\x12\".skygo.v1.ReadArtifactChunkRequest\x1a#.skygo.v1.ReadArtifactChunkResponse\x12h\n" +
+	"\x15CloseArtifactDownload\x12&.skygo.v1.CloseArtifactDownloadRequest\x1a'.skygo.v1.CloseArtifactDownloadResponse\x12S\n" +
+	"\x0eRemoveArtifact\x12\x1f.skygo.v1.RemoveArtifactRequest\x1a .skygo.v1.RemoveArtifactResponseB)Z'github.com/tmc/skygo/gen/skygo/v1;skyv1b\x06proto3"
 
 var (
 	file_skygo_v1_control_proto_rawDescOnce sync.Once
@@ -4450,179 +5887,244 @@ func file_skygo_v1_control_proto_rawDescGZIP() []byte {
 	return file_skygo_v1_control_proto_rawDescData
 }
 
-var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 15)
-var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
+var file_skygo_v1_control_proto_enumTypes = make([]protoimpl.EnumInfo, 17)
+var file_skygo_v1_control_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
 var file_skygo_v1_control_proto_goTypes = []any{
-	(JobState)(0),                         // 0: skygo.v1.JobState
-	(Capability)(0),                       // 1: skygo.v1.Capability
-	(OutputStorage)(0),                    // 2: skygo.v1.OutputStorage
-	(RetentionQuotaDomain)(0),             // 3: skygo.v1.RetentionQuotaDomain
-	(PruneMode)(0),                        // 4: skygo.v1.PruneMode
-	(RetentionExpiryReason)(0),            // 5: skygo.v1.RetentionExpiryReason
-	(RateUnit)(0),                         // 6: skygo.v1.RateUnit
-	(FactOrigin)(0),                       // 7: skygo.v1.FactOrigin
-	(CapacityState)(0),                    // 8: skygo.v1.CapacityState
-	(CapacityFailureReason)(0),            // 9: skygo.v1.CapacityFailureReason
-	(QuoteOutcome)(0),                     // 10: skygo.v1.QuoteOutcome
-	(PriceStatus)(0),                      // 11: skygo.v1.PriceStatus
-	(FactFreshness)(0),                    // 12: skygo.v1.FactFreshness
-	(EstimateStatus)(0),                   // 13: skygo.v1.EstimateStatus
-	(ExcludedCharge)(0),                   // 14: skygo.v1.ExcludedCharge
-	(*Task)(nil),                          // 15: skygo.v1.Task
-	(*RetryPolicy)(nil),                   // 16: skygo.v1.RetryPolicy
-	(*Job)(nil),                           // 17: skygo.v1.Job
-	(*Attempt)(nil),                       // 18: skygo.v1.Attempt
-	(*Target)(nil),                        // 19: skygo.v1.Target
-	(*Rejection)(nil),                     // 20: skygo.v1.Rejection
-	(*PlanTaskRequest)(nil),               // 21: skygo.v1.PlanTaskRequest
-	(*PlanTaskResponse)(nil),              // 22: skygo.v1.PlanTaskResponse
-	(*SubmitJobRequest)(nil),              // 23: skygo.v1.SubmitJobRequest
-	(*SubmitJobResponse)(nil),             // 24: skygo.v1.SubmitJobResponse
-	(*GetJobRequest)(nil),                 // 25: skygo.v1.GetJobRequest
-	(*GetJobResponse)(nil),                // 26: skygo.v1.GetJobResponse
-	(*ListJobsRequest)(nil),               // 27: skygo.v1.ListJobsRequest
-	(*ListJobsResponse)(nil),              // 28: skygo.v1.ListJobsResponse
-	(*CancelJobRequest)(nil),              // 29: skygo.v1.CancelJobRequest
-	(*CancelJobResponse)(nil),             // 30: skygo.v1.CancelJobResponse
-	(*StreamJobLogsRequest)(nil),          // 31: skygo.v1.StreamJobLogsRequest
-	(*StreamJobLogsResponse)(nil),         // 32: skygo.v1.StreamJobLogsResponse
-	(*ListTargetsRequest)(nil),            // 33: skygo.v1.ListTargetsRequest
-	(*ListTargetsResponse)(nil),           // 34: skygo.v1.ListTargetsResponse
-	(*GetServerInfoRequest)(nil),          // 35: skygo.v1.GetServerInfoRequest
-	(*GetServerInfoResponse)(nil),         // 36: skygo.v1.GetServerInfoResponse
-	(*RequestDomain)(nil),                 // 37: skygo.v1.RequestDomain
-	(*GetRetentionRequest)(nil),           // 38: skygo.v1.GetRetentionRequest
-	(*GetRetentionResponse)(nil),          // 39: skygo.v1.GetRetentionResponse
-	(*RetentionTarget)(nil),               // 40: skygo.v1.RetentionTarget
-	(*RetentionUsage)(nil),                // 41: skygo.v1.RetentionUsage
-	(*RetentionAdmin)(nil),                // 42: skygo.v1.RetentionAdmin
-	(*RetentionObligation)(nil),           // 43: skygo.v1.RetentionObligation
-	(*SubmitRetainedJobRequest)(nil),      // 44: skygo.v1.SubmitRetainedJobRequest
-	(*SubmitRetainedJobResponse)(nil),     // 45: skygo.v1.SubmitRetainedJobResponse
-	(*PruneJobsRequest)(nil),              // 46: skygo.v1.PruneJobsRequest
-	(*PruneJobsResponse)(nil),             // 47: skygo.v1.PruneJobsResponse
-	(*PruneSkip)(nil),                     // 48: skygo.v1.PruneSkip
-	(*RetentionChargeTransfer)(nil),       // 49: skygo.v1.RetentionChargeTransfer
-	(*StreamRetainedJobLogsRequest)(nil),  // 50: skygo.v1.StreamRetainedJobLogsRequest
-	(*StreamRetainedJobLogsResponse)(nil), // 51: skygo.v1.StreamRetainedJobLogsResponse
-	(*RetentionExpiry)(nil),               // 52: skygo.v1.RetentionExpiry
-	(*RetentionCapacity)(nil),             // 53: skygo.v1.RetentionCapacity
-	(*Money)(nil),                         // 54: skygo.v1.Money
-	(*Quote)(nil),                         // 55: skygo.v1.Quote
-	(*CapacitySnapshot)(nil),              // 56: skygo.v1.CapacitySnapshot
-	(*QuoteCandidate)(nil),                // 57: skygo.v1.QuoteCandidate
-	(*QuoteTaskRequest)(nil),              // 58: skygo.v1.QuoteTaskRequest
-	(*QuoteTaskResponse)(nil),             // 59: skygo.v1.QuoteTaskResponse
-	nil,                                   // 60: skygo.v1.Task.EnvEntry
-	nil,                                   // 61: skygo.v1.Task.TargetLabelsEntry
-	nil,                                   // 62: skygo.v1.Task.NodeSelectorEntry
-	nil,                                   // 63: skygo.v1.Target.LabelsEntry
-	(*timestamppb.Timestamp)(nil),         // 64: google.protobuf.Timestamp
+	(JobState)(0),                          // 0: skygo.v1.JobState
+	(Capability)(0),                        // 1: skygo.v1.Capability
+	(OutputStorage)(0),                     // 2: skygo.v1.OutputStorage
+	(RetentionQuotaDomain)(0),              // 3: skygo.v1.RetentionQuotaDomain
+	(PruneMode)(0),                         // 4: skygo.v1.PruneMode
+	(RetentionExpiryReason)(0),             // 5: skygo.v1.RetentionExpiryReason
+	(RateUnit)(0),                          // 6: skygo.v1.RateUnit
+	(FactOrigin)(0),                        // 7: skygo.v1.FactOrigin
+	(CapacityState)(0),                     // 8: skygo.v1.CapacityState
+	(CapacityFailureReason)(0),             // 9: skygo.v1.CapacityFailureReason
+	(QuoteOutcome)(0),                      // 10: skygo.v1.QuoteOutcome
+	(PriceStatus)(0),                       // 11: skygo.v1.PriceStatus
+	(FactFreshness)(0),                     // 12: skygo.v1.FactFreshness
+	(EstimateStatus)(0),                    // 13: skygo.v1.EstimateStatus
+	(ExcludedCharge)(0),                    // 14: skygo.v1.ExcludedCharge
+	(ArtifactUploadState)(0),               // 15: skygo.v1.ArtifactUploadState
+	(ArtifactResultState)(0),               // 16: skygo.v1.ArtifactResultState
+	(*Task)(nil),                           // 17: skygo.v1.Task
+	(*RetryPolicy)(nil),                    // 18: skygo.v1.RetryPolicy
+	(*Job)(nil),                            // 19: skygo.v1.Job
+	(*Attempt)(nil),                        // 20: skygo.v1.Attempt
+	(*Target)(nil),                         // 21: skygo.v1.Target
+	(*Rejection)(nil),                      // 22: skygo.v1.Rejection
+	(*PlanTaskRequest)(nil),                // 23: skygo.v1.PlanTaskRequest
+	(*PlanTaskResponse)(nil),               // 24: skygo.v1.PlanTaskResponse
+	(*SubmitJobRequest)(nil),               // 25: skygo.v1.SubmitJobRequest
+	(*SubmitJobResponse)(nil),              // 26: skygo.v1.SubmitJobResponse
+	(*GetJobRequest)(nil),                  // 27: skygo.v1.GetJobRequest
+	(*GetJobResponse)(nil),                 // 28: skygo.v1.GetJobResponse
+	(*ListJobsRequest)(nil),                // 29: skygo.v1.ListJobsRequest
+	(*ListJobsResponse)(nil),               // 30: skygo.v1.ListJobsResponse
+	(*CancelJobRequest)(nil),               // 31: skygo.v1.CancelJobRequest
+	(*CancelJobResponse)(nil),              // 32: skygo.v1.CancelJobResponse
+	(*StreamJobLogsRequest)(nil),           // 33: skygo.v1.StreamJobLogsRequest
+	(*StreamJobLogsResponse)(nil),          // 34: skygo.v1.StreamJobLogsResponse
+	(*ListTargetsRequest)(nil),             // 35: skygo.v1.ListTargetsRequest
+	(*ListTargetsResponse)(nil),            // 36: skygo.v1.ListTargetsResponse
+	(*GetServerInfoRequest)(nil),           // 37: skygo.v1.GetServerInfoRequest
+	(*GetServerInfoResponse)(nil),          // 38: skygo.v1.GetServerInfoResponse
+	(*RequestDomain)(nil),                  // 39: skygo.v1.RequestDomain
+	(*GetRetentionRequest)(nil),            // 40: skygo.v1.GetRetentionRequest
+	(*GetRetentionResponse)(nil),           // 41: skygo.v1.GetRetentionResponse
+	(*RetentionTarget)(nil),                // 42: skygo.v1.RetentionTarget
+	(*RetentionUsage)(nil),                 // 43: skygo.v1.RetentionUsage
+	(*RetentionAdmin)(nil),                 // 44: skygo.v1.RetentionAdmin
+	(*RetentionObligation)(nil),            // 45: skygo.v1.RetentionObligation
+	(*SubmitRetainedJobRequest)(nil),       // 46: skygo.v1.SubmitRetainedJobRequest
+	(*SubmitRetainedJobResponse)(nil),      // 47: skygo.v1.SubmitRetainedJobResponse
+	(*PruneJobsRequest)(nil),               // 48: skygo.v1.PruneJobsRequest
+	(*PruneJobsResponse)(nil),              // 49: skygo.v1.PruneJobsResponse
+	(*PruneSkip)(nil),                      // 50: skygo.v1.PruneSkip
+	(*RetentionChargeTransfer)(nil),        // 51: skygo.v1.RetentionChargeTransfer
+	(*StreamRetainedJobLogsRequest)(nil),   // 52: skygo.v1.StreamRetainedJobLogsRequest
+	(*StreamRetainedJobLogsResponse)(nil),  // 53: skygo.v1.StreamRetainedJobLogsResponse
+	(*RetentionExpiry)(nil),                // 54: skygo.v1.RetentionExpiry
+	(*RetentionCapacity)(nil),              // 55: skygo.v1.RetentionCapacity
+	(*Money)(nil),                          // 56: skygo.v1.Money
+	(*Quote)(nil),                          // 57: skygo.v1.Quote
+	(*CapacitySnapshot)(nil),               // 58: skygo.v1.CapacitySnapshot
+	(*QuoteCandidate)(nil),                 // 59: skygo.v1.QuoteCandidate
+	(*QuoteTaskRequest)(nil),               // 60: skygo.v1.QuoteTaskRequest
+	(*QuoteTaskResponse)(nil),              // 61: skygo.v1.QuoteTaskResponse
+	(*ArtifactRef)(nil),                    // 62: skygo.v1.ArtifactRef
+	(*ArtifactUpload)(nil),                 // 63: skygo.v1.ArtifactUpload
+	(*BeginArtifactUploadRequest)(nil),     // 64: skygo.v1.BeginArtifactUploadRequest
+	(*BeginArtifactUploadResponse)(nil),    // 65: skygo.v1.BeginArtifactUploadResponse
+	(*GetArtifactUploadRequest)(nil),       // 66: skygo.v1.GetArtifactUploadRequest
+	(*GetArtifactUploadResponse)(nil),      // 67: skygo.v1.GetArtifactUploadResponse
+	(*WriteArtifactChunkRequest)(nil),      // 68: skygo.v1.WriteArtifactChunkRequest
+	(*WriteArtifactChunkResponse)(nil),     // 69: skygo.v1.WriteArtifactChunkResponse
+	(*FinalizeArtifactUploadRequest)(nil),  // 70: skygo.v1.FinalizeArtifactUploadRequest
+	(*FinalizeArtifactUploadResponse)(nil), // 71: skygo.v1.FinalizeArtifactUploadResponse
+	(*CancelArtifactUploadRequest)(nil),    // 72: skygo.v1.CancelArtifactUploadRequest
+	(*CancelArtifactUploadResponse)(nil),   // 73: skygo.v1.CancelArtifactUploadResponse
+	(*BeginArtifactDownloadRequest)(nil),   // 74: skygo.v1.BeginArtifactDownloadRequest
+	(*BeginArtifactDownloadResponse)(nil),  // 75: skygo.v1.BeginArtifactDownloadResponse
+	(*ReadArtifactChunkRequest)(nil),       // 76: skygo.v1.ReadArtifactChunkRequest
+	(*ReadArtifactChunkResponse)(nil),      // 77: skygo.v1.ReadArtifactChunkResponse
+	(*CloseArtifactDownloadRequest)(nil),   // 78: skygo.v1.CloseArtifactDownloadRequest
+	(*CloseArtifactDownloadResponse)(nil),  // 79: skygo.v1.CloseArtifactDownloadResponse
+	(*RemoveArtifactRequest)(nil),          // 80: skygo.v1.RemoveArtifactRequest
+	(*RemoveArtifactResponse)(nil),         // 81: skygo.v1.RemoveArtifactResponse
+	(*SubmitWorkspaceJobRequest)(nil),      // 82: skygo.v1.SubmitWorkspaceJobRequest
+	(*SubmitWorkspaceJobResponse)(nil),     // 83: skygo.v1.SubmitWorkspaceJobResponse
+	(*ArtifactResult)(nil),                 // 84: skygo.v1.ArtifactResult
+	nil,                                    // 85: skygo.v1.Task.EnvEntry
+	nil,                                    // 86: skygo.v1.Task.TargetLabelsEntry
+	nil,                                    // 87: skygo.v1.Task.NodeSelectorEntry
+	nil,                                    // 88: skygo.v1.Target.LabelsEntry
+	(*timestamppb.Timestamp)(nil),          // 89: google.protobuf.Timestamp
 }
 var file_skygo_v1_control_proto_depIdxs = []int32{
-	60, // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
-	61, // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
-	62, // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
-	16, // 3: skygo.v1.Task.retry:type_name -> skygo.v1.RetryPolicy
-	15, // 4: skygo.v1.Job.task:type_name -> skygo.v1.Task
-	0,  // 5: skygo.v1.Job.state:type_name -> skygo.v1.JobState
-	64, // 6: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
-	64, // 7: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
-	18, // 8: skygo.v1.Job.attempts:type_name -> skygo.v1.Attempt
-	64, // 9: skygo.v1.Job.next_attempt_at:type_name -> google.protobuf.Timestamp
-	0,  // 10: skygo.v1.Attempt.state:type_name -> skygo.v1.JobState
-	64, // 11: skygo.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
-	64, // 12: skygo.v1.Attempt.starting_at:type_name -> google.protobuf.Timestamp
-	64, // 13: skygo.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
-	1,  // 14: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
-	63, // 15: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
-	15, // 16: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
-	20, // 17: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
-	15, // 18: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
-	17, // 19: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
-	17, // 20: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
-	17, // 21: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
-	17, // 22: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
-	19, // 23: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
-	19, // 24: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
-	37, // 25: skygo.v1.GetRetentionResponse.domain:type_name -> skygo.v1.RequestDomain
-	64, // 26: skygo.v1.GetRetentionResponse.accept_until:type_name -> google.protobuf.Timestamp
-	64, // 27: skygo.v1.GetRetentionResponse.retry_until:type_name -> google.protobuf.Timestamp
-	64, // 28: skygo.v1.GetRetentionResponse.epoch_zero_cutoff:type_name -> google.protobuf.Timestamp
-	40, // 29: skygo.v1.GetRetentionResponse.targets:type_name -> skygo.v1.RetentionTarget
-	42, // 30: skygo.v1.GetRetentionResponse.admin:type_name -> skygo.v1.RetentionAdmin
-	2,  // 31: skygo.v1.RetentionTarget.output_storage:type_name -> skygo.v1.OutputStorage
-	3,  // 32: skygo.v1.RetentionUsage.domain:type_name -> skygo.v1.RetentionQuotaDomain
-	41, // 33: skygo.v1.RetentionAdmin.usage:type_name -> skygo.v1.RetentionUsage
-	43, // 34: skygo.v1.RetentionAdmin.obligations:type_name -> skygo.v1.RetentionObligation
-	64, // 35: skygo.v1.RetentionAdmin.observed_at:type_name -> google.protobuf.Timestamp
-	64, // 36: skygo.v1.RetentionObligation.created_at:type_name -> google.protobuf.Timestamp
-	15, // 37: skygo.v1.SubmitRetainedJobRequest.task:type_name -> skygo.v1.Task
-	37, // 38: skygo.v1.SubmitRetainedJobRequest.domain:type_name -> skygo.v1.RequestDomain
-	17, // 39: skygo.v1.SubmitRetainedJobResponse.job:type_name -> skygo.v1.Job
-	64, // 40: skygo.v1.PruneJobsRequest.before:type_name -> google.protobuf.Timestamp
-	4,  // 41: skygo.v1.PruneJobsRequest.mode:type_name -> skygo.v1.PruneMode
-	48, // 42: skygo.v1.PruneJobsResponse.skips:type_name -> skygo.v1.PruneSkip
-	49, // 43: skygo.v1.PruneJobsResponse.transfers:type_name -> skygo.v1.RetentionChargeTransfer
-	3,  // 44: skygo.v1.RetentionChargeTransfer.domain:type_name -> skygo.v1.RetentionQuotaDomain
-	5,  // 45: skygo.v1.RetentionExpiry.reason:type_name -> skygo.v1.RetentionExpiryReason
-	3,  // 46: skygo.v1.RetentionCapacity.domain:type_name -> skygo.v1.RetentionQuotaDomain
-	54, // 47: skygo.v1.Quote.rate:type_name -> skygo.v1.Money
-	6,  // 48: skygo.v1.Quote.unit:type_name -> skygo.v1.RateUnit
-	7,  // 49: skygo.v1.Quote.origin:type_name -> skygo.v1.FactOrigin
-	64, // 50: skygo.v1.Quote.observed_at:type_name -> google.protobuf.Timestamp
-	64, // 51: skygo.v1.Quote.valid_until:type_name -> google.protobuf.Timestamp
-	8,  // 52: skygo.v1.CapacitySnapshot.state:type_name -> skygo.v1.CapacityState
-	7,  // 53: skygo.v1.CapacitySnapshot.origin:type_name -> skygo.v1.FactOrigin
-	64, // 54: skygo.v1.CapacitySnapshot.observed_at:type_name -> google.protobuf.Timestamp
-	64, // 55: skygo.v1.CapacitySnapshot.valid_until:type_name -> google.protobuf.Timestamp
-	9,  // 56: skygo.v1.CapacitySnapshot.failure_reason:type_name -> skygo.v1.CapacityFailureReason
-	55, // 57: skygo.v1.QuoteCandidate.quote:type_name -> skygo.v1.Quote
-	11, // 58: skygo.v1.QuoteCandidate.price_status:type_name -> skygo.v1.PriceStatus
-	56, // 59: skygo.v1.QuoteCandidate.capacity:type_name -> skygo.v1.CapacitySnapshot
-	12, // 60: skygo.v1.QuoteCandidate.capacity_freshness:type_name -> skygo.v1.FactFreshness
-	54, // 61: skygo.v1.QuoteCandidate.estimated_compute_cost:type_name -> skygo.v1.Money
-	13, // 62: skygo.v1.QuoteCandidate.estimate_status:type_name -> skygo.v1.EstimateStatus
-	15, // 63: skygo.v1.QuoteTaskRequest.task:type_name -> skygo.v1.Task
-	6,  // 64: skygo.v1.QuoteTaskRequest.unit:type_name -> skygo.v1.RateUnit
-	64, // 65: skygo.v1.QuoteTaskResponse.as_of:type_name -> google.protobuf.Timestamp
-	6,  // 66: skygo.v1.QuoteTaskResponse.unit:type_name -> skygo.v1.RateUnit
-	10, // 67: skygo.v1.QuoteTaskResponse.outcome:type_name -> skygo.v1.QuoteOutcome
-	57, // 68: skygo.v1.QuoteTaskResponse.candidates:type_name -> skygo.v1.QuoteCandidate
-	14, // 69: skygo.v1.QuoteTaskResponse.excluded_charges:type_name -> skygo.v1.ExcludedCharge
-	58, // 70: skygo.v1.ControlService.QuoteTask:input_type -> skygo.v1.QuoteTaskRequest
-	21, // 71: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
-	23, // 72: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
-	23, // 73: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
-	25, // 74: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
-	27, // 75: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
-	29, // 76: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
-	31, // 77: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
-	33, // 78: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
-	35, // 79: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
-	38, // 80: skygo.v1.ControlService.GetRetention:input_type -> skygo.v1.GetRetentionRequest
-	44, // 81: skygo.v1.ControlService.SubmitRetainedJob:input_type -> skygo.v1.SubmitRetainedJobRequest
-	46, // 82: skygo.v1.ControlService.PruneJobs:input_type -> skygo.v1.PruneJobsRequest
-	50, // 83: skygo.v1.ControlService.StreamRetainedJobLogs:input_type -> skygo.v1.StreamRetainedJobLogsRequest
-	59, // 84: skygo.v1.ControlService.QuoteTask:output_type -> skygo.v1.QuoteTaskResponse
-	22, // 85: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
-	24, // 86: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
-	24, // 87: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
-	26, // 88: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
-	28, // 89: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
-	30, // 90: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
-	32, // 91: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
-	34, // 92: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
-	36, // 93: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
-	39, // 94: skygo.v1.ControlService.GetRetention:output_type -> skygo.v1.GetRetentionResponse
-	45, // 95: skygo.v1.ControlService.SubmitRetainedJob:output_type -> skygo.v1.SubmitRetainedJobResponse
-	47, // 96: skygo.v1.ControlService.PruneJobs:output_type -> skygo.v1.PruneJobsResponse
-	51, // 97: skygo.v1.ControlService.StreamRetainedJobLogs:output_type -> skygo.v1.StreamRetainedJobLogsResponse
-	84, // [84:98] is the sub-list for method output_type
-	70, // [70:84] is the sub-list for method input_type
-	70, // [70:70] is the sub-list for extension type_name
-	70, // [70:70] is the sub-list for extension extendee
-	0,  // [0:70] is the sub-list for field type_name
+	85,  // 0: skygo.v1.Task.env:type_name -> skygo.v1.Task.EnvEntry
+	86,  // 1: skygo.v1.Task.target_labels:type_name -> skygo.v1.Task.TargetLabelsEntry
+	87,  // 2: skygo.v1.Task.node_selector:type_name -> skygo.v1.Task.NodeSelectorEntry
+	18,  // 3: skygo.v1.Task.retry:type_name -> skygo.v1.RetryPolicy
+	62,  // 4: skygo.v1.Task.workdir:type_name -> skygo.v1.ArtifactRef
+	17,  // 5: skygo.v1.Job.task:type_name -> skygo.v1.Task
+	0,   // 6: skygo.v1.Job.state:type_name -> skygo.v1.JobState
+	89,  // 7: skygo.v1.Job.created_at:type_name -> google.protobuf.Timestamp
+	89,  // 8: skygo.v1.Job.updated_at:type_name -> google.protobuf.Timestamp
+	20,  // 9: skygo.v1.Job.attempts:type_name -> skygo.v1.Attempt
+	89,  // 10: skygo.v1.Job.next_attempt_at:type_name -> google.protobuf.Timestamp
+	84,  // 11: skygo.v1.Job.result:type_name -> skygo.v1.ArtifactResult
+	0,   // 12: skygo.v1.Attempt.state:type_name -> skygo.v1.JobState
+	89,  // 13: skygo.v1.Attempt.created_at:type_name -> google.protobuf.Timestamp
+	89,  // 14: skygo.v1.Attempt.starting_at:type_name -> google.protobuf.Timestamp
+	89,  // 15: skygo.v1.Attempt.finished_at:type_name -> google.protobuf.Timestamp
+	84,  // 16: skygo.v1.Attempt.result:type_name -> skygo.v1.ArtifactResult
+	1,   // 17: skygo.v1.Target.capabilities:type_name -> skygo.v1.Capability
+	88,  // 18: skygo.v1.Target.labels:type_name -> skygo.v1.Target.LabelsEntry
+	17,  // 19: skygo.v1.PlanTaskRequest.task:type_name -> skygo.v1.Task
+	22,  // 20: skygo.v1.PlanTaskResponse.rejections:type_name -> skygo.v1.Rejection
+	17,  // 21: skygo.v1.SubmitJobRequest.task:type_name -> skygo.v1.Task
+	19,  // 22: skygo.v1.SubmitJobResponse.job:type_name -> skygo.v1.Job
+	19,  // 23: skygo.v1.GetJobResponse.job:type_name -> skygo.v1.Job
+	19,  // 24: skygo.v1.ListJobsResponse.jobs:type_name -> skygo.v1.Job
+	19,  // 25: skygo.v1.CancelJobResponse.job:type_name -> skygo.v1.Job
+	21,  // 26: skygo.v1.ListTargetsResponse.targets:type_name -> skygo.v1.Target
+	21,  // 27: skygo.v1.GetServerInfoResponse.targets:type_name -> skygo.v1.Target
+	1,   // 28: skygo.v1.GetServerInfoResponse.capabilities:type_name -> skygo.v1.Capability
+	39,  // 29: skygo.v1.GetRetentionResponse.domain:type_name -> skygo.v1.RequestDomain
+	89,  // 30: skygo.v1.GetRetentionResponse.accept_until:type_name -> google.protobuf.Timestamp
+	89,  // 31: skygo.v1.GetRetentionResponse.retry_until:type_name -> google.protobuf.Timestamp
+	89,  // 32: skygo.v1.GetRetentionResponse.epoch_zero_cutoff:type_name -> google.protobuf.Timestamp
+	42,  // 33: skygo.v1.GetRetentionResponse.targets:type_name -> skygo.v1.RetentionTarget
+	44,  // 34: skygo.v1.GetRetentionResponse.admin:type_name -> skygo.v1.RetentionAdmin
+	2,   // 35: skygo.v1.RetentionTarget.output_storage:type_name -> skygo.v1.OutputStorage
+	3,   // 36: skygo.v1.RetentionUsage.domain:type_name -> skygo.v1.RetentionQuotaDomain
+	43,  // 37: skygo.v1.RetentionAdmin.usage:type_name -> skygo.v1.RetentionUsage
+	45,  // 38: skygo.v1.RetentionAdmin.obligations:type_name -> skygo.v1.RetentionObligation
+	89,  // 39: skygo.v1.RetentionAdmin.observed_at:type_name -> google.protobuf.Timestamp
+	89,  // 40: skygo.v1.RetentionObligation.created_at:type_name -> google.protobuf.Timestamp
+	17,  // 41: skygo.v1.SubmitRetainedJobRequest.task:type_name -> skygo.v1.Task
+	39,  // 42: skygo.v1.SubmitRetainedJobRequest.domain:type_name -> skygo.v1.RequestDomain
+	19,  // 43: skygo.v1.SubmitRetainedJobResponse.job:type_name -> skygo.v1.Job
+	89,  // 44: skygo.v1.PruneJobsRequest.before:type_name -> google.protobuf.Timestamp
+	4,   // 45: skygo.v1.PruneJobsRequest.mode:type_name -> skygo.v1.PruneMode
+	50,  // 46: skygo.v1.PruneJobsResponse.skips:type_name -> skygo.v1.PruneSkip
+	51,  // 47: skygo.v1.PruneJobsResponse.transfers:type_name -> skygo.v1.RetentionChargeTransfer
+	3,   // 48: skygo.v1.RetentionChargeTransfer.domain:type_name -> skygo.v1.RetentionQuotaDomain
+	5,   // 49: skygo.v1.RetentionExpiry.reason:type_name -> skygo.v1.RetentionExpiryReason
+	3,   // 50: skygo.v1.RetentionCapacity.domain:type_name -> skygo.v1.RetentionQuotaDomain
+	56,  // 51: skygo.v1.Quote.rate:type_name -> skygo.v1.Money
+	6,   // 52: skygo.v1.Quote.unit:type_name -> skygo.v1.RateUnit
+	7,   // 53: skygo.v1.Quote.origin:type_name -> skygo.v1.FactOrigin
+	89,  // 54: skygo.v1.Quote.observed_at:type_name -> google.protobuf.Timestamp
+	89,  // 55: skygo.v1.Quote.valid_until:type_name -> google.protobuf.Timestamp
+	8,   // 56: skygo.v1.CapacitySnapshot.state:type_name -> skygo.v1.CapacityState
+	7,   // 57: skygo.v1.CapacitySnapshot.origin:type_name -> skygo.v1.FactOrigin
+	89,  // 58: skygo.v1.CapacitySnapshot.observed_at:type_name -> google.protobuf.Timestamp
+	89,  // 59: skygo.v1.CapacitySnapshot.valid_until:type_name -> google.protobuf.Timestamp
+	9,   // 60: skygo.v1.CapacitySnapshot.failure_reason:type_name -> skygo.v1.CapacityFailureReason
+	57,  // 61: skygo.v1.QuoteCandidate.quote:type_name -> skygo.v1.Quote
+	11,  // 62: skygo.v1.QuoteCandidate.price_status:type_name -> skygo.v1.PriceStatus
+	58,  // 63: skygo.v1.QuoteCandidate.capacity:type_name -> skygo.v1.CapacitySnapshot
+	12,  // 64: skygo.v1.QuoteCandidate.capacity_freshness:type_name -> skygo.v1.FactFreshness
+	56,  // 65: skygo.v1.QuoteCandidate.estimated_compute_cost:type_name -> skygo.v1.Money
+	13,  // 66: skygo.v1.QuoteCandidate.estimate_status:type_name -> skygo.v1.EstimateStatus
+	17,  // 67: skygo.v1.QuoteTaskRequest.task:type_name -> skygo.v1.Task
+	6,   // 68: skygo.v1.QuoteTaskRequest.unit:type_name -> skygo.v1.RateUnit
+	89,  // 69: skygo.v1.QuoteTaskResponse.as_of:type_name -> google.protobuf.Timestamp
+	6,   // 70: skygo.v1.QuoteTaskResponse.unit:type_name -> skygo.v1.RateUnit
+	10,  // 71: skygo.v1.QuoteTaskResponse.outcome:type_name -> skygo.v1.QuoteOutcome
+	59,  // 72: skygo.v1.QuoteTaskResponse.candidates:type_name -> skygo.v1.QuoteCandidate
+	14,  // 73: skygo.v1.QuoteTaskResponse.excluded_charges:type_name -> skygo.v1.ExcludedCharge
+	62,  // 74: skygo.v1.ArtifactUpload.reference:type_name -> skygo.v1.ArtifactRef
+	89,  // 75: skygo.v1.ArtifactUpload.expires_at:type_name -> google.protobuf.Timestamp
+	15,  // 76: skygo.v1.ArtifactUpload.state:type_name -> skygo.v1.ArtifactUploadState
+	63,  // 77: skygo.v1.BeginArtifactUploadResponse.upload:type_name -> skygo.v1.ArtifactUpload
+	63,  // 78: skygo.v1.GetArtifactUploadResponse.upload:type_name -> skygo.v1.ArtifactUpload
+	63,  // 79: skygo.v1.WriteArtifactChunkResponse.upload:type_name -> skygo.v1.ArtifactUpload
+	62,  // 80: skygo.v1.FinalizeArtifactUploadResponse.reference:type_name -> skygo.v1.ArtifactRef
+	62,  // 81: skygo.v1.BeginArtifactDownloadRequest.reference:type_name -> skygo.v1.ArtifactRef
+	62,  // 82: skygo.v1.BeginArtifactDownloadResponse.reference:type_name -> skygo.v1.ArtifactRef
+	89,  // 83: skygo.v1.BeginArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	62,  // 84: skygo.v1.RemoveArtifactRequest.reference:type_name -> skygo.v1.ArtifactRef
+	17,  // 85: skygo.v1.SubmitWorkspaceJobRequest.task:type_name -> skygo.v1.Task
+	39,  // 86: skygo.v1.SubmitWorkspaceJobRequest.domain:type_name -> skygo.v1.RequestDomain
+	19,  // 87: skygo.v1.SubmitWorkspaceJobResponse.job:type_name -> skygo.v1.Job
+	16,  // 88: skygo.v1.ArtifactResult.state:type_name -> skygo.v1.ArtifactResultState
+	62,  // 89: skygo.v1.ArtifactResult.reference:type_name -> skygo.v1.ArtifactRef
+	60,  // 90: skygo.v1.ControlService.QuoteTask:input_type -> skygo.v1.QuoteTaskRequest
+	23,  // 91: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
+	25,  // 92: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
+	25,  // 93: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
+	27,  // 94: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
+	29,  // 95: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
+	31,  // 96: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
+	33,  // 97: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
+	35,  // 98: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
+	37,  // 99: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
+	40,  // 100: skygo.v1.ControlService.GetRetention:input_type -> skygo.v1.GetRetentionRequest
+	46,  // 101: skygo.v1.ControlService.SubmitRetainedJob:input_type -> skygo.v1.SubmitRetainedJobRequest
+	48,  // 102: skygo.v1.ControlService.PruneJobs:input_type -> skygo.v1.PruneJobsRequest
+	52,  // 103: skygo.v1.ControlService.StreamRetainedJobLogs:input_type -> skygo.v1.StreamRetainedJobLogsRequest
+	82,  // 104: skygo.v1.ControlService.SubmitWorkspaceJob:input_type -> skygo.v1.SubmitWorkspaceJobRequest
+	64,  // 105: skygo.v1.ControlService.BeginArtifactUpload:input_type -> skygo.v1.BeginArtifactUploadRequest
+	66,  // 106: skygo.v1.ControlService.GetArtifactUpload:input_type -> skygo.v1.GetArtifactUploadRequest
+	68,  // 107: skygo.v1.ControlService.WriteArtifactChunk:input_type -> skygo.v1.WriteArtifactChunkRequest
+	70,  // 108: skygo.v1.ControlService.FinalizeArtifactUpload:input_type -> skygo.v1.FinalizeArtifactUploadRequest
+	72,  // 109: skygo.v1.ControlService.CancelArtifactUpload:input_type -> skygo.v1.CancelArtifactUploadRequest
+	74,  // 110: skygo.v1.ControlService.BeginArtifactDownload:input_type -> skygo.v1.BeginArtifactDownloadRequest
+	76,  // 111: skygo.v1.ControlService.ReadArtifactChunk:input_type -> skygo.v1.ReadArtifactChunkRequest
+	78,  // 112: skygo.v1.ControlService.CloseArtifactDownload:input_type -> skygo.v1.CloseArtifactDownloadRequest
+	80,  // 113: skygo.v1.ControlService.RemoveArtifact:input_type -> skygo.v1.RemoveArtifactRequest
+	61,  // 114: skygo.v1.ControlService.QuoteTask:output_type -> skygo.v1.QuoteTaskResponse
+	24,  // 115: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
+	26,  // 116: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
+	26,  // 117: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
+	28,  // 118: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
+	30,  // 119: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
+	32,  // 120: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
+	34,  // 121: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
+	36,  // 122: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
+	38,  // 123: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
+	41,  // 124: skygo.v1.ControlService.GetRetention:output_type -> skygo.v1.GetRetentionResponse
+	47,  // 125: skygo.v1.ControlService.SubmitRetainedJob:output_type -> skygo.v1.SubmitRetainedJobResponse
+	49,  // 126: skygo.v1.ControlService.PruneJobs:output_type -> skygo.v1.PruneJobsResponse
+	53,  // 127: skygo.v1.ControlService.StreamRetainedJobLogs:output_type -> skygo.v1.StreamRetainedJobLogsResponse
+	83,  // 128: skygo.v1.ControlService.SubmitWorkspaceJob:output_type -> skygo.v1.SubmitWorkspaceJobResponse
+	65,  // 129: skygo.v1.ControlService.BeginArtifactUpload:output_type -> skygo.v1.BeginArtifactUploadResponse
+	67,  // 130: skygo.v1.ControlService.GetArtifactUpload:output_type -> skygo.v1.GetArtifactUploadResponse
+	69,  // 131: skygo.v1.ControlService.WriteArtifactChunk:output_type -> skygo.v1.WriteArtifactChunkResponse
+	71,  // 132: skygo.v1.ControlService.FinalizeArtifactUpload:output_type -> skygo.v1.FinalizeArtifactUploadResponse
+	73,  // 133: skygo.v1.ControlService.CancelArtifactUpload:output_type -> skygo.v1.CancelArtifactUploadResponse
+	75,  // 134: skygo.v1.ControlService.BeginArtifactDownload:output_type -> skygo.v1.BeginArtifactDownloadResponse
+	77,  // 135: skygo.v1.ControlService.ReadArtifactChunk:output_type -> skygo.v1.ReadArtifactChunkResponse
+	79,  // 136: skygo.v1.ControlService.CloseArtifactDownload:output_type -> skygo.v1.CloseArtifactDownloadResponse
+	81,  // 137: skygo.v1.ControlService.RemoveArtifact:output_type -> skygo.v1.RemoveArtifactResponse
+	114, // [114:138] is the sub-list for method output_type
+	90,  // [90:114] is the sub-list for method input_type
+	90,  // [90:90] is the sub-list for extension type_name
+	90,  // [90:90] is the sub-list for extension extendee
+	0,   // [0:90] is the sub-list for field type_name
 }
 
 func init() { file_skygo_v1_control_proto_init() }
@@ -4642,8 +6144,8 @@ func file_skygo_v1_control_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_skygo_v1_control_proto_rawDesc), len(file_skygo_v1_control_proto_rawDesc)),
-			NumEnums:      15,
-			NumMessages:   49,
+			NumEnums:      17,
+			NumMessages:   72,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

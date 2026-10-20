@@ -1,0 +1,92 @@
+package store
+
+import (
+	"encoding/json"
+	"errors"
+	"unicode/utf8"
+
+	"github.com/tmc/skygo/internal/auth"
+	"github.com/tmc/skygo/internal/backend"
+	bolt "go.etcd.io/bbolt"
+)
+
+// ErrWorkspaceSubmitRequired rejects snapshot fields at a legacy submit boundary.
+var ErrWorkspaceSubmitRequired = errors.New("workspace task requires workspace submission")
+
+func artifactDiagnostic(s string) string {
+	s = boundedReason(s)
+	if len(s) > 128 {
+		s = s[:128]
+		for !utf8.ValidString(s) {
+			s = s[:len(s)-1]
+		}
+	}
+	return s
+}
+
+func hasWorkspaceFields(task backend.Task) bool {
+	return task.Workdir != nil || len(task.Setup) != 0 || len(task.Outputs) != 0
+}
+
+func artifactTaskRef(task backend.Task) (ArtifactRef, error) {
+	if task.Workdir == nil {
+		return ArtifactRef{}, errors.New("workspace requires workdir")
+	}
+	if err := backend.ValidateWorkspace(task); err != nil {
+		return ArtifactRef{}, err
+	}
+	// Canonical Ref uses signed wire sizes. Validate BEFORE converting; a
+	// negative value must never become a large unsigned reservation.
+	r := task.Workdir
+	return ArtifactRef{ID: r.ID, SHA256: r.SHA256, Size: uint64(r.Size)}, nil
+}
+
+// SubmitWorkspace accepts a snapshot task using the existing request protocol.
+// A nil domain selects disabled retention; a nonnil domain selects the retained
+// protocol. Both paths replay before current input/target availability checks.
+// Control must check real fresh authority and selected-target capability first
+// on a lookup MISS. Store accepts no capability claim from a wire request.
+func (s *Store) SubmitWorkspace(actor auth.Actor, domain *RequestDomain, requestID string, task backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64) (backend.Job, error) {
+	task = backend.CloneTask(task)
+	if domain == nil {
+		return s.submit(actor, requestID, task, target, binding, true)
+	}
+	return s.submitRetained(actor, *domain, requestID, task, target, binding, storage, reserve, true)
+}
+
+func validateSubmitWorkspace(task backend.Task, workspace bool) error {
+	if !workspace {
+		if hasWorkspaceFields(task) {
+			return ErrWorkspaceSubmitRequired
+		}
+		return nil
+	}
+	_, err := artifactTaskRef(task)
+	return err
+}
+
+// The reverse walk belongs to snapshot validation, not every upload chunk.
+// Acceptance writes the new core row and its exact pin in one transaction.
+func artifactValidateTaskRows(tx *bolt.Tx, st *artifactState) error {
+	return tx.Bucket(jobsBucket).ForEach(func(id, raw []byte) error {
+		var job backend.Job
+		if err := json.Unmarshal(raw, &job); err != nil {
+			return err
+		}
+		if err := backend.ValidateWorkspace(job.Task); err != nil {
+			return err
+		}
+		if job.Task.Workdir == nil {
+			return nil
+		}
+		if st == nil {
+			return ErrArtifactsDisabled
+		}
+		pin, ok := st.JobInputs[string(id)]
+		ref, err := artifactTaskRef(job.Task)
+		if !ok || err != nil || pin.JobID != job.ID || pin.Ref != ref {
+			return artifactCorrupt()
+		}
+		return nil
+	})
+}

@@ -34,6 +34,8 @@ func backup(dir, output string) error {
 // It never overwrites state or runs workloads. Keep the original installation
 // stopped before starting the restored copy: both have the same owner identity.
 // Supported legacy state migrates only on the subsequent Open.
+// Artifact-enabled snapshots require companion recovery; a database-only restore
+// is unsupported.
 func Restore(input, dir string) error {
 	if input == "" || dir == "" {
 		return errors.New("restore requires an input file and new data directory")
@@ -49,7 +51,17 @@ func restore(input, dir string) error {
 	defer db.Close()
 	// Validate before creating the destination. Mkdir, rather than MkdirAll,
 	// reserves a new directory and refuses every existing installation.
-	if err := db.View(validateSnapshot); err != nil {
+	if err := db.View(func(tx *bolt.Tx) error {
+		if err := validateSnapshot(tx); err != nil {
+			return err
+		}
+		// A validated artifact bucket is an installed companion root. The
+		// database contains neither its bytes nor authority to adopt a copy.
+		if tx.Bucket(artifactsBucket) != nil {
+			return errors.New("database-only restore of artifact-enabled state is unsupported")
+		}
+		return nil
+	}); err != nil {
 		return fmt.Errorf("validate restore snapshot: %w", err)
 	}
 	name, err := prepareSnapshot(db, filepath.Dir(dir))

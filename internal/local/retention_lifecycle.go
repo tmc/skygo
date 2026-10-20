@@ -18,6 +18,9 @@ func (b *Backend) attachRetention(e *execution, id string) {
 // goroutine has published completion after its last reader/file access. No caller
 // can replace these original owners with status or timeout-based assumptions.
 func (b *Backend) finishPayload(e *execution) {
+	if e.workspace != nil && !e.workspace.observation.Ready {
+		return
+	}
 	r := e.retained
 	if r == nil || r.released {
 		return
@@ -36,12 +39,22 @@ func (b *Backend) finishPayload(e *execution) {
 		}
 	}
 	e.output.mu.Lock()
-	closed := e.output.closed && e.output.markerCloseErr == nil
+	closed := e.output.closed && e.output.markerCloseErr == nil && e.output.markerFile == nil
 	e.output.mu.Unlock()
 	if !closed {
 		return
 	}
+	if e.owned != nil || e.retry != nil {
+		if e.readerCloseErr != nil || e.stdioWriterErr != nil || e.stdioWriter != nil {
+			return
+		}
+	}
 	b.publishOutputClosure(r)
+	// Output-only closure is independent of native/payload closure. Preserve
+	// the original Cmd/stdio/output frame whenever physical custody is held.
+	if (e.owned != nil || e.retry != nil) && (!e.shutdownPublished || !e.shutdownClosed) {
+		return
+	}
 	if e.owned != nil {
 		select {
 		case <-e.owned.reaped:
@@ -88,13 +101,22 @@ func (b *Backend) finishPayload(e *execution) {
 }
 
 // closeUnstartedOutput holds b.mu. No execution goroutine or Cmd owner was
-// installed on these early startup paths; the retained row contains only a hash.
-func (b *Backend) closeUnstartedOutput(out *output) {
-	if err := out.file.Close(); err == nil && out.retained != nil {
-		out.closed = true
+// installed on these early startup paths. Start fences subsequent output opens
+// while the one original owner/error remains held. Close never retries it.
+func (b *Backend) closeUnstartedOutput(out *output) error {
+	if b.unstartedOutput != nil {
+		return b.unstartedOutputErr
+	}
+	if err := out.file.Close(); err != nil {
+		b.unstartedOutput, b.unstartedOutputErr = out, err
+		return err
+	}
+	out.closed = true
+	if out.retained != nil {
 		b.publishOutputClosure(out.retained)
 		out.retained.released = true
 	}
+	return nil
 }
 
 // publishOutputClosure holds b.mu and runs only after actual writer/reader closure.

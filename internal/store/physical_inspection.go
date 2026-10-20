@@ -279,7 +279,7 @@ func readPhysicalScalars(tx *bolt.Tx, b *physicalBudget) error {
 		}
 		version = binary.BigEndian.Uint64(raw)
 	}
-	supported := marker == nil || version >= 1 && version <= 5
+	supported := marker == nil || version >= 1 && version <= schemaVersion
 	b.out.SchemaVersion, b.out.SchemaSupported = &version, &supported
 	if !supported {
 		return b.fail("unsupported_schema")

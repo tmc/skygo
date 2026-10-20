@@ -58,17 +58,9 @@ func cloneTarget(t backend.Target) backend.Target {
 	return t
 }
 func cloneTask(t backend.Task) backend.Task {
-	t.Argv = slices.Clone(t.Argv)
-	t.Env = maps.Clone(t.Env)
-	t.TargetLabels = maps.Clone(t.TargetLabels)
-	t.NodeSelector = maps.Clone(t.NodeSelector)
-	if t.Retry != nil {
-		p := *t.Retry
-		p.ExitCodes = slices.Clone(p.ExitCodes)
-		t.Retry = &p
-	}
-	return t
+	return backend.CloneTask(t)
 }
+
 func matchesLabels(have, want map[string]string) bool {
 	for k, v := range want {
 		value, ok := have[k]

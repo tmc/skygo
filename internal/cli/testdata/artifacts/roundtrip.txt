@@ -1,0 +1,32 @@
+server start
+skygo artifacts upload source
+cp stdout ref.json
+stderr 'upload-id: [0-9a-f]{32}'
+! exists native-marker
+skygo artifacts download --ref ref.json downloaded
+stdout '^downloaded\n$'
+cmp source/seed.txt downloaded/seed.txt
+private-mode downloaded downloaded/seed.txt
+# A second transfer cannot overwrite even a private pre-existing destination.
+! skygo artifacts download --ref ref.json downloaded
+stderr 'destination already exists'
+cmp source/seed.txt downloaded/seed.txt
+calls ok:BeginArtifactUpload 1
+calls ok:FinalizeArtifactUpload 1
+calls BeginArtifactDownload 1
+calls CloseArtifactDownload 1
+calls SubmitWorkspaceJob 0
+calls SubmitJob 0
+# Original24h/DeleteAfter and post-last-release grace apply to explicit Remove.
+# Refusal must preserve the complete object and its current read authority.
+! skygo artifacts remove --ref ref.json --yes
+stderr 'failed_precondition|conflict|held'
+skygo artifacts download --ref ref.json held-readable
+cmp source/seed.txt held-readable/seed.txt
+calls RemoveArtifact 1
+calls BeginArtifactDownload 2
+calls CloseArtifactDownload 2
+server stop
+! stderr .
+-- source/seed.txt --
+seed

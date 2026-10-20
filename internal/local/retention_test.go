@@ -68,7 +68,15 @@ func closureReference(t *testing.T, b *Backend, ref backend.OutputReference) bac
 func TestRetainedCompletion(t *testing.T) {
 	for _, mode := range []string{"success", "fail", "output", "cancel", "timeout", "start-failure"} {
 		t.Run(mode, func(t *testing.T) {
-			b := retainedBackend(t)
+			var b *Backend
+			var fixture *executionFixture
+			if mode == "start-failure" {
+				fixture = newExecutionFixture(t, true)
+				fixture.held = true
+				b = fixture.backend
+			} else {
+				b = retainedBackend(t)
+			}
 			id := strings.Repeat("1", 32)
 			ref := retainedReference(t, b, id)
 			program := task(mode)
@@ -79,7 +87,7 @@ func TestRetainedCompletion(t *testing.T) {
 				program.TimeoutSeconds = 1
 			}
 			if mode == "start-failure" {
-				program.Argv = []string{filepath.Join(t.TempDir(), "missing-program")}
+				program.Argv = []string{filepath.Join(b.directory, "missing-program")}
 			}
 			if err := b.BindOutput(ref); err != nil {
 				t.Fatal(err)
@@ -98,12 +106,18 @@ func TestRetainedCompletion(t *testing.T) {
 				t.Fatalf("default identity/proof changed: %+v", status)
 			}
 			ref = closureReference(t, b, ref)
-			if !ref.PayloadReleased || !validClosure(ref.ClosureID) {
+			if ref.PayloadReleased != (mode != "start-failure") || !validClosure(ref.ClosureID) {
 				t.Fatalf("closure=%+v", ref)
 			}
 			b.mu.Lock()
 			e := b.jobs[id]
-			if e.cmd != nil || e.output.file != nil || e.output.err != nil || e.owned.reader != nil || e.owned.handleErr != nil || e.owned.waitErr != nil || e.owned.outputResult != (defaultOutputResult{}) {
+			if mode == "start-failure" {
+				// Output closure is positive; opaque native Start failure and a
+				// manually closed reaped channel are not actual Wait authority.
+				if e.cmd == nil || e.output.file == nil || e.owned.reader == nil || !e.shutdownPublished || e.shutdownClosed || e.shutdownErr == nil {
+					t.Error("failed native Start lost original held frame")
+				}
+			} else if e.cmd != nil || e.output.file != nil || e.output.err != nil || e.owned.reader != nil || e.owned.handleErr != nil || e.owned.waitErr != nil || e.owned.outputResult != (defaultOutputResult{}) {
 				t.Error("finished payload references remain")
 			}
 			b.mu.Unlock()
@@ -113,8 +127,14 @@ func TestRetainedCompletion(t *testing.T) {
 			if err := b.Retention().RemoveExecution(context.Background(), backend.Reference{ID: id, Task: program, Binding: ref.Binding}); err == nil {
 				t.Fatal("default gained execution cleanup")
 			}
-			if err := b.Close(); err != nil {
-				t.Fatal(err)
+			var closeErr error
+			if fixture != nil {
+				closeErr = fixture.close()
+			} else {
+				closeErr = b.Close()
+			}
+			if (closeErr != nil) != (mode == "start-failure") {
+				t.Fatalf("physical closure mode %s: %v", mode, closeErr)
 			}
 		})
 	}
@@ -589,10 +609,12 @@ func TestRetainedHistoricalBound(t *testing.T) {
 }
 
 func TestRetainedRetryLateReaper(t *testing.T) {
-	b := retainedBackend(t)
+	fixture := newExecutionFixture(t, true)
+	b := fixture.backend
 	if !b.SupportsRetry() {
 		t.Skip("native qualified retry handles unavailable")
 	}
+	fixture.held = true
 	id := strings.Repeat("b", 32)
 	ref := retainedReference(t, b, id)
 	program := backend.Task{Argv: []string{os.Args[0], "-test.run=^TestDefaultProgram$"}, Env: map[string]string{"SKYGO_DEFAULT_PROGRAM": "bounded", "PAYLOAD_SENTINEL": strings.Repeat("pending-reaper-", 1024)}, Retry: &backend.RetryPolicy{MaxAttempts: 2, DelaySeconds: 1, ExitCodes: []int32{7}}}
@@ -604,8 +626,15 @@ func TestRetainedRetryLateReaper(t *testing.T) {
 	if err := b.BindOutput(ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := b.Start(context.Background(), id, program); !errors.Is(err, denied) {
-		t.Fatalf("Start=%v", err)
+	startErr := b.Start(context.Background(), id, program)
+	b.mu.Lock()
+	original := b.jobs[id]
+	b.mu.Unlock()
+	if original != nil {
+		t.Cleanup(func() { <-original.retry.reaped })
+	}
+	if !errors.Is(startErr, denied) {
+		t.Fatalf("Start=%v", startErr)
 	}
 	status := completed(t, b, id)
 	if status.Termination != backend.UnknownTermination || status.ExitCode != nil {
@@ -623,28 +652,21 @@ func TestRetainedRetryLateReaper(t *testing.T) {
 	if !pending {
 		t.Fatal("actual pending Wait owner lost command payload")
 	}
-	if err := b.Close(); err == nil || !strings.Contains(err.Error(), "reaping remains uncertain") {
+	if err := fixture.close(); err == nil || !strings.Contains(err.Error(), "reaping remains uncertain") {
 		t.Fatalf("Close=%v", err)
 	}
 	awaitDefault(t, e.retry.reaped, "original bounded child reaping")
-	deadline := time.Now().Add(3 * time.Second)
-	for {
-		b.mu.Lock()
-		released := e.retained.released
-		b.mu.Unlock()
-		if released {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("late sole reaper did not release payload")
-		}
-		time.Sleep(time.Millisecond)
-	}
 	b.mu.Lock()
-	if e.cmd != nil || e.retry.reader != nil || e.retry.startErr != nil || e.output.file != nil {
-		t.Error("late owner retained payload references")
+	if e.retained.released || e.cmd == nil || e.retry.reader == nil || e.retry.startErr == nil || e.output.file == nil || e.shutdownClosed || !errors.Is(e.shutdownErr, denied) || !strings.Contains(e.shutdownErr.Error(), "reaping remains uncertain") {
+		t.Error("late reap replaced incomplete physical custody with payload release")
+	}
+	if e.retry.waitErr != nil {
+		t.Errorf("actual bounded child Wait=%v", e.retry.waitErr)
 	}
 	b.mu.Unlock()
+	if err := fixture.close(); err == nil {
+		t.Fatal("late reaped receipt erased missing native pin")
+	}
 	if status, err := b.Observe(context.Background(), backend.Reference{ID: id}); err != nil || status.Termination != backend.UnknownTermination || status.ExitCode != nil {
 		t.Fatalf("late finish invented execution proof: %+v %v", status, err)
 	}
@@ -789,15 +811,17 @@ func (e *retentionPayloadError) Error() string {
 	return strings.Repeat("retained-error-payload-", 1024)
 }
 
-func TestRetainedErrorPayloadReleased(t *testing.T) {
-	b := retainedBackend(t)
+func TestRetainedErrorPayloadHeld(t *testing.T) {
+	f := newExecutionFixture(t, true)
+	f.held = true
+	b := f.backend
 	id := strings.Repeat("0", 32)
-	program := backend.Task{Argv: []string{os.Args[0], "-test.run=^TestDefaultProgram$", "error-argv-sentinel"}, Directory: t.TempDir(), Env: map[string]string{"SKYGO_DEFAULT_PROGRAM": "bounded", "TASK_ERROR_SENTINEL": strings.Repeat("error-env-", 1024)}}
+	program := backend.Task{Argv: []string{os.Args[0], "-test.run=^TestDefaultProgram$", "error-argv-sentinel"}, Directory: f.directory, Env: map[string]string{"SKYGO_DEFAULT_PROGRAM": "bounded", "TASK_ERROR_SENTINEL": strings.Repeat("error-env-", 1024)}}
 	failure := &retentionPayloadError{task: program}
 	ops := b.defaultOps
 	b.defaultOps.wait = func(*exec.Cmd) error {
-		// This fault callback owns one call. Drop the fixture's own captured Task
-		// before returning it to the real lifecycle error owners under test.
+		// This terminal-record fault owns one call. The separate original reap
+		// still calls Cmd.Wait once; this callback is not a reap receipt.
 		b.defaultOps.wait = ops.wait
 		return failure
 	}
@@ -811,23 +835,24 @@ func TestRetainedErrorPayloadReleased(t *testing.T) {
 		t.Fatalf("error status=%+v", status)
 	}
 	ref = closureReference(t, b, ref)
-	if !ref.PayloadReleased {
-		t.Fatal("joined error owners did not release payload")
+	if ref.PayloadReleased {
+		t.Fatal("unqualified native closure released the original payload")
 	}
 	b.mu.Lock()
 	e := b.jobs[id]
-	cleared := e.cmd == nil && e.output.file == nil && e.output.err == nil && e.owned.reader == nil && e.owned.handleErr == nil && e.owned.waitErr == nil && e.owned.outputResult == (defaultOutputResult{})
-	cleanup := e.owned.cleanupErr
+	kept := e.cmd != nil && e.output.file != nil && e.owned.reader != nil && !e.shutdownClosed
+	original := e.shutdownErr
+	storedReason := e.status.Reason
 	b.mu.Unlock()
-	if !cleared {
-		t.Fatal("completed error owners retained payload captures")
+	if !kept || !errors.Is(original, failure) {
+		t.Fatal("held execution lost its original payload or exact error")
+	}
+	if len(storedReason) <= 1024 {
+		t.Fatal("public status bounding rewrote the original held diagnostic")
 	}
 	var retained *retentionPayloadError
-	if cleanup == nil || errors.As(cleanup, &retained) || len(cleanup.Error()) > 1024 {
-		t.Fatalf("cleanup retained payload graph: %T", cleanup)
-	}
-	if err := b.Close(); err == nil || errors.As(err, &retained) {
-		t.Fatalf("Close lost uncertainty or retained task: %T", err)
+	if err := f.close(); !errors.As(err, &retained) || retained != failure {
+		t.Fatalf("Close lost the original held error: %v", err)
 	}
 }
 

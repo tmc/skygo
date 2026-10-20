@@ -124,14 +124,18 @@ func writeRetentionInfo(cmd *cobra.Command, info *v1.GetRetentionResponse) error
 
 func (o *options) pruneCommand() *cobra.Command {
 	var before, token, obligation string
-	var metadataOnly, logsOnly, acknowledge, yes bool
+	var metadataOnly, logsOnly, resultOnly, acknowledge, yes bool
+	var attempt uint32
 	var size int32
 	cmd := &cobra.Command{Use: "prune --before RFC3339", Short: "Inspect one eligible retention page; --yes marks it for cleanup", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		if !validPageInput(size, token) {
 			return errors.New("invalid prune page size or token")
 		}
-		if metadataOnly && logsOnly {
-			return errors.New("choose only one of --metadata-only and --logs-only")
+		if metadataOnly && logsOnly || metadataOnly && resultOnly || logsOnly && resultOnly {
+			return errors.New("choose only one of --metadata-only, --logs-only and --result-only")
+		}
+		if resultOnly && attempt == 0 || !resultOnly && cmd.Flags().Changed("attempt") {
+			return errors.New("--result-only requires --attempt N greater than zero; --attempt is valid only with --result-only")
 		}
 		if acknowledge != metadataOnly {
 			return errors.New("--metadata-only requires --ack-unverified-terminal, and the acknowledgement is valid only with --metadata-only")
@@ -143,10 +147,13 @@ func (o *options) pruneCommand() *cobra.Command {
 		if logsOnly {
 			mode = v1.PruneMode_PRUNE_MODE_OUTPUT_ONLY
 		}
-		selection := &v1.PruneJobsRequest{Mode: mode, Execute: yes, AcknowledgeUnverifiedTerminal: acknowledge, PageSize: size, PageToken: token, ObligationId: obligation}
+		if resultOnly {
+			mode = v1.PruneMode_PRUNE_MODE_RESULT_ONLY
+		}
+		selection := &v1.PruneJobsRequest{Mode: mode, Execute: yes, AcknowledgeUnverifiedTerminal: acknowledge, PageSize: size, PageToken: token, ObligationId: obligation, Attempt: attempt}
 		if obligation != "" {
-			if !validHexID(obligation) || !logsOnly || cmd.Flags().Changed("before") || cmd.Flags().Changed("page-token") || cmd.Flags().Changed("page-size") {
-				return errors.New("--obligation requires --logs-only and excludes --before, --page-token and --page-size")
+			if !validHexID(obligation) || (!logsOnly && !resultOnly) || cmd.Flags().Changed("before") || cmd.Flags().Changed("page-token") || cmd.Flags().Changed("page-size") {
+				return errors.New("--obligation requires --logs-only or --result-only and excludes --before, --page-token and --page-size")
 			}
 		} else {
 			parsed, err := time.Parse(time.RFC3339Nano, before)
@@ -197,9 +204,11 @@ func (o *options) pruneCommand() *cobra.Command {
 	cmd.Flags().StringVar(&before, "before", "", "Select results older than this RFC3339 timestamp")
 	cmd.Flags().BoolVar(&metadataOnly, "metadata-only", false, "Expire terminal metadata without asserting execution cleanup")
 	cmd.Flags().BoolVar(&logsOnly, "logs-only", false, "Expire eligible closed output without removing history or native execution")
+	cmd.Flags().BoolVar(&resultOnly, "result-only", false, "Expire one fixed attempt result without removing input or request history")
+	cmd.Flags().Uint32Var(&attempt, "attempt", 0, "One-based fixed attempt ordinal (required with --result-only)")
 	cmd.Flags().BoolVar(&acknowledge, "ack-unverified-terminal", false, "Acknowledge that metadata expiry does not prove execution stopped")
 	cmd.Flags().BoolVarP(&yes, "yes", "y", false, "Execute this page instead of a read-only dry-run")
-	cmd.Flags().StringVar(&obligation, "obligation", "", "One stored manual obligation ID (requires --logs-only)")
+	cmd.Flags().StringVar(&obligation, "obligation", "", "One stored manual obligation ID (requires --logs-only or --result-only)")
 	cmd.Flags().Int32Var(&size, "page-size", 0, "Maximum selected subjects (0 selects 100; at most 100)")
 	cmd.Flags().StringVar(&token, "page-token", "", "Continuation token from the previous prune page")
 	return cmd

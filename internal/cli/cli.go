@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 	skyv1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/artifact"
 	"github.com/tmc/skygo/internal/backend"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
@@ -24,7 +25,11 @@ import (
 // ServerOptions configures the server callback.
 type ServerOptions struct {
 	DataDir, Listen, Token, AuthFile, TargetFacts string
-	DisableLocal                                  bool
+	// ArtifactDir opens an initialized artifact directory; empty disables it.
+	ArtifactDir  string
+	DisableLocal bool
+	// RecoverStoppedArtifactReaders requires the restricted historical-owner premise.
+	RecoverStoppedArtifactReaders bool
 }
 
 type options struct {
@@ -84,11 +89,13 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 		return server(cmd.Context(), s)
 	}}
 	srv.Flags().StringVar(&s.DataDir, "data-dir", "skygo-data", "Durable state directory")
+	srv.Flags().StringVar(&s.ArtifactDir, "artifact-dir", "", "Open an already initialized artifact directory (empty disables artifacts)")
 	srv.Flags().StringVar(&s.Listen, "listen", "127.0.0.1:8080", "HTTP listen address")
 	srv.Flags().StringVar(&s.TargetFacts, "target-facts", "", "Configured advisory quote and capacity facts (Linux and macOS)")
 	srv.Flags().StringVar(&s.AuthFile, "auth-file", "", "Private scoped authentication file")
+	srv.Flags().BoolVar(&s.RecoverStoppedArtifactReaders, "recover-stopped-artifact-readers", false, "Recover stopped readers only when ALL historical producers have no surviving descriptor copy or use and the same-domain kernel is qualified")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
-	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand(), o.authCommand())
+	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand(), o.authCommand(), o.artifactsCommand())
 	targets := &cobra.Command{Use: "targets", Short: "Inspect configured execution targets"}
 	targets.AddCommand(&cobra.Command{Use: "list", Short: "List execution targets", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
@@ -323,6 +330,9 @@ type taskFile struct {
 	TargetLabels     map[string]string    `yaml:"target_labels"`
 	NodeSelector     map[string]string    `yaml:"node_selector"`
 	Retry            *backend.RetryPolicy `yaml:"retry"`
+	Workdir          *artifact.Ref        `yaml:"workdir"`
+	Setup            []string             `yaml:"setup"`
+	Outputs          []string             `yaml:"outputs"`
 }
 
 func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
@@ -361,9 +371,16 @@ func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
 	if _, err := backend.NormalizeRetry(f.Retry); err != nil {
 		return nil, fmt.Errorf("retry: %w", err)
 	}
+	if err := backend.ValidateWorkspace(backend.Task{Directory: f.Directory, Workdir: f.Workdir, Setup: f.Setup, Outputs: f.Outputs}); err != nil {
+		return nil, fmt.Errorf("workspace: %w", err)
+	}
+	var workdir *skyv1.ArtifactRef
+	if f.Workdir != nil {
+		workdir = &skyv1.ArtifactRef{Id: f.Workdir.ID, Sha256: f.Workdir.SHA256, Size: f.Workdir.Size}
+	}
 	var retry *skyv1.RetryPolicy
 	if f.Retry != nil {
 		retry = &skyv1.RetryPolicy{MaxAttempts: f.Retry.MaxAttempts, DelaySeconds: f.Retry.DelaySeconds, ExitCodes: f.Retry.ExitCodes}
 	}
-	return &skyv1.Task{Retry: retry, Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
+	return &skyv1.Task{Workdir: workdir, Setup: f.Setup, Outputs: f.Outputs, Retry: retry, Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
 }

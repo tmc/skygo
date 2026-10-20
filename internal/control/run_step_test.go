@@ -15,6 +15,7 @@ func reconcileStep(t *testing.T, c *Control) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	s := c.newLoop(ctx)
+	defer stopTestLoop(t, cancel, s)
 	for round := 0; round < 2; round++ {
 		if err := c.schedule(ctx, s); err != nil {
 			return err

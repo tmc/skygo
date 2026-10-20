@@ -174,7 +174,7 @@ func TestPhysicalInspectionScalarFence(t *testing.T) {
 			return tx.Bucket(metadataBucket).Put([]byte("owner"), bytes.Repeat([]byte{'o'}, 65537))
 		}, true, "owner_scalar_budget"},
 		{"schema-zero", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(0)) }, true, "unsupported_schema"},
-		{"future", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(6)) }, true, "unsupported_schema"},
+		{"future", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion+1)) }, true, "unsupported_schema"},
 		{"bad-marker", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, []byte{1}) }, true, "invalid_schema_scalar"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

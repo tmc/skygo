@@ -1,0 +1,45 @@
+# Readiness reaches the actual daemon directly; every CLI HTTP call is counted.
+server start
+! skygo artifacts upload missing
+stderr 'open snapshot directory'
+symlink source/link -> ../outside.txt
+! skygo artifacts upload source
+stderr 'symlink|ownership or mode'
+rm source/link
+cmp outside.txt expected-outside.txt
+! skygo artifacts download --ref duplicate.json destination
+stderr 'duplicate'
+! skygo artifacts remove --ref ref.json
+stderr 'requires --yes'
+! skygo artifacts cancel aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+stderr 'requires an upload ID and --yes'
+! skygo artifacts upload source --resume wrong
+stderr 'resume requires an upload ID'
+! skygo run -f setup.yaml --request-id invalid-workspace
+stderr 'require workdir'
+! skygo run -f directory.yaml --request-id invalid-directory
+stderr 'empty directory'
+mkdir existing
+! skygo artifacts download --ref ref.json existing
+stderr 'destination already exists'
+calls ALL 0
+! exists destination native-marker
+server stop
+! stderr .
+-- source/seed.txt --
+seed
+-- ref.json --
+{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":2048}
+-- duplicate.json --
+{"id":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","size":2048,"size":2048}
+-- setup.yaml --
+argv: [run]
+setup: [prepare]
+-- directory.yaml --
+argv: [run]
+directory: /host/path
+workdir: {id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, size: 2048}
+-- outside.txt --
+private outside input
+-- expected-outside.txt --
+private outside input

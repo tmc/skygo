@@ -11,7 +11,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 5
+const schemaVersion = 6
 
 var schemaKey = []byte("schema_version")
 
@@ -22,6 +22,11 @@ var ErrUnsupportedSchema = errors.New("unsupported database schema")
 // inspect checks the refusal fence before inspecting any records. An empty
 // database is initialized by Open; a partly missing layout is corruption.
 func inspect(tx *bolt.Tx) error {
+	// Fence before decoding ANY artifact or accepted job record. Schema5
+	// never promised this root, even if the rows happen to look familiar.
+	if schemaNumber(tx) <= 5 && tx.Bucket(artifactsBucket) != nil {
+		return errors.New("artifact metadata requires schema 6")
+	}
 	if schemaNumber(tx) < 5 && retentionRoot(tx) != nil {
 		return errors.New("retention metadata requires schema 5")
 	}
@@ -32,7 +37,7 @@ func inspect(tx *bolt.Tx) error {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != 2 && n != 3 && n != 4 && n != schemaVersion {
+			if n != 1 && n != 2 && n != 3 && n != 4 && n != 5 && n != schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
@@ -124,12 +129,29 @@ func initialize(tx *bolt.Tx, owner string) error {
 	if err := initializeRetention(tx); err != nil {
 		return err
 	}
-	if !bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) {
+	if schemaNumber(tx) == 5 {
+		if err := migrateArtifactFence(tx); err != nil {
+			return err
+		}
+	} else if !bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) {
 		if err := m.Put(schemaKey, sequenceKey(schemaVersion)); err != nil {
 			return err
 		}
 	}
 	return validateSnapshot(tx)
+}
+
+// migrateArtifactFence preserves the complete schema5 logical installation.
+// Artifact storage stays dormant until the concrete bound companion root has
+// been admitted; migration must not fabricate device/unit/inventory facts.
+func migrateArtifactFence(tx *bolt.Tx) error {
+	if schemaNumber(tx) != 5 || tx.Bucket(artifactsBucket) != nil {
+		return ErrArtifactConflict
+	}
+	if err := validateRetention(tx); err != nil {
+		return err
+	}
+	return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion))
 }
 
 // validateSnapshot checks references before publishing a restore. It does not
@@ -190,7 +212,16 @@ func validateSnapshot(tx *bolt.Tx) error {
 		return err
 	}
 	if schemaNumber(tx) >= 5 {
-		return validateRetention(tx)
+		if err := validateRetention(tx); err != nil {
+			return err
+		}
 	}
-	return nil
+	if tx.Bucket(artifactsBucket) != nil {
+		st, err := artifactLoad(tx)
+		if err != nil {
+			return err
+		}
+		return artifactValidateTaskRows(tx, st)
+	}
+	return artifactValidateTaskRows(tx, nil)
 }

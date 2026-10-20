@@ -205,7 +205,14 @@ func trackLegacyAccepted(tx *bolt.Tx, j backend.Job, principal, id string) error
 	return trackJob(tx, j, retainedJob{Principal: principal, LegacyRequestID: []byte(id), Legacy: true}, r)
 }
 func (s *Store) SubmitRetained(actor auth.Actor, d RequestDomain, id string, t backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64) (j backend.Job, err error) {
+	return s.submitRetained(actor, d, id, t, target, binding, storage, reserve, false)
+}
+
+func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64, workspace bool) (j backend.Job, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
+		return
+	}
+	if err = validateSubmitWorkspace(t, workspace); err != nil {
 		return
 	}
 	if !validRetainedRequestID(id) {
@@ -228,6 +235,10 @@ func (s *Store) SubmitRetained(actor auth.Actor, d RequestDomain, id string, t b
 	}
 	var result error
 	err = s.db.Update(func(tx *bolt.Tx) error {
+		var core *artifactCoreLedger
+		if workspace {
+			core = artifactAcceptLedger(tx, identity, actor.Principal(), id, d, false)
+		}
 		st, r, e := gateDomain(tx, d, s.now())
 		if e != nil {
 			return e
@@ -250,77 +261,103 @@ func (s *Store) SubmitRetained(actor auth.Actor, d RequestDomain, id string, t b
 				return nil
 			}
 		}
-		if target == "" || len(target) > 128 || !validBinding(binding) {
-			return errors.New("invalid retained target")
-		}
-		if storage == backend.LocalOutput && !st.Policy.LocalOutputEnabled {
-			return errors.New("local output retention is disabled")
-		}
-		if storage != backend.LocalOutput && storage != backend.RemoteOutput || storage == backend.RemoteOutput && reserve != 0 || storage == backend.LocalOutput && reserve != uint64(backend.MaxLogBytes)+4*st.Policy.OutputUnit {
-			return errors.New("invalid output placement charge")
-		}
-		data, e := backend.TaskBytes(t)
-		if e != nil {
-			return e
-		}
-		if len(data) > 256<<10 {
-			return errors.New("task exceeds limit")
-		}
-		jobs, seq := tx.Bucket(jobsBucket), tx.Bucket(sequenceBucket)
-		if jobs.Get([]byte(identity)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(identity)) != nil {
-			return errors.New("random job identity collision")
-		}
-		if seq.Sequence() == math.MaxUint64 {
-			return errors.New("acceptance sequence exhausted")
-		}
-		n, e := seq.NextSequence()
-		if e != nil {
-			return e
-		}
-		now := s.now()
-		j = backend.Job{ID: identity, Task: t, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
-		if e = acceptAttempts(tx, &j); e != nil {
-			return e
-		}
-		if e = putJSON(jobs, []byte(j.ID), j); e != nil {
-			return e
-		}
-		if e = seq.Put(sequenceKey(n), []byte(j.ID)); e != nil {
-			return e
-		}
-		if isScoped(tx) {
-			if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(j.ID), []byte(actor.Principal())); e != nil {
-				return e
+		accept := func(art *artifactState) error {
+			if art != nil {
+				ref, e := artifactTaskRef(t)
+				if e != nil {
+					return e
+				}
+				if e := artifactGranted(art, actor.Principal(), ref, s.now()); e != nil {
+					return e
+				}
 			}
-			index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(actor.Principal()))
+			if target == "" || len(target) > 128 || !validBinding(binding) {
+				return errors.New("invalid retained target")
+			}
+			if storage == backend.LocalOutput && !st.Policy.LocalOutputEnabled {
+				return errors.New("local output retention is disabled")
+			}
+			if storage != backend.LocalOutput && storage != backend.RemoteOutput || storage == backend.RemoteOutput && reserve != 0 || storage == backend.LocalOutput && reserve != uint64(backend.MaxLogBytes)+4*st.Policy.OutputUnit {
+				return errors.New("invalid output placement charge")
+			}
+			data, e := backend.TaskBytes(t)
 			if e != nil {
 				return e
 			}
-			if index.Sequence() == math.MaxUint64 {
-				return errors.New("scope sequence exhausted")
+			if len(data) > 256<<10 {
+				return errors.New("task exceeds limit")
 			}
-			ord, e := index.NextSequence()
+			jobs, seq := tx.Bucket(jobsBucket), tx.Bucket(sequenceBucket)
+			if jobs.Get([]byte(identity)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(identity)) != nil {
+				return errors.New("random job identity collision")
+			}
+			if seq.Sequence() == math.MaxUint64 {
+				return errors.New("acceptance sequence exhausted")
+			}
+			n, e := seq.NextSequence()
 			if e != nil {
 				return e
 			}
-			if e = index.Put(sequenceKey(ord), []byte(j.ID)); e != nil {
+			now := s.now()
+			j = backend.Job{ID: identity, Task: t, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
+			if e = acceptAttempts(tx, &j); e != nil {
 				return e
 			}
+			if e = putJSON(jobs, []byte(j.ID), j); e != nil {
+				return e
+			}
+			if e = seq.Put(sequenceKey(n), []byte(j.ID)); e != nil {
+				return e
+			}
+			if isScoped(tx) {
+				if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(j.ID), []byte(actor.Principal())); e != nil {
+					return e
+				}
+				index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(actor.Principal()))
+				if e != nil {
+					return e
+				}
+				if index.Sequence() == math.MaxUint64 {
+					return errors.New("scope sequence exhausted")
+				}
+				ord, e := index.NextSequence()
+				if e != nil {
+					return e
+				}
+				if e = index.Put(sequenceKey(ord), []byte(j.ID)); e != nil {
+					return e
+				}
+			}
+			m := tx.Bucket(metadataBucket)
+			used := binary.BigEndian.Uint64(m.Get(taskBytesKey))
+			next, e := addChecked(used, uint64(len(data)))
+			if e != nil {
+				return e
+			}
+			if e = m.Put(taskBytesKey, sequenceKey(next)); e != nil {
+				return e
+			}
+			digest, e := taskDigest(t)
+			if e != nil {
+				return e
+			}
+			if e := trackJob(tx, j, retainedJob{Principal: actor.Principal(), Domain: d, RequestID: id, Storage: storage, OutputReserve: reserve}, requestRecord{Principal: actor.Principal(), Domain: d, RequestID: id, JobID: j.ID, TaskDigest: digest}); e != nil {
+				return e
+			}
+			if art != nil {
+				ref, e := artifactTaskRef(t)
+				if e != nil {
+					return e
+				}
+				return artifactAcceptInput(tx, art, actor.Principal(), j.ID, ref, now)
+			}
+			return nil
 		}
-		m := tx.Bucket(metadataBucket)
-		used := binary.BigEndian.Uint64(m.Get(taskBytesKey))
-		next, e := addChecked(used, uint64(len(data)))
-		if e != nil {
+		if workspace {
+			_, e := artifactCoreChange(tx, core, maxChangeBytes, 100, accept)
 			return e
 		}
-		if e = m.Put(taskBytesKey, sequenceKey(next)); e != nil {
-			return e
-		}
-		digest, e := taskDigest(t)
-		if e != nil {
-			return e
-		}
-		return trackJob(tx, j, retainedJob{Principal: actor.Principal(), Domain: d, RequestID: id, Storage: storage, OutputReserve: reserve}, requestRecord{Principal: actor.Principal(), Domain: d, RequestID: id, JobID: j.ID, TaskDigest: digest})
+		return accept(nil)
 	})
 	if err == nil {
 		err = result

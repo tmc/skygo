@@ -1,0 +1,34 @@
+# Actual initialized empty installation, whole-bundle backup and relocated root.
+# Companion publication requires a private script-owned working directory.
+chmod 0700 .
+mkdir root
+chmod 0700 root
+skygo state artifacts init --data-dir state --artifact-dir root --ack-writers-stopped
+skygo --json state artifacts backup --data-dir state --artifact-dir root --output bundle --ack-writers-stopped
+stdout '^\{"complete":true\}\n$'
+! stderr .
+exists bundle/jobs.db
+exists bundle/manifest.json
+exists bundle/objects
+cp bundle/jobs.db original.db
+skygo --json state artifacts restore --input bundle --data-dir restored --ack-writers-stopped
+stdout '^\{"complete":true\}\n$'
+! stderr .
+exists restored/jobs.db
+exists restored/artifacts/.skygo-artifact-root
+cmp original.db bundle/jobs.db
+# Backup the actual relocated installation, not a fabricated filesystem mirror.
+skygo state artifacts backup --data-dir restored --artifact-dir restored/artifacts --output second-bundle --ack-writers-stopped
+stdout '^backup complete\n$'
+! stderr .
+# No replacement of bundle or restored installation, even with explicit ack.
+! skygo state artifacts backup --data-dir state --artifact-dir root --output bundle --ack-writers-stopped
+! stdout .
+cmp original.db bundle/jobs.db
+! skygo state artifacts restore --input bundle --data-dir restored --ack-writers-stopped
+! stdout .
+exists restored/artifacts/.skygo-artifact-root
+mkdir empty-existing
+! skygo state artifacts restore --input bundle --data-dir empty-existing --ack-writers-stopped
+! stdout .
+! exists empty-existing/jobs.db

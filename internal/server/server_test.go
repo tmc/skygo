@@ -274,29 +274,27 @@ func TestShutdownWithWorkloadAndStream(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	// A fresh server can recover the durable acceptance. It must not respawn it.
+	if stored.Status.State != backend.Canceled || !stored.CancelRequested || stored.Status.ExitCode == nil {
+		t.Fatalf("shutdown did not persist observed cancellation: %+v", stored)
+	}
+	// Graceful shutdown integrates the owned Local result before closing Store.
+	// Restart must preserve that terminal cancellation without respawning it.
 	restarted := start(t, dir, "")
 	api = skyv1connect.NewControlServiceClient(&http.Client{Timeout: time.Second}, restarted.url)
-	deadline = time.Now().Add(3 * time.Second)
-	for {
-		response, err := api.GetJob(context.Background(), connect.NewRequest(&v1.GetJobRequest{Id: id}))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if response.Msg.Job.State == v1.JobState_JOB_STATE_UNKNOWN {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("restart did not report unknown execution: %v", response.Msg.Job)
-		}
-		time.Sleep(10 * time.Millisecond)
+	response, err := api.GetJob(context.Background(), connect.NewRequest(&v1.GetJobRequest{Id: id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	job := response.Msg.Job
+	if job.State != v1.JobState_JOB_STATE_CANCELED || !job.CancelRequested || job.ExitCode == nil || *job.ExitCode != *stored.Status.ExitCode || job.Reason != stored.Status.Reason {
+		t.Fatalf("restart changed observed cancellation: %v", job)
 	}
 	after, err = os.ReadFile(heartbeat)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if string(before) != string(after) {
-		t.Fatal("restart respawned unknown execution")
+		t.Fatal("restart respawned canceled execution")
 	}
 }
 

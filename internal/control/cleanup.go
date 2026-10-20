@@ -13,65 +13,117 @@ import (
 )
 
 type maintenanceRequest struct {
-	sequence      uint64
-	record        *store.CleanupRecord
-	target        backend.Target
-	directory     string
-	reusable      uint64
-	reservedBytes uint64
-	reservedFiles uint64
-	usage         func(context.Context) (uint64, uint64, error)
+	readerRecovery      *artifactReaderRecoveryRequest
+	downloadClose       *artifactDownloadClose
+	closeOwner          *artifactIO
+	artifactDelete      *artifactDeleteRequest
+	workspaceRetirement *workspaceRetirementRequest
+	physicalOwner       *Control
+	physicalClose       bool
+	sequence            uint64
+	record              *store.CleanupRecord
+	target              backend.Target
+	directory           string
+	reusable            uint64
+	reservedBytes       uint64
+	reservedFiles       uint64
+	usage               func(context.Context) (uint64, uint64, error)
 }
 type maintenanceResult struct {
-	request maintenanceRequest
-	sample  *RetentionAdmin
-	err     error
+	readerRecovery *artifactReaderRecoveryResult
+	downloadClose  *artifactDownloadCloseResult
+	deletion       *artifactDeleteResult
+	retirement     *workspaceRetirementResult
+	physical       *physicalQuantumResult
+	request        maintenanceRequest
+	sample         *RetentionAdmin
+	err            error
 }
 type maintenanceState struct {
-	input       chan maintenanceRequest
-	results     chan maintenanceResult
-	pending     *maintenanceRequest
-	after       uint64
-	due         time.Time
-	sampledLast bool
-	serial      uint64
+	expiryUploadAfter    string
+	expiryDownloadAfter  string
+	expiryFamily         uint8
+	recoveryAfter        string
+	expiryHeld           *artifactDownloadClose
+	input                chan maintenanceRequest
+	results              chan maintenanceResult
+	pending              *maintenanceRequest
+	after                uint64
+	due                  time.Time
+	nextClass            maintenanceClass
+	workspaceAfter       string
+	workspaceFinishLast  bool
+	workspaceFinishAfter int
+	serial               uint64
+	done                 chan struct{}
+	received             *receivedMaintenance
+	physicalDue          time.Time
+	physicalResult       *receivedMaintenance
+	physicalSerial       uint64
 }
 
 func newMaintenance(ctx context.Context) *maintenanceState {
-	m := &maintenanceState{input: make(chan maintenanceRequest, 1), results: make(chan maintenanceResult, 1)}
-	go runMaintenance(ctx, m.input, m.results)
+	m := &maintenanceState{input: make(chan maintenanceRequest, 1), results: make(chan maintenanceResult, 1), done: make(chan struct{})}
+	go func() {
+		defer close(m.done)
+		runMaintenance(ctx, m.input, m.results)
+	}()
 	return m
 }
 func runMaintenance(ctx context.Context, input <-chan maintenanceRequest, results chan<- maintenanceResult) {
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case request := <-input:
-			if ctx.Err() != nil {
-				return
+	for request := range input {
+		result := maintenanceResult{request: request}
+		if ctx.Err() != nil {
+			result.err = ctx.Err()
+			if request.workspaceRetirement != nil && request.workspaceRetirement.owner != nil {
+				request.workspaceRetirement.owner.finish(nil)
 			}
-			call, cancel := context.WithTimeout(ctx, 10*time.Second)
-			result := maintenanceResult{request: request}
-			if request.record == nil {
-				result.sample = sampleStorage(call, request.directory, request.reusable, request.usage)
-			} else if err := validateCleanup(*request.record, request.target); err != nil {
-				result.err = err
+			if request.readerRecovery != nil {
+				result.readerRecovery = &artifactReaderRecoveryResult{}
+				request.readerRecovery.owner.finish(nil)
+			}
+			if request.downloadClose != nil {
+				result.downloadClose = &artifactDownloadCloseResult{}
+			}
+			if request.closeOwner != nil {
+				request.closeOwner.finish(nil)
+			}
+			if request.artifactDelete != nil && request.artifactDelete.owner != nil {
+				request.artifactDelete.owner.finish(nil)
+			}
+			results <- result
+			continue
+		}
+		call, cancel := context.WithTimeout(ctx, 10*time.Second)
+		if request.readerRecovery != nil {
+			result.readerRecovery, result.err = runArtifactReaderRecovery(call, request)
+		} else if request.downloadClose != nil || request.closeOwner != nil {
+			result.downloadClose, result.err = runArtifactDownloadClose(call, request)
+		} else if request.artifactDelete != nil {
+			result.deletion, result.err = runArtifactDelete(call, request)
+		} else if request.workspaceRetirement != nil {
+			result.retirement, result.err = runWorkspaceRetirement(call, request)
+		} else if request.physicalOwner != nil {
+			if !physicalRequestShape(request) {
+				result.err = ErrInvalid
 			} else {
-				switch request.record.Operation {
-				case store.OutputCleanup:
-					result.err = request.target.Retention.RemoveOutput(call, request.record.Output)
-				case store.NativeCleanup:
-					result.err = request.target.Retention.RemoveExecution(call, request.record.Execution)
-				}
+				physical := request.physicalOwner.physicalQuantum(call)
+				result.physical = &physical
 			}
-			cancel()
-			select {
-			case <-ctx.Done():
-				return
-			case results <- result:
+		} else if request.record == nil {
+			result.sample = sampleStorage(call, request.directory, request.reusable, request.usage)
+		} else if err := validateCleanup(*request.record, request.target); err != nil {
+			result.err = err
+		} else {
+			switch request.record.Operation {
+			case store.OutputCleanup:
+				result.err = request.target.Retention.RemoveOutput(call, request.record.Output)
+			case store.NativeCleanup:
+				result.err = request.target.Retention.RemoveExecution(call, request.record.Execution)
 			}
 		}
+		cancel()
+		results <- result
 	}
 }
 func validateCleanup(r store.CleanupRecord, t backend.Target) error {
@@ -110,6 +162,12 @@ func (c *Control) maintain(ctx context.Context, m *maintenanceState) error {
 		return nil
 	}
 	now := time.Now()
+	if c.physicalCloseWanted() && c.physicalRegistered() && !physicalMaintenanceHeld(m) {
+		if previous := m.physicalResult; previous != nil && previous.request != nil && previous.request.physicalClose && previous.result.physical != nil && previous.result.physical.Registered && errors.Is(previous.result.physical.Err, ErrArtifactBusy) && now.Before(m.physicalDue) {
+			return nil
+		}
+		return c.dispatchPhysical(m)
+	}
 	if now.Before(m.due) {
 		return nil
 	}
@@ -127,56 +185,94 @@ func (c *Control) maintain(ctx context.Context, m *maintenanceState) error {
 	c.retention.mu.Lock()
 	want := c.retention.wantSample.Load()
 	c.retention.mu.Unlock()
-	if want && !m.sampledLast {
-		return c.dispatchSample(m)
-	}
-	record, found, err := c.store.NextCleanup(m.after)
-	if err != nil {
-		return err
-	}
-	if found {
-		m.after = record.Sequence
-		target, ok := c.target(record.Target)
-		if !ok || validateCleanup(record, target) != nil {
-			return c.store.FailCleanup(record.ID, record.Digest, "cleanup_unavailable", now.UTC())
+	for checked := maintenanceClass(0); checked < maintenanceClassCount; checked++ {
+		class := (m.nextClass + checked) % maintenanceClassCount
+		admitted := false
+		var err error
+		switch class {
+		case maintenancePhysicalClass:
+			if c.wantPhysicalMaintenance(m, now) {
+				err = c.dispatchPhysical(m)
+				admitted = m.pending != nil
+			}
+		case maintenanceLegacySampleClass:
+			if want {
+				err = c.dispatchSample(m)
+				admitted = m.pending != nil
+			}
+		case maintenanceRetainedCleanupClass:
+			admitted, err = c.dispatchRetainedCleanup(m, now)
+		case maintenanceWorkspaceClass:
+			admitted, err = c.dispatchWorkspaceRetirement(m, now)
+		case maintenanceArtifactExpiryClass:
+			admitted, err = c.dispatchArtifactExpiry(m, now)
 		}
-		c.retention.mu.Lock()
-		blocked, err := c.blockedLocked()
 		if err != nil {
-			c.retention.mu.Unlock()
 			return err
 		}
-		id := record.Execution.ID
-		if record.Operation == store.OutputCleanup {
-			id = record.Output.AttemptID
-		}
-		pending := false
-		for _, x := range blocked {
-			if x == id {
-				pending = true
-				break
-			}
-		}
-		c.retention.mu.Unlock()
-		if !pending {
-			request := maintenanceRequest{record: &record, target: cloneTarget(target)}
-			if m.serial == ^uint64(0) {
-				return ErrUnavailable
-			}
-			m.serial++
-			request.sequence = m.serial
-			m.pending = &request
-			m.sampledLast = false
-			m.input <- request
+		if admitted {
+			m.nextClass = (class + 1) % maintenanceClassCount
 			return nil
 		}
 	}
-	if want {
-		return c.dispatchSample(m)
-	}
-	m.sampledLast = false
 	return nil
 }
+
+// Five finite ordinary classes share the same worker and common-four budget.
+// A metadata expiry mark consumes a quantum without fabricating a worker call.
+// Terminal original scan Close remains above the ordinary classes.
+type maintenanceClass uint8
+
+const (
+	maintenancePhysicalClass maintenanceClass = iota
+	maintenanceLegacySampleClass
+	maintenanceRetainedCleanupClass
+	maintenanceWorkspaceClass
+	maintenanceArtifactExpiryClass
+	maintenanceClassCount
+)
+
+func (c *Control) dispatchRetainedCleanup(m *maintenanceState, now time.Time) (bool, error) {
+	record, found, err := c.store.NextCleanup(m.after)
+	if err != nil || !found {
+		return false, err
+	}
+	m.after = record.Sequence
+	target, ok := c.target(record.Target)
+	if !ok || validateCleanup(record, target) != nil {
+		return true, c.store.FailCleanup(record.ID, record.Digest, "cleanup_unavailable", now.UTC())
+	}
+	c.retention.mu.Lock()
+	blocked, err := c.blockedLocked()
+	if err != nil {
+		c.retention.mu.Unlock()
+		return false, err
+	}
+	id := record.Execution.ID
+	if record.Operation == store.OutputCleanup {
+		id = record.Output.AttemptID
+	}
+	pending := false
+	for _, x := range blocked {
+		if x == id {
+			pending = true
+			break
+		}
+	}
+	c.retention.mu.Unlock()
+	if pending {
+		return false, nil
+	}
+	if m.serial == ^uint64(0) {
+		return false, ErrUnavailable
+	}
+	request := maintenanceRequest{sequence: m.serial + 1, record: &record, target: cloneTarget(target)}
+	m.serial = request.sequence
+	m.pending = &request
+	m.input <- request
+	return true, nil
+}
+
 func (c *Control) dispatchSample(m *maintenanceState) error {
 	reusable, err := c.store.ReusableBytes()
 	if err != nil {
@@ -200,11 +296,25 @@ func (c *Control) dispatchSample(m *maintenanceState) error {
 	m.serial++
 	request.sequence = m.serial
 	m.pending = &request
-	m.sampledLast = true
 	m.input <- request
 	return nil
 }
 func (c *Control) integrateMaintenance(m *maintenanceState, r maintenanceResult) error {
+	if r.request.readerRecovery != nil || r.readerRecovery != nil || m.pending != nil && m.pending.readerRecovery != nil {
+		return c.integrateArtifactReaderRecovery(m, r)
+	}
+	if r.request.downloadClose != nil || r.request.closeOwner != nil || r.downloadClose != nil || m.pending != nil && (m.pending.downloadClose != nil || m.pending.closeOwner != nil) {
+		return c.integrateArtifactDownloadClose(m, r)
+	}
+	if r.request.artifactDelete != nil || r.deletion != nil || m.pending != nil && m.pending.artifactDelete != nil {
+		return c.integrateArtifactDelete(m, r)
+	}
+	if r.request.workspaceRetirement != nil || r.retirement != nil || m.pending != nil && m.pending.workspaceRetirement != nil {
+		return c.integrateWorkspaceRetirement(m, r)
+	}
+	if r.request.physicalOwner != nil || r.physical != nil || m.pending != nil && m.pending.physicalOwner != nil {
+		return c.integratePhysical(m, r)
+	}
 	if m.pending == nil {
 		return nil
 	}

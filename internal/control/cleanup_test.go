@@ -29,7 +29,7 @@ func TestCleanupWorkerCannotElevateInvalidNativeRecords(t *testing.T) {
 	results := make(chan maintenanceResult, 1)
 	exited := make(chan struct{})
 	go func() { defer close(exited); runMaintenance(ctx, input, results) }()
-	defer func() { cancel(); waitValue(t, exited) }()
+	defer func() { cancel(); close(input); waitValue(t, exited) }()
 	cases := map[string]func(*store.CleanupRecord){
 		"not-stopped":           func(r *store.CleanupRecord) { r.Stopped = false },
 		"unknown":               func(r *store.CleanupRecord) { r.Proof.State = backend.Unknown },

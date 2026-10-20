@@ -67,7 +67,14 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 		if err != nil {
 			return nil, err
 		}
-	} else {
+	}
+	workspace := workspaceTask(task)
+	if workspace {
+		if _, err := o.requireEndpointCapabilities(ctx, v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1); err != nil {
+			return nil, err
+		}
+	}
+	if !domainSet {
 		info, err := client.GetRetention(ctx, request(o, &v1.GetRetentionRequest{}))
 		if err != nil && connect.CodeOf(err) != connect.CodeUnimplemented {
 			return nil, err
@@ -96,7 +103,7 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 	}
 	// Retained replay and enabled legacy lookup precede current placement. Only
 	// disabled/old-server default commands retain S05's extension preflight.
-	if selected == nil && !enabled && !retrying && len(taskCapabilities(task)) != 0 {
+	if !workspace && selected == nil && !enabled && !retrying && len(taskCapabilities(task)) != 0 {
 		if _, err := o.planTask(ctx, client, task); err != nil {
 			return nil, err
 		}
@@ -112,6 +119,9 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "request-domain: %s\nrequest-id: %s\ntask-file: %q\n", domain, id, file); err != nil {
 			return nil, fmt.Errorf("write request hint: %w", err)
 		}
+		if workspace {
+			return o.submitWorkspace(ctx, client, task, id, selected)
+		}
 		response, err := client.SubmitRetainedJob(ctx, request(o, &v1.SubmitRetainedJobRequest{Task: task, RequestId: id, Domain: selected}))
 		if err != nil {
 			return nil, fmt.Errorf("submit (--request-domain %s --request-id %s): %w", domain, id, retentionDiagnostic(err))
@@ -123,6 +133,9 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 	}
 	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "request-id: %s\n", id); err != nil {
 		return nil, fmt.Errorf("write request id: %w", err)
+	}
+	if workspace {
+		return o.submitWorkspace(ctx, client, task, id, nil)
 	}
 	submit := client.SubmitJob
 	if retrying {

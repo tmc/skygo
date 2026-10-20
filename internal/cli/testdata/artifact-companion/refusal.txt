@@ -1,0 +1,33 @@
+# Ack/required args fail without touching missing input/output namespaces.
+# Companion publication requires a private script-owned working directory.
+chmod 0700 .
+! skygo state artifacts backup --data-dir untouched --artifact-dir absent --output refused
+stderr 'requires --ack-writers-stopped'
+! exists untouched
+! exists absent
+! exists refused
+! skygo state artifacts restore --input absent --data-dir refused
+stderr 'requires --ack-writers-stopped'
+! exists refused
+! skygo state artifacts backup --data-dir untouched --artifact-dir absent --ack-writers-stopped
+stderr 'required flag.*output'
+! exists untouched
+! exists absent
+# Store's actual existing-only/membership validation refuses missing data/bundles.
+! skygo state artifacts backup --data-dir absent --artifact-dir absent-root --output refused --ack-writers-stopped
+! stdout .
+! exists absent
+! exists refused
+! skygo state artifacts restore --input absent-bundle --data-dir refused --ack-writers-stopped
+! stdout .
+! exists refused
+# A private malformed bundle is not adopted, fixed, or given a final destination.
+mkdir tampered
+chmod 0700 tampered
+cp invalid.txt tampered/manifest.json
+! skygo state artifacts restore --input tampered --data-dir refused --ack-writers-stopped
+! stdout .
+! exists refused
+cmp invalid.txt tampered/manifest.json
+-- invalid.txt --
+this is not a companion manifest

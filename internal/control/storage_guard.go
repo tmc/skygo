@@ -14,8 +14,20 @@ const (
 
 // StorageReady reports recent observed admission health without filesystem I/O.
 // It is an operational guard, not a current physical size or free-space guarantee.
-// Disabled retention preserves readiness independently of physical sampling.
+// Installed artifacts require their own cached observations even without
+// request retention; artifacts-absent defaults retain their existing behavior.
 func (c *Control) StorageReady() bool {
+	if c.artifacts != nil {
+		c.artifacts.mu.Lock()
+		stopped := c.artifacts.closing
+		c.artifacts.mu.Unlock()
+		if stopped {
+			return false
+		}
+		if c.cachedLinkGrowthCheck() != nil {
+			return false
+		}
+	}
 	if !c.retention.enabled {
 		return true
 	}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"time"
 
 	"github.com/tmc/skygo/internal/backend"
@@ -226,26 +227,48 @@ func ExampleStore_OutputReference() {
 
 func ExampleStore_FinishCleanup_outputOnly() {
 	dir, info, remove := exampleRetentionDirectory(store.DefaultRetentionPolicy())
-	defer remove()
+	var s *store.Store
+	var b *local.Backend
+	var pathErr *os.PathError
+	defer func() {
+		var closeErr error
+		unexpectedClose := false
+		if b != nil {
+			closeErr = b.Close()
+			if closeErr == nil && pathErr != nil {
+				unexpectedClose = true
+				closeErr = fmt.Errorf("failed-start command custody unexpectedly released: %w", pathErr)
+			}
+		}
+		if closeErr == nil && s != nil {
+			closeErr = s.Close()
+		}
+		if closeErr != nil {
+			// Keep the original held owner/error and its namespace; output-only
+			// cleanup never grants command-payload or whole-backend closure.
+			go func() {
+				<-make(chan struct{})
+				runtime.KeepAlive(b)
+				runtime.KeepAlive(s)
+				runtime.KeepAlive(dir)
+				runtime.KeepAlive(closeErr)
+			}()
+			if unexpectedClose || pathErr == nil || !errors.Is(closeErr, pathErr) {
+				panic(closeErr)
+			}
+			return
+		}
+		remove()
+	}()
 	s, err := store.Open(dir)
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		if err := s.Close(); err != nil {
-			panic(err)
-		}
-	}()
 	p := info.Policy
-	b, err := local.NewRetained(filepath.Join(dir, "logs"), local.RetentionConfig{Owner: s.Owner(), OutputUnit: p.OutputUnit, Volume: p.Volume, OutputBytes: p.OutputBytes, OutputDomains: p.OutputDomains, OutputFiles: p.OutputFiles})
+	b, err = local.NewRetained(filepath.Join(dir, "logs"), local.RetentionConfig{Owner: s.Owner(), OutputUnit: p.OutputUnit, Volume: p.Volume, OutputBytes: p.OutputBytes, OutputDomains: p.OutputDomains, OutputFiles: p.OutputFiles})
 	if err != nil {
 		panic(err)
 	}
-	defer func() {
-		if err := b.Close(); err != nil {
-			panic(err)
-		}
-	}()
 	binding, err := backend.LocalBinding(s.Owner())
 	if err != nil {
 		panic(err)
@@ -274,7 +297,6 @@ func ExampleStore_FinishCleanup_outputOnly() {
 	}
 	ctx := context.Background()
 	startErr := b.Start(ctx, job.ID, task)
-	var pathErr *os.PathError
 	if !errors.Is(startErr, fs.ErrNotExist) || !errors.As(startErr, &pathErr) || pathErr.Op != "fork/exec" || pathErr.Path != absent {
 		panic(fmt.Errorf("require failed exec of private absent path: %v", startErr))
 	}
@@ -286,11 +308,11 @@ func ExampleStore_FinishCleanup_outputOnly() {
 	if err != nil {
 		panic(err)
 	}
-	// The real failed-start lifecycle has closed pipes/log and released command
-	// payload. That is output closure only, never native stopped proof.
+	// The failed start positively closed pipes/log, but its original command
+	// payload remains held. Output-only cleanup grants no native stopped proof.
 	callbacks := b.Retention()
 	receipt, err := callbacks.CheckOutputClosed(ctx, ref)
-	if err != nil || receipt.ClosureID == "" || !receipt.PayloadReleased {
+	if err != nil || receipt.ClosureID == "" || receipt.PayloadReleased {
 		panic(fmt.Errorf("output closure: %v", err))
 	}
 	fmt.Println(status.State, status.Termination == backend.UnknownTermination, receipt.PayloadReleased)
@@ -361,7 +383,7 @@ func ExampleStore_FinishCleanup_outputOnly() {
 	_, pending, err := s.NextCleanup(0)
 	fmt.Println(pending, err)
 	// Output:
-	// failed true true
+	// failed true false
 	// 1 true false
 	// true true
 	// 0 0 <nil>

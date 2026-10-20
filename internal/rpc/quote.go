@@ -7,12 +7,19 @@ import (
 
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 func (h *handler) QuoteTask(ctx context.Context, r *connect.Request[v1.QuoteTaskRequest]) (*connect.Response[v1.QuoteTaskResponse], error) {
+	if hasWorkspaceTask(r.Msg.Task) {
+		if _, err := h.engine.Check(requestActor(ctx), auth.Read); err != nil {
+			return nil, rpcError(err)
+		}
+		return nil, rpcError(control.ErrUnsupported)
+	}
 	plan, err := h.control.QuoteTask(requestActor(ctx), task(r.Msg.Task), r.Msg.Currency, quoteRateUnit(r.Msg.Unit), r.Msg.BillableDurationSeconds)
 	if err != nil {
 		h.record(ctx, "plan", "", err)

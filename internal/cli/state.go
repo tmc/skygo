@@ -52,6 +52,6 @@ func (o *options) stateCommand() *cobra.Command {
 		_ = cmd.MarkFlagRequired(flag)
 		state.AddCommand(cmd)
 	}
-	state.AddCommand(o.retentionStateCommand(), o.compactStateCommand())
+	state.AddCommand(o.retentionStateCommand(), o.compactStateCommand(), o.artifactsStateCommand())
 	return state
 }

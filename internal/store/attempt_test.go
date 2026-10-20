@@ -307,7 +307,7 @@ func TestAttemptCollisionRollback(t *testing.T) {
 	j = failTest(t, s, beginTest(t, s, j, now), now)
 	for _, candidate := range []string{j.ID, "invalid"} {
 		err := s.db.Update(func(tx *bolt.Tx) error {
-			_, _, err := beginAttempt(tx, j.ID, j.ID, candidate, 0, *j.NextAttemptAt)
+			_, _, err := beginAttempt(tx, j.ID, j.ID, candidate, "", 0, *j.NextAttemptAt)
 			return err
 		})
 		if err == nil {
@@ -318,7 +318,7 @@ func TestAttemptCollisionRollback(t *testing.T) {
 	candidate := "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	injected := errors.New("after transition")
 	err := s.db.Update(func(tx *bolt.Tx) error {
-		_, start, err := beginAttempt(tx, j.ID, j.ID, candidate, 0, *j.NextAttemptAt)
+		_, start, err := beginAttempt(tx, j.ID, j.ID, candidate, "", 0, *j.NextAttemptAt)
 		if err != nil {
 			return err
 		}

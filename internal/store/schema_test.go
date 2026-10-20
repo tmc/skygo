@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -160,6 +161,12 @@ func TestSchemaRefusedWithoutWrites(t *testing.T) {
 				if err == nil {
 					s.Close()
 					t.Fatal("unsupported schema opened")
+				}
+				if s != nil {
+					t.Fatal("initialization refusal returned a Store")
+				}
+				if !strings.HasPrefix(err.Error(), "initialize job database: ") {
+					t.Fatalf("missing initialization context: %v", err)
 				}
 				if marker.future && !errors.Is(err, ErrUnsupportedSchema) {
 					t.Fatalf("future error: %v", err)

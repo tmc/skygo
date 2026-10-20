@@ -40,6 +40,7 @@ type retryExecution struct {
 	outputDone   chan struct{}
 	reaped       chan struct{}
 	startErr     error
+	waitErr      error // actual sole Wait result; published under Backend.mu before reaped
 	handleClosed bool
 	// All fields below are protected by Backend.mu. Once reaping is set, no
 	// cancellation, timer or shutdown path may signal the group again.
@@ -59,35 +60,37 @@ func checkInstance(e *execution, instance string) error {
 func (b *Backend) startRetry(cmd *exec.Cmd, out *output, id string, seconds int64) error {
 	var token [16]byte
 	if _, err := rand.Read(token[:]); err != nil {
-		b.closeUnstartedOutput(out)
-		return fmt.Errorf("create execution identity: %w", err)
+		return errors.Join(fmt.Errorf("create execution identity: %w", err), b.closeUnstartedOutput(out))
 	}
 	reader, writer, err := os.Pipe()
 	if err != nil {
-		b.closeUnstartedOutput(out)
-		return fmt.Errorf("create output pipe: %w", err)
+		return errors.Join(fmt.Errorf("create output pipe: %w", err), b.closeUnstartedOutput(out))
 	}
 	cmd.Stdout, cmd.Stderr, cmd.WaitDelay = writer, writer, 0
 	b.retryOps.prepare(cmd)
-	e := &execution{cmd: cmd, status: backend.Status{State: backend.Starting, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), output: out,
+	e := &execution{cmd: cmd, stdioWriter: writer, status: backend.Status{State: backend.Starting, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), output: out,
 		retry: &retryExecution{reader: reader, readDone: make(chan error, 1), outputDone: make(chan struct{}), reaped: make(chan struct{})}}
 	b.jobs[id] = e
 	b.attachRetention(e, id)
 	if err := cmd.Start(); err != nil {
-		e.retry.handleClosed = releaseRetry(cmd) == nil
-		reader.Close()
-		writer.Close()
-		if err := out.file.Close(); err == nil {
+		handleErr := releaseRetry(cmd)
+		e.retry.handleClosed = handleErr == nil
+		readerErr := e.closeReader()
+		writerErr := e.closeWriter()
+		closeErr := out.file.Close()
+		if closeErr == nil {
 			out.closed = true
 		}
 		e.status.State, e.status.Reason = backend.Failed, retryReason("start: "+err.Error())
-		close(e.retry.reaped)
+		close(e.retry.reaped) // Failed native Start is not a positive Wait receipt.
 		close(e.retry.outputDone)
+		e.shutdownPublished = true
+		e.shutdownErr = errors.Join(err, handleErr, readerErr, writerErr, closeErr)
 		b.finishPayload(e)
 		close(e.done)
-		return fmt.Errorf("start program: %w", err)
+		return fmt.Errorf("start program: %w", e.shutdownErr)
 	}
-	writer.Close()
+	e.closeWriter()
 	if !retryHandleReady(cmd) {
 		// No waiter or reaper exists yet: the original unreaped child still pins
 		// its PID. Acquire only an original-child handle, never signal that PID.
@@ -119,7 +122,7 @@ func readRetryOutput(e *execution) {
 			if errors.Is(err, io.EOF) {
 				err = nil
 			}
-			e.retry.reader.Close()
+			e.closeReader() // cached separately; do not change status/retry data precedence
 			e.retry.readDone <- err
 			return
 		}
@@ -138,6 +141,9 @@ func (b *Backend) stopRetry(e *execution, state backend.State, reason string) er
 		return nil
 	}
 	if err := b.retryOps.kill(e.cmd); err != nil {
+		if e.shutdownErr == nil {
+			e.shutdownErr = err
+		}
 		return fmt.Errorf("kill process group: %w", err)
 	}
 	return nil
@@ -166,13 +172,22 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 	var abortErr error
 	if pinErr != nil {
 		abortErr = abortRetry(e.cmd)
-		e.retry.reader.Close()
+		e.closeReader()
 	}
-	e.retry.handleClosed = releaseRetry(e.cmd) == nil
+	handleCloseErr := releaseRetry(e.cmd)
+	e.retry.handleClosed = handleCloseErr == nil
 	waitResult := make(chan error, 1)
 	go func() {
 		err := e.cmd.Wait() // Sole reaper; group signals are permanently fenced.
-		close(e.retry.reaped)
+		b.mu.Lock()
+		e.retry.waitErr = err
+		if e.shutdownPublished {
+			// Only this one original late result may extend the bounded bundle.
+			// It never repairs the missing pin or upgrades aggregate closure.
+			e.shutdownErr = errors.Join(e.shutdownErr, err)
+		}
+		close(e.retry.reaped) // actual result/ProcessState precede the receipt
+		b.mu.Unlock()
 		waitResult <- err
 		b.mu.Lock()
 		select {
@@ -201,13 +216,15 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 	if pinErr == nil && killErr == nil {
 		absentErr = b.waitGroupAbsent(e.cmd)
 	}
-	var readErr error
+	var readErr, pumpErr, readTimeoutErr error
 	select {
 	case readErr = <-e.retry.readDone:
+		pumpErr = readErr
 	case <-time.After(250 * time.Millisecond):
-		readErr = errors.New("output pipes remained open after exit; later output discarded")
-		e.retry.reader.Close()
-		<-e.retry.readDone
+		readTimeoutErr = errors.New("output pipes remained open after exit; later output discarded")
+		readErr = readTimeoutErr
+		e.closeReader()
+		pumpErr = <-e.retry.readDone
 	}
 	<-e.retry.outputDone
 	b.mu.Lock()
@@ -241,7 +258,8 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 		}
 	}
 	e.output.mu.Lock()
-	outputErr := e.output.err
+	retainErr := e.output.err
+	outputErr := retainErr
 	closeErr := e.output.file.Close()
 	if closeErr == nil {
 		e.output.closed = true
@@ -261,6 +279,24 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 	if ordinaryWait && !e.retry.intent && pinErr == nil && killErr == nil && absentErr == nil && readErr == nil && outputErr == nil && e.status.ExitCode != nil && *e.status.ExitCode >= 0 {
 		e.status.Termination = backend.StoppedWithExitCode
 	}
+	// An actual Wait result is cached by the same original reaper before its
+	// receipt. Incomplete timeout snapshots never read ProcessState or invent
+	// a positive reap; late publication only adds that original result/cause.
+	e.output.mu.Lock()
+	outputClosed := e.output.closed && e.output.markerCloseErr == nil && e.output.markerFile == nil
+	markerErr := e.output.markerCloseErr
+	e.output.mu.Unlock()
+	e.shutdownClosed = reaped && ordinaryWait && e.status.ExitCode != nil &&
+		pinErr == nil && killErr == nil && absentErr == nil &&
+		e.retry.reaping && handleCloseErr == nil && e.readerCloseErr == nil &&
+		e.stdioWriterErr == nil && e.stdioWriter == nil && closeErr == nil && outputClosed
+	// waitErr is status/timeout precedence. Include the actual cached Wait
+	// cause exactly once, independently of that local result or cancellation.
+	e.shutdownErr = errors.Join(e.shutdownErr, pinErr, abortErr,
+		killErr, handleCloseErr, absentErr, reapErr, e.retry.waitErr,
+		readTimeoutErr, pumpErr, e.readerCloseErr, e.stdioWriterErr,
+		retainErr, closeErr, markerErr)
+	e.shutdownPublished = true
 	b.finishPayload(e)
 	close(e.done)
 }
