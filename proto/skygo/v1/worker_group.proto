@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package skygo.v1;
+
+import "skygo/v1/control.proto";
+
+option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
+
+// WorkerGroupService runs one task as a fixed group of indexed ranks. It is a
+// separate endpoint: clients never fall back to SubmitJob, and CancelJob
+// records group cancellation. No server mounts it until
+// CAPABILITY_INDEXED_WORKERS_V1 is advertised.
+service WorkerGroupService {
+  // SubmitWorkerJob accepts or replays a worker group.
+  rpc SubmitWorkerJob(SubmitWorkerJobRequest) returns (SubmitWorkerJobResponse);
+  // GetWorkerRanks reports every rank of one group attempt.
+  rpc GetWorkerRanks(GetWorkerRanksRequest) returns (GetWorkerRanksResponse);
+  // StreamWorkerLogs reads one rank's log of one group attempt. There is no
+  // merged group stream.
+  rpc StreamWorkerLogs(StreamWorkerLogsRequest) returns (stream StreamWorkerLogsResponse);
+}
+
+message SubmitWorkerJobRequest {
+  // Each rank runs this task. It carries no worker fields.
+  Task task = 1;
+  // Reuse this identifier on retries. A different task or worker spec with
+  // the same ID is rejected.
+  string request_id = 2;
+  // Present for retained requests; unchanged replay precedes current placement.
+  RequestDomain domain = 3;
+  // Required.
+  WorkerSpec workers = 4;
+}
+
+// The accepted Job reports its worker spec in Job.workers.
+message SubmitWorkerJobResponse {
+  Job job = 1;
+}
+
+message GetWorkerRanksRequest {
+  string id = 1;
+  // Required: the group attempt, which is the job ID for its first attempt.
+  string attempt_id = 2;
+}
+
+message GetWorkerRanksResponse {
+  string id = 1;
+  string attempt_id = 2;
+  WorkerSpec workers = 3;
+  // Exactly workers.count entries, ordered by rank from 0. At most 16.
+  repeated WorkerRank ranks = 4;
+}
+
+// WorkerRankState is derived from one rank's own native facts.
+enum WorkerRankState {
+  WORKER_RANK_STATE_UNSPECIFIED = 0;
+  // Not yet started. An unscheduled rank stays waiting, never running.
+  WORKER_RANK_STATE_WAITING = 1;
+  WORKER_RANK_STATE_STARTING = 2;
+  WORKER_RANK_STATE_RUNNING = 3;
+  WORKER_RANK_STATE_SUCCEEDED = 4;
+  WORKER_RANK_STATE_FAILED = 5;
+  WORKER_RANK_STATE_CANCELED = 6;
+  // Missing, foreign or stale facts. An unknown rank holds the whole group.
+  WORKER_RANK_STATE_UNKNOWN = 7;
+}
+
+message WorkerRank {
+  uint32 rank = 1;
+  WorkerRankState state = 2;
+  string reason = 3;
+  // Set only from an observed container exit.
+  optional int32 exit_code = 4;
+}
+
+// Fields 1 through 3 match StreamJobLogsRequest.
+message StreamWorkerLogsRequest {
+  string id = 1;
+  // Offset within this rank's own log, which starts at zero.
+  int64 offset = 2;
+  bool follow = 3;
+  // Required: the group attempt whose rank log is read.
+  string attempt_id = 4;
+  // Required: 0 through workers.count-1.
+  uint32 rank = 5;
+  // Maximum data bytes in each response, 1 through 65536.
+  uint32 limit = 6;
+}
+
+// Fields 1 through 5 match StreamJobLogsResponse. Every response names its
+// attempt and rank.
+message StreamWorkerLogsResponse {
+  bytes data = 1;
+  int64 next_offset = 2;
+  bool complete = 3;
+  bool truncated = 4;
+  string attempt_id = 5;
+  uint32 rank = 6;
+}

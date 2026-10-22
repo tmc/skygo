@@ -106,6 +106,25 @@ message Job {
   repeated Attempt attempts = 10;
   google.protobuf.Timestamp next_attempt_at = 11;
   ArtifactResult result = 12;
+  // Output only: the accepted worker group, absent for a one-worker job.
+  // Requests carry WorkerSpec beside the task, never in it.
+  WorkerSpec workers = 13;
+}
+// WorkerMode selects how the ranks of a worker group relate. The zero value
+// is rejected; there is no default mode.
+enum WorkerMode {
+  WORKER_MODE_UNSPECIFIED = 0;
+  // Each rank runs the task with its own RANK and WORLD_SIZE.
+  WORKER_MODE_INDEPENDENT = 1;
+  // Ranks also get MASTER_ADDR and MASTER_PORT naming rank 0's listener.
+  WORKER_MODE_TCP_RENDEZVOUS = 2;
+}
+// WorkerSpec is the fixed shape of a worker group. Count is range-checked as
+// uint32 before any narrower conversion: 2..16 ranks in either mode, or 1
+// only with INDEPENDENT, which is an ordinary one-worker job.
+message WorkerSpec {
+  uint32 count = 1;
+  WorkerMode mode = 2;
 }
 // Attempt describes one execution. Ordinals are one-based; timestamps record
 // durable decisions, not exact native process start or exit times.
@@ -143,6 +162,12 @@ enum Capability {
   // Reserved endpoint fact for WorkflowService. Not advertised until all four
   // handlers and Control workflow admission and cancellation exist.
   CAPABILITY_STATIC_WORKFLOWS_V1 = 12;
+  // Reserved fact for WorkerGroupService indexed ranks. Not advertised until
+  // the service is mounted and a selected target produces worker groups.
+  CAPABILITY_INDEXED_WORKERS_V1 = 13;
+  // Reserved fact for WORKER_MODE_TCP_RENDEZVOUS, withheld on the same terms.
+  // No worker retry capability exists.
+  CAPABILITY_TCP_RENDEZVOUS_V1 = 14;
 }
 message Target {
   string name = 1;
