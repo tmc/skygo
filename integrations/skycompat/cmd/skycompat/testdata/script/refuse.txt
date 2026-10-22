@@ -1,0 +1,98 @@
+# Refusals: exit 1, empty stdout and exactly one value-free diagnostic
+# naming the field path and source position. Nothing is dropped silently.
+
+! skycompat import $IMPORT/refuse/run.yaml
+! stdout .
+stderr '\Atask yaml: unsupported run at 1:6: requires a shell\n\z'
+env EXIT
+stdout '^EXIT=1$'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/workdir-dollar.yaml --workdir-ref $IMPORT/workdir-ref.json
+stderr '\Ausage:'
+! skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json $IMPORT/refuse/workdir-dollar.yaml
+! stdout .
+stderr '\Atask yaml: unsupported workdir at 1:10: environment substitution\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/secrets.yaml
+! stdout .
+stderr '\Atask yaml: unsupported secrets at 3:3\n\z'
+! stderr s3cr3t
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/name.yaml
+! stdout .
+stderr '\Atask yaml: unsupported name at 1:7: requires explicit drop\n\z'
+! stderr s3cr3t
+
+! skycompat import --shell /bin/sh --allow-drop name $IMPORT/refuse/user-yaml.yaml
+! stdout .
+stderr '\Atask yaml: unsupported _user_specified_yaml at 2:23: requires explicit drop\n\z'
+! stderr s3cr3t
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/cloud.yaml
+! stdout .
+stderr '\Atask yaml: unsupported resources\.cloud at 3:10: select a skygo target\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/infra.yaml
+! stdout .
+stderr '\Atask yaml: unsupported resources\.infra at 3:10\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/infra-top.yaml
+! stdout .
+stderr '\Atask yaml: unsupported at 2:1\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/num-nodes.yaml
+! stdout .
+stderr '\Atask yaml: unsupported num_nodes at 2:12\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/file-mounts.yaml
+! stdout .
+stderr '\Atask yaml: unsupported file_mounts at 3:3\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/volumes.yaml
+! stdout .
+stderr '\Atask yaml: unsupported volumes at 3:3\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/use-spot.yaml
+! stdout .
+stderr '\Atask yaml: unsupported resources\.use_spot at 3:13\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/no-run.yaml
+! stdout .
+stderr '\Atask yaml: unsupported run at 0:0: requires run text\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/run-null.yaml
+! stdout .
+stderr '\Atask yaml: unsupported run at 1:6: requires run text\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/run-nul.yaml
+! stdout .
+stderr '\Atask yaml: invalid run at 1:6\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/setup-no-workdir.yaml
+! stdout .
+stderr '\Atask yaml: unsupported setup at 1:8: requires workdir\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/workdir.yaml
+! stdout .
+stderr '\Atask yaml: unsupported workdir at 1:10: requires a workdir reference\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/cpus-fraction.yaml
+! stdout .
+stderr '\Atask yaml: invalid resources\.cpus at 3:9: requires whole millicpus\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/memory-fraction.yaml
+! stdout .
+stderr '\Atask yaml: invalid resources\.memory at 3:11: requires whole bytes\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/memory-overflow.yaml
+! stdout .
+stderr '\Atask yaml: invalid resources\.memory at 3:11: requires whole bytes\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/accelerators-fraction.yaml
+! stdout .
+stderr '\Atask yaml: unsupported resources\.accelerators at 3:17: requires a whole count\n\z'
+
+! skycompat import --shell /bin/sh $IMPORT/refuse/image-bare.yaml
+! stdout .
+stderr '\Atask yaml: unsupported resources\.image_id at 3:13: requires docker:IMAGE\n\z'
+

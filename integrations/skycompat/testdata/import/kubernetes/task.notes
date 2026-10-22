@@ -1,0 +1,9 @@
+name	dropped	not executed
+workdir	lowered	path not read; replaced by the workdir reference
+envs	lowered	environment
+resources	default	fields noted separately
+resources.cpus	lowered	cpu_millis
+resources.memory	lowered	memory_bytes
+resources.image_id	lowered	image
+setup	lowered	setup is shell -c text
+run	lowered	argv is shell -c text

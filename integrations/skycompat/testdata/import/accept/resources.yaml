@@ -1,0 +1,10 @@
+run: nvidia-smi
+resources:
+  cpus: 2+
+  memory: 1.5Gi+
+  accelerators: {A100: 2}
+  image_id: docker:nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04
+  disk_size: 256
+  use_spot: false
+  cloud: null
+num_nodes: 1

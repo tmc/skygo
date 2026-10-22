@@ -1,0 +1,3 @@
+run: echo hi
+volumes:
+  /data: volume-name

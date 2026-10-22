@@ -1,0 +1,106 @@
+# Command grammar. Usage errors exit 2, refusals exit 1, and neither
+# writes to stdout.
+
+! skycompat
+! stdout .
+stderr '\Ausage: skycompat import --shell PATH \[flags\] TASK\.yaml\|-\n\z'
+env EXIT
+stdout '^EXIT=2$'
+
+skycompat help
+stdout '\Ausage: skycompat import'
+! stderr .
+
+! skycompat launch task.yaml
+! stdout .
+stderr 'unknown command "launch"'
+env EXIT
+stdout '^EXIT=2$'
+
+skycompat import -h
+! stdout .
+stderr 'shell path'
+stderr 'workdir-ref file'
+stderr 'allow-drop field'
+stderr 'env KEY=VALUE'
+
+! skycompat import --shell /bin/sh
+! stdout .
+stderr '\Ausage:'
+env EXIT
+stdout '^EXIT=2$'
+
+! skycompat import --shell /bin/sh task.yaml other.yaml
+! stdout .
+env EXIT
+stdout '^EXIT=2$'
+
+! skycompat import --shell /bin/sh --shell /bin/bash task.yaml
+! stdout .
+stderr 'repeated'
+
+! skycompat import --shell /bin/sh --unknown task.yaml
+! stdout .
+stderr 'flag provided but not defined: -unknown'
+
+! skycompat import --shell /bin/sh --timeout-seconds 10m task.yaml
+! stdout .
+stderr '\Askycompat: invalid --timeout-seconds\n\z'
+
+# Environment values may be secrets and are never echoed.
+! skycompat import --shell /bin/sh --env TOKEN=s3cr3t --env TOKEN=s3cr3t task.yaml
+! stdout .
+cmp stderr dup-env.txt
+! skycompat import --shell /bin/sh --env s3cr3t task.yaml
+cmp stderr bad-env.txt
+
+# Invalid options are refusals.
+! skycompat import --shell bin/sh task.yaml
+! stdout .
+cmp stderr shell.txt
+env EXIT
+stdout '^EXIT=1$'
+! skycompat import --shell /bin/sh/../sh task.yaml
+cmp stderr shell.txt
+! skycompat import --shell /bin/sh --timeout-seconds 604801 task.yaml
+stderr '\Atasklower: timeout outside 0\.\.604800 seconds\n\z'
+! skycompat import --shell /bin/sh --allow-drop run task.yaml
+stderr '\Atasklower: allow-drop accepts only name and _user_specified_yaml\n\z'
+! skycompat import --shell /bin/sh --output /abs workdir.yaml --workdir-ref ref.json
+stderr '\Ausage:'
+! skycompat import --shell /bin/sh --workdir-ref ref.json --output /abs workdir.yaml
+stderr '\Atasklower: invalid output root\n\z'
+! skycompat import --shell /bin/sh --output out task.yaml
+stderr '\Atasklower: outputs require a task workdir\n\z'
+! skycompat import --shell /bin/sh --workdir-ref ref.json task.yaml
+stderr '\Atasklower: workdir reference supplied for a task without workdir\n\z'
+
+# Input files.
+! skycompat import --shell /bin/sh missing.yaml
+! stdout .
+stderr '\Askycompat: open missing\.yaml: '
+env EXIT
+stdout '^EXIT=1$'
+! skycompat import --shell /bin/sh --workdir-ref bad-ref.json workdir.yaml
+! stdout .
+cmp stderr bad-ref.txt
+! skycompat import --shell /bin/sh --workdir-ref missing.json workdir.yaml
+stderr '\Askycompat: open missing\.json: '
+
+-- task.yaml --
+run: echo hi
+-- workdir.yaml --
+workdir: .
+run: echo hi
+-- ref.json --
+{"id":"00112233445566778899aabbccddeeff","sha256":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","size":4096}
+-- bad-ref.json --
+{"id":"00112233445566778899aabbccddeeff","sha256":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","size":"4096"}
+-- bad-ref.txt --
+skycompat: invalid workdir reference
+-- dup-env.txt --
+skycompat: duplicate --env key
+-- bad-env.txt --
+skycompat: --env requires KEY=VALUE
+-- shell.txt --
+tasklower: shell must be a clean absolute path

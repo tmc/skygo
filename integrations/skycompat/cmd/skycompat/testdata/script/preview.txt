@@ -1,0 +1,70 @@
+# Preview: the task file on stdout and one note per recognized field on
+# stderr, checked against the immutable corpus in testdata/import.
+
+skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --target local --allow-drop name $IMPORT/local/task.yaml
+cmp stdout $IMPORT/local/task.json
+cmp stderr $IMPORT/local/task.notes
+
+skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --allow-drop name $IMPORT/kubernetes/task.yaml
+cmp stdout $IMPORT/kubernetes/task.json
+cmp stderr $IMPORT/kubernetes/task.notes
+
+skycompat import --shell /bin/bash --target gpu --timeout-seconds 3600 $IMPORT/accept/resources.yaml
+cmp stdout $IMPORT/accept/resources.json
+cmp stderr $IMPORT/accept/resources.notes
+
+skycompat import --shell /bin/sh --allow-drop name --allow-drop _user_specified_yaml $IMPORT/accept/defaults.yaml
+cmp stdout $IMPORT/accept/defaults.json
+cmp stderr $IMPORT/accept/defaults.notes
+
+skycompat import --shell /bin/sh $IMPORT/accept/multiline.yaml
+cmp stdout $IMPORT/accept/multiline.json
+cmp stderr $IMPORT/accept/multiline.notes
+
+# Standard input, Python boolean coercion and an explicit override for a
+# null environment value.
+stdin env.yaml
+skycompat import --shell /bin/sh --env TOKEN=explicit -
+cmp stdout env.json
+cmp stderr env.notes
+
+# Characters YAML would reject or fold are escaped.
+skycompat import --shell /bin/sh exotic.yaml
+cmp stdout exotic.json
+
+# The FROZEN-1 literal form of the same case: raw U+2028 and U+FEFF inside
+# the quoted scalar. Expected bytes are UNRUN, derived from yaml.v3 v3.0.1
+# source: a raw U+2028 is a line break that a double-quoted scalar keeps
+# verbatim (only a leading LF folds to a space), and a raw U+FEFF is an
+# ordinary character. The actual decode is asserted by cmp.
+skycompat import --shell /bin/sh exotic-literal.yaml
+cmp stdout exotic-literal.json
+
+-- env.yaml --
+run: echo "$GREETING $TOKEN"
+envs:
+  GREETING: true
+  TOKEN: null
+-- env.json --
+{
+  "argv": ["/bin/sh", "-c", "echo \"$GREETING $TOKEN\""],
+  "env": {
+    "GREETING": "True",
+    "TOKEN": "explicit"
+  }
+}
+-- env.notes --
+run	lowered	argv is shell -c text
+envs	lowered	environment
+-- exotic.yaml --
+run: "a\u2028b\x85c\ufeffd\x7fe\x01f\x1bg\th — ✓ 🚀"
+-- exotic.json --
+{
+  "argv": ["/bin/sh", "-c", "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th — ✓ 🚀"]
+}
+-- exotic-literal.yaml --
+run: "a b\x85c﻿d\x7fe\x01f\x1bg\th — ✓ 🚀"
+-- exotic-literal.json --
+{
+  "argv": ["/bin/sh", "-c", "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th — ✓ 🚀"]
+}

@@ -46,6 +46,11 @@ func newFixture(t *testing.T) *fixture {
 		t.Skip("set SKYCOMPAT_CORE_BINARY for real canonical-process qualification")
 	}
 	dir := t.TempDir()
+	// auth.json and the tokens are written here, and their parent must be
+	// private; t.TempDir follows the umask.
+	if err := os.Chmod(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
 	f := &fixture{binary: binary, dir: dir, auth: filepath.Join(dir, "auth.json")}
 	adminPath := filepath.Join(dir, "admin.token")
 	f.run(t, "auth", "init", "--data-dir", filepath.Join(dir, "state"), "--auth-file", f.auth, "--token-output", adminPath)

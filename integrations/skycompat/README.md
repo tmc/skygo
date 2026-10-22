@@ -30,6 +30,18 @@ GOWORK=off go test -race ./...
 GOWORK=off go vet ./...
 ```
 
+`skycompat import` lowers one task to a skygo task file for `skygo plan -f`
+and `skygo run -f`, using package `tasklower`. It requires an explicit
+absolute `--shell`, refuses every field it cannot represent and drops
+nonexecuting `name` or `_user_specified_yaml` only on request. It reads only
+its explicit inputs and makes no network connections. See
+[docs/import.md](docs/import.md).
+
+```
+skycompat import --shell /bin/sh --target local task.yaml > task.json
+skygo run -f task.json --wait
+```
+
 `facade.NewHandler(facade.Options{Endpoint: canonicalURL})` serves only
 `GET /api/health` and `POST /validate`. It uses the generated canonical Connect
 client and forwards each request's original bearer credential. No task, file,

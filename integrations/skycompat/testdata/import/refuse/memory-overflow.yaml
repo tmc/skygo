@@ -1,0 +1,3 @@
+run: echo hi
+resources:
+  memory: 1000000000000000PB

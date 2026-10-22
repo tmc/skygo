@@ -1,0 +1,11 @@
+name: train
+run: python train.py
+envs: {}
+file_mounts: {}
+volumes: {}
+service: null
+config: null
+_user_specified_yaml: "run: python train.py"
+resources:
+  job_recovery: null
+  any_of: null

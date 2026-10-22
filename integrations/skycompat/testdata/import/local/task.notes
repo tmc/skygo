@@ -1,0 +1,5 @@
+name	dropped	not executed
+workdir	lowered	path not read; replaced by the workdir reference
+envs	lowered	environment
+setup	lowered	setup is shell -c text
+run	lowered	argv is shell -c text

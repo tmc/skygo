@@ -1,0 +1,3 @@
+run: echo hi
+resources:
+  accelerators: A100:0.5

@@ -1,0 +1,10 @@
+name: import-local
+workdir: .
+envs:
+  GREETING: hello
+setup: |
+  mkdir -p out
+  cat seed.txt > out/stage.txt
+run: |
+  printf '%s from %s\n' "$GREETING" "$(cat out/stage.txt)" > out/result.txt
+  echo "job: $GREETING"

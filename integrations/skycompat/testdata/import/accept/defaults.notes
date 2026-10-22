@@ -1,0 +1,11 @@
+name	dropped	not executed
+run	lowered	argv is shell -c text
+envs	default	empty
+file_mounts	default	empty
+volumes	default	empty
+service	default	null
+config	default	null
+_user_specified_yaml	dropped	not executed
+resources	default	empty
+resources.job_recovery	default	null
+resources.any_of	default	null

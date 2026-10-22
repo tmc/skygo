@@ -1,0 +1,8 @@
+run: |
+  echo "it's $(date +%Y) — ünïcødé ✓"
+  printf '%s\t%s\n' "a b" 'c "d"'
+  cat <<'END'
+  $HOME stays literal
+  END
+envs:
+  QUOTE: "say \"hi\"\tnow"

@@ -1,0 +1,14 @@
+name: import-kubernetes
+workdir: .
+envs:
+  GREETING: hello
+resources:
+  cpus: 0.1
+  memory: 0.0625
+  image_id: docker:busybox:1.36.1
+setup: |
+  mkdir -p out
+  cat seed.txt > out/stage.txt
+run: |
+  printf '%s from %s\n' "$GREETING" "$(cat out/stage.txt)" > out/result.txt
+  echo "job: $GREETING"

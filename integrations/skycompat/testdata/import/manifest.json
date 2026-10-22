@@ -1,0 +1,334 @@
+{
+ "upstream": {
+  "repository": "https://github.com/skypilot-org/skypilot",
+  "commit": "922a9f046c4a2714edf2b76fec3d1862dcd56ae3",
+  "sources": [
+   {
+    "path": "sky/skylet/constants.py",
+    "lines": "1030-1041",
+    "sha256": "c87fc7074f5b9b6e3a808a1dc3350a2cb9db835557569fade88888ff24bf041d",
+    "use": "binary memory units"
+   },
+   {
+    "path": "sky/utils/resources_utils.py",
+    "lines": "572-632",
+    "sha256": "6dbaed006d561ef2e71a23ce7550c374eef39cea236c467c44873168b2feaf7d",
+    "use": "unitless memory is GB; units case-insensitive"
+   },
+   {
+    "path": "sky/resources.py",
+    "lines": "866-935",
+    "sha256": "0c2ff8df381e4ff4a714d6d6375a37e8b5d3ab1c737d5d203036d51ef8b6d1a7",
+    "use": "cpus and memory forms"
+   },
+   {
+    "path": "sky/clouds/kubernetes.py",
+    "lines": "228-230,764-767,951-952",
+    "sha256": "ab65380309bf418cfe55a5c1180654cc7007ec5a90b89cb410584ccd7c5b383c",
+    "use": "default vCPUs not injected; + lowered to exact request; docker: prefix"
+   },
+   {
+    "path": "sky/task.py",
+    "lines": "784-786",
+    "sha256": "3bd68b3bd8ea2da39c96dce10d800784a7271e7eca10aeccb01ec95ec7856b55",
+    "use": "workdir environment substitution, refused"
+   }
+  ]
+ },
+ "layer": "FIXTURE",
+ "note": "Original small source-derived examples; no upstream code. The kubernetes image is a tag, not a digest: native acceptance pins its own digest.",
+ "fixtures": [
+  {
+   "path": "local/task.yaml",
+   "sha256": "0d5a227ba549a8335529688032ead250cf09409feab9c88c32b11e543dff85f0",
+   "options": {
+    "shell": "/bin/sh",
+    "workdir_ref": "workdir-ref.json",
+    "outputs": [
+     "out"
+    ],
+    "target": "local",
+    "allow_drop": [
+     "name"
+    ]
+   },
+   "expect": "lower",
+   "want": "local/task.json",
+   "want_sha256": "d34650f015352c6e05e4e6d680e42039c1f24fb3330df465ec02d84056fe954f",
+   "notes": "local/task.notes",
+   "notes_sha256": "dfdad8483b9f03fcbc158751645816f35d162fe5491aabb846d2c42f368f1b72"
+  },
+  {
+   "path": "kubernetes/task.yaml",
+   "sha256": "a8946659739a84c717ee135648dcf1bf21fc5906b648923e4824c101519f740f",
+   "options": {
+    "shell": "/bin/sh",
+    "workdir_ref": "workdir-ref.json",
+    "outputs": [
+     "out"
+    ],
+    "allow_drop": [
+     "name"
+    ]
+   },
+   "expect": "lower",
+   "want": "kubernetes/task.json",
+   "want_sha256": "dd27eeeb1bd65f3c35ec961e8b89a5dde35ab14bb2fc2c63e3966a91a6c5073f",
+   "notes": "kubernetes/task.notes",
+   "notes_sha256": "099571de6167eeed0a2511a0702b5bc02fe8e31ad5fb28673221c3cc32db116b"
+  },
+  {
+   "path": "accept/resources.yaml",
+   "sha256": "eddd4c3272ac50d48b349797dafb2718643c72b4dff92e62ad6972228b5b4e93",
+   "options": {
+    "shell": "/bin/bash",
+    "target": "gpu",
+    "timeout_seconds": 3600
+   },
+   "expect": "lower",
+   "want": "accept/resources.json",
+   "want_sha256": "4d9101e18738474dd2f59ee187ca25f8fd9eb9bd08a9c0b151097a14cd366b0b",
+   "notes": "accept/resources.notes",
+   "notes_sha256": "57553cf86bb2bbdb8f00b62f01c0898edc4f450f24781baaacb6023ebcd97656"
+  },
+  {
+   "path": "accept/defaults.yaml",
+   "sha256": "2e6532ee25d5b586643b7e26f8c8561b083bdd4bb4df2ba8b35aa5f89b0a080a",
+   "options": {
+    "shell": "/bin/sh",
+    "allow_drop": [
+     "name",
+     "_user_specified_yaml"
+    ]
+   },
+   "expect": "lower",
+   "want": "accept/defaults.json",
+   "want_sha256": "aa6ec6725dc7de7f875435efc2f74c276225a45b9923fe4c31d337c738d310b2",
+   "notes": "accept/defaults.notes",
+   "notes_sha256": "223c3a9ce0051eea73a39683f48c52d22681ed2ce34839f008f51d29d46a543b"
+  },
+  {
+   "path": "accept/multiline.yaml",
+   "sha256": "40a8a21417ce815b6bf96649c91e3d9f1c32a1a5fe60d7ffb76036faa355d4ae",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "lower",
+   "want": "accept/multiline.json",
+   "want_sha256": "86f006c08ed7b5477c9095b968d6e49da551a5ecab39fb359f59246a13dc3113",
+   "notes": "accept/multiline.notes",
+   "notes_sha256": "7495fb7c7e3f23250885bfc390b8e287c35d460d4f1be1f0a16f3c0a26e323b0"
+  },
+  {
+   "path": "refuse/cloud.yaml",
+   "sha256": "a56e561f8f21a0ab5de9effa05b63ef284557d8d027b6f67b69bdbc9d41e0e3a",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported resources.cloud at 3:10: select a skygo target"
+  },
+  {
+   "path": "refuse/infra.yaml",
+   "sha256": "63c5e4aa99d6316916ff55ec93969b9e7f6e193eb8faabddba85f13a45b22869",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported resources.infra at 3:10"
+  },
+  {
+   "path": "refuse/infra-top.yaml",
+   "sha256": "d06f414a49e2b4111320dc445fdb6f77e15c86b0cfd5eca9e364bbd03e16cba7",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported at 2:1"
+  },
+  {
+   "path": "refuse/num-nodes.yaml",
+   "sha256": "c1e009c7cd8cd8fb73cd09a27bae7b2a003335fb65d5db8345bba09b11d96ef9",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported num_nodes at 2:12"
+  },
+  {
+   "path": "refuse/file-mounts.yaml",
+   "sha256": "c01a330846de6e212b3c45753f8c56fd233c52dcbc41197a390af10aa76bd99b",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported file_mounts at 3:3"
+  },
+  {
+   "path": "refuse/volumes.yaml",
+   "sha256": "778cb1e911cf7670d355b16f93fbb462259eef62ac87b8815a81461e4e397e5d",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported volumes at 3:3"
+  },
+  {
+   "path": "refuse/use-spot.yaml",
+   "sha256": "afd75afec588ffcb8088580b82456995b817f1b5e3d74bfd586544abd6303443",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported resources.use_spot at 3:13"
+  },
+  {
+   "path": "refuse/secrets.yaml",
+   "sha256": "b176f75548856c92b6e72a6397f67417c2e339a250f664a7204aa9581bf85135",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported secrets at 3:3"
+  },
+  {
+   "path": "refuse/run.yaml",
+   "sha256": "2ce0175c42131ac423e596498db2fbd3e0acc3789369258e14315b2278387df6",
+   "options": {},
+   "expect": "refuse",
+   "error": "task yaml: unsupported run at 1:6: requires a shell"
+  },
+  {
+   "path": "refuse/no-run.yaml",
+   "sha256": "c0362aa035ae3a664205d0ea1f6a153cff2044ecc9996454d7ffc25bff31ac7e",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported run at 0:0: requires run text"
+  },
+  {
+   "path": "refuse/run-null.yaml",
+   "sha256": "ef425e34236bbb5505f5f329336b41a8e4a831d2b548040432a389237c38b60e",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported run at 1:6: requires run text"
+  },
+  {
+   "path": "refuse/run-nul.yaml",
+   "sha256": "1623523617e76337e3533b8412fcb4ba32b4ed608eb353b7757523585cc1753b",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: invalid run at 1:6"
+  },
+  {
+   "path": "refuse/setup-no-workdir.yaml",
+   "sha256": "69a6ee073935b6bdc62803ec063af0e8aa4d9af398c375f96280c920f088d1ce",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported setup at 1:8: requires workdir"
+  },
+  {
+   "path": "refuse/workdir-dollar.yaml",
+   "sha256": "1838b9958d8b90bfade5661d9515b6ce92132a2d053beb6521eb0f39480c8213",
+   "options": {
+    "workdir_ref": "workdir-ref.json",
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported workdir at 1:10: environment substitution"
+  },
+  {
+   "path": "refuse/workdir.yaml",
+   "sha256": "8b99d62f4af366637bd7a750a69707c49396bb5b8eeeb1775fa5d90cdee785ff",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported workdir at 1:10: requires a workdir reference"
+  },
+  {
+   "path": "refuse/name.yaml",
+   "sha256": "454bbfbbd841e65f1b12d6884f04c62e1e5727545ab6b7d131d26fd29eef5d95",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported name at 1:7: requires explicit drop"
+  },
+  {
+   "path": "refuse/user-yaml.yaml",
+   "sha256": "85673f400e7cdffa1164fd9d4d9b224bb9e91b825cc6a637a94acdc80720d361",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported _user_specified_yaml at 2:23: requires explicit drop"
+  },
+  {
+   "path": "refuse/cpus-fraction.yaml",
+   "sha256": "c6052b797b75f49309d60734ebca232c1b4c120287e5aa327e8f8bcd953fd02c",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: invalid resources.cpus at 3:9: requires whole millicpus"
+  },
+  {
+   "path": "refuse/memory-fraction.yaml",
+   "sha256": "031bf1771c9f9ff960b009c4a2e0addfa67fc64fa187c29388011db3694e1fe6",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: invalid resources.memory at 3:11: requires whole bytes"
+  },
+  {
+   "path": "refuse/memory-overflow.yaml",
+   "sha256": "5760dd4c8946e162997071594347708be4c5dccd50aee8edd1af4500ffafb6b7",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: invalid resources.memory at 3:11: requires whole bytes"
+  },
+  {
+   "path": "refuse/accelerators-fraction.yaml",
+   "sha256": "f8453b0a1fb8f6e685e390d22d71eb56de7bfd7a7ff4b05f589f76d506bc6864",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported resources.accelerators at 3:17: requires a whole count"
+  },
+  {
+   "path": "refuse/image-bare.yaml",
+   "sha256": "c1c5eb2eda050681ec9605706dba97126c8b5c6a023c0d84d35065720c8b36a8",
+   "options": {
+    "shell": "/bin/sh"
+   },
+   "expect": "refuse",
+   "error": "task yaml: unsupported resources.image_id at 3:13: requires docker:IMAGE"
+  }
+ ],
+ "workdir_ref": {
+  "path": "workdir-ref.json",
+  "sha256": "f49f8b56743ef2705f002d087d21e74e9aa4c13bd74da3954c5f5935962a0177"
+ },
+ "seeds": [
+  {
+   "path": "local/seed.txt",
+   "sha256": "cb064c1339ffa3d7777bcb0459de3dceddb9146156dde58065a4ac826b029aa7"
+  },
+  {
+   "path": "kubernetes/seed.txt",
+   "sha256": "cb064c1339ffa3d7777bcb0459de3dceddb9146156dde58065a4ac826b029aa7"
+  }
+ ]
+}

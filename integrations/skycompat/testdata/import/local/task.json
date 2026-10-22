@@ -1,0 +1,14 @@
+{
+  "argv": ["/bin/sh", "-c", "printf '%s from %s\\n' \"$GREETING\" \"$(cat out/stage.txt)\" > out/result.txt\necho \"job: $GREETING\"\n"],
+  "env": {
+    "GREETING": "hello"
+  },
+  "target": "local",
+  "workdir": {
+    "id": "00112233445566778899aabbccddeeff",
+    "sha256": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "size": 4096
+  },
+  "setup": ["/bin/sh", "-c", "mkdir -p out\ncat seed.txt > out/stage.txt\n"],
+  "outputs": ["out"]
+}

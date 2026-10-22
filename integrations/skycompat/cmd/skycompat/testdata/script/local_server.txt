@@ -1,0 +1,45 @@
+# An actual skygo server on this host's local target.
+
+skygo-server start
+
+# Imported resources are never dropped: the local target refuses them at
+# plan time and no job is created.
+skycompat import --shell /bin/bash --target local --timeout-seconds 3600 $IMPORT/accept/resources.yaml
+cp stdout resources.json
+! skygo plan -f resources.json
+stderr 'local execution does not support images or resource requests'
+skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --target local --allow-drop name $IMPORT/kubernetes/task.yaml
+cp stdout kubernetes.json
+! skygo plan -f kubernetes.json
+skygo jobs list
+cmp stdout jobs-empty.txt
+
+# A workspace import against a server without the artifact snapshot
+# service is refused before submission.
+skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --target local --allow-drop name $IMPORT/local/task.yaml
+cp stdout local.json
+! skygo run -f local.json --wait --request-id import-workspace
+stderr 'endpoint does not advertise artifact-snapshot-service-v1'
+skygo jobs list
+cmp stdout jobs-empty.txt
+
+# A plain import runs its text byte-exact as /bin/sh -c TEXT.
+skycompat import --shell /bin/sh --target local --env OUT=$WORK/result.txt print.yaml
+cp stdout print.json
+skygo run -f print.json --wait --request-id import-print
+stdout '\tlocal\tsucceeded\n\z'
+cmp $WORK/result.txt want-result.txt
+skygo jobs list
+stdout -count=1 'succeeded'
+
+skygo-server stop
+
+-- print.yaml --
+run: |
+  printf '%s|%s|%s\n' "it's" "$(printf 'a  b')" '$HOME' > "$OUT"
+  printf 'tab\there ✓\n' >> "$OUT"
+-- want-result.txt --
+it's|a  b|$HOME
+tab	here ✓
+-- jobs-empty.txt --
+ID  TARGET  STATE

@@ -1,0 +1,201 @@
+# The actual skygo client strictly decodes each emitted task file and sends
+# exactly the lowered task. The recording server prints what it received as
+# protobuf JSON, in which int64 values are decimal strings.
+
+fakeserver
+
+skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --target local --allow-drop name $IMPORT/local/task.yaml
+cp stdout local.json
+skygo plan -f local.json
+stdout '\Alocal\n\z'
+received
+cmp stdout local.received
+
+skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --allow-drop name $IMPORT/kubernetes/task.yaml
+cp stdout kubernetes.json
+skygo plan -f kubernetes.json
+received
+cmp stdout kubernetes.received
+
+skycompat import --shell /bin/bash --target gpu --timeout-seconds 3600 $IMPORT/accept/resources.yaml
+cp stdout resources.json
+skygo plan -f resources.json
+received
+cmp stdout resources.received
+
+skycompat import --shell /bin/sh $IMPORT/accept/multiline.yaml
+cp stdout multiline.json
+skygo plan -f multiline.json
+received
+cmp stdout multiline.received
+
+skycompat import --shell /bin/sh exotic.yaml
+cp stdout exotic.json
+skygo plan -f exotic.json
+received
+cmp stdout exotic.received
+
+# The FROZEN-1 literal form of the same case: raw U+2028 and U+FEFF inside
+# the quoted scalar. Expected bytes are UNRUN, derived from yaml.v3 v3.0.1
+# source: a raw U+2028 is a line break that a double-quoted scalar keeps
+# verbatim (only a leading LF folds to a space), and a raw U+FEFF is an
+# ordinary character. The actual decode is asserted by cmp.
+skycompat import --shell /bin/sh exotic-literal.yaml
+cp stdout exotic-literal.json
+skygo plan -f exotic-literal.json
+received
+cmp stdout exotic-literal.received
+
+skycompat import --shell /bin/sh --timeout-seconds 604800 large.yaml
+cp stdout large.json
+skygo plan -f large.json
+received
+cmp stdout large.received
+
+# A key this skygo does not know fails strict decoding before any call, as
+# an older skygo would for a newer importer's key.
+! skygo plan -f unknown-key.json
+stderr 'field unknown_task_field not found'
+received
+! stdout .
+
+# A workspace task against an endpoint without the artifact snapshot
+# service is refused after discovery and before any submission.
+! skygo run -f local.json --wait --request-id import-1
+stderr 'endpoint does not advertise artifact-snapshot-service-v1'
+received
+cmp stdout run.received
+
+-- exotic.yaml --
+run: "a\u2028b\x85c\ufeffd\x7fe\x01f\x1bg\th — ✓ 🚀"
+-- large.yaml --
+run: x
+resources:
+  cpus: 1000000000000000
+  memory: 8191PB
+  accelerators: {A: 2147483647}
+-- unknown-key.json --
+{
+  "argv": ["/bin/true"],
+  "unknown_task_field": []
+}
+-- run.received --
+/skygo.v1.ControlService/GetServerInfo
+-- local.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "printf '%s from %s\\n' \"$GREETING\" \"$(cat out/stage.txt)\" > out/result.txt\necho \"job: $GREETING\"\n"
+  ],
+  "env": {
+    "GREETING": "hello"
+  },
+  "target": "local",
+  "workdir": {
+    "id": "00112233445566778899aabbccddeeff",
+    "sha256": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "size": "4096"
+  },
+  "setup": [
+    "/bin/sh",
+    "-c",
+    "mkdir -p out\ncat seed.txt > out/stage.txt\n"
+  ],
+  "outputs": [
+    "out"
+  ]
+}
+/skygo.v1.ControlService/GetServerInfo
+-- kubernetes.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "printf '%s from %s\\n' \"$GREETING\" \"$(cat out/stage.txt)\" > out/result.txt\necho \"job: $GREETING\"\n"
+  ],
+  "env": {
+    "GREETING": "hello"
+  },
+  "image": "busybox:1.36.1",
+  "cpu_millis": "100",
+  "memory_bytes": "67108864",
+  "workdir": {
+    "id": "00112233445566778899aabbccddeeff",
+    "sha256": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+    "size": "4096"
+  },
+  "setup": [
+    "/bin/sh",
+    "-c",
+    "mkdir -p out\ncat seed.txt > out/stage.txt\n"
+  ],
+  "outputs": [
+    "out"
+  ]
+}
+/skygo.v1.ControlService/GetServerInfo
+-- resources.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/bash",
+    "-c",
+    "nvidia-smi"
+  ],
+  "image": "nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04",
+  "cpu_millis": "2000",
+  "memory_bytes": "1610612736",
+  "accelerator": "A100",
+  "accelerator_count": 2,
+  "target": "gpu",
+  "timeout_seconds": "3600"
+}
+-- multiline.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "echo \"it's $(date +%Y) \u2014 \u00fcn\u00efc\u00f8d\u00e9 \u2713\"\nprintf '%s\\t%s\\n' \"a b\" 'c \"d\"'\ncat <<'END'\n$HOME stays literal\nEND\n"
+  ],
+  "env": {
+    "QUOTE": "say \"hi\"\tnow"
+  }
+}
+-- exotic.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th \u2014 \u2713 \ud83d\ude80"
+  ]
+}
+-- large.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "x"
+  ],
+  "cpu_millis": "1000000000000000000",
+  "memory_bytes": "9222246136947933184",
+  "accelerator": "A",
+  "accelerator_count": 2147483647,
+  "timeout_seconds": "604800"
+}
+-- exotic-literal.yaml --
+run: "a b\x85c﻿d\x7fe\x01f\x1bg\th — ✓ 🚀"
+-- exotic-literal.received --
+/skygo.v1.ControlService/PlanTask
+{
+  "argv": [
+    "/bin/sh",
+    "-c",
+    "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th \u2014 \u2713 \ud83d\ude80"
+  ]
+}

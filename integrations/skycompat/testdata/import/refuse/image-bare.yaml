@@ -1,0 +1,3 @@
+run: echo hi
+resources:
+  image_id: ubuntu

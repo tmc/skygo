@@ -1,0 +1,10 @@
+run	lowered	argv is shell -c text
+resources	default	fields noted separately
+resources.cpus	lowered	cpu_millis; minimum lowered to exact request
+resources.memory	lowered	memory_bytes; minimum lowered to exact request
+resources.accelerators	lowered	accelerator and accelerator_count
+resources.image_id	lowered	image
+resources.disk_size	default	upstream unspecified default; not a disk request
+resources.use_spot	default	on-demand
+resources.cloud	default	null
+num_nodes	default	one node

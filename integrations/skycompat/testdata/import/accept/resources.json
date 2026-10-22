@@ -1,0 +1,10 @@
+{
+  "argv": ["/bin/bash", "-c", "nvidia-smi"],
+  "image": "nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04",
+  "cpu_millis": 2000,
+  "memory_bytes": 1610612736,
+  "accelerator": "A100",
+  "accelerator_count": 2,
+  "target": "gpu",
+  "timeout_seconds": 3600
+}

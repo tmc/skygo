@@ -1,0 +1,2 @@
+run	lowered	argv is shell -c text
+envs	lowered	environment

@@ -116,3 +116,21 @@ standalone unit run alone does not repeat the HTTP/SDK qualification.
 These E0 receipts do not promote the earlier illustrative async codec fixtures
 to real request-lifecycle support, nor qualify Kubernetes/SSH/cloud execution,
 full API67, or a published standalone module.
+
+## B task import qualification
+
+`tasklower` and `skycompat import` lower one parsed task to a skygo task file;
+see [import.md](import.md). `testdata/import/manifest.json` pins every import
+fixture, golden task file and note list by SHA-256, together with the upstream
+source lines each lowering rule follows. These fixtures are original
+source-derived examples, not upstream code or executed upstream results.
+
+| Import surface | Qualification | Remaining limit |
+| --- | --- | --- |
+| Field lowering and refusal | FIXTURE: table, corpus and fuzz-seed tests; every recognized field noted or refused | No upstream differential run |
+| Shell text | FIXTURE: byte-exact `[shell, "-c", text]`; LOCAL host: actual server runs an import byte-exact | Linux workspace and Kubernetes image shells not run |
+| Task file encoding | Actual `skygo` client strictly decodes every emitted file; received wire task compared exactly, including int64 and reference values | An older skygo refuses a newer key; actual old binary not run |
+| Resources on local | Actual server refuses imported resources at plan; no job | Kubernetes request readback not run |
+| Workspace capability | Actual server without artifacts refuses before submission | Linux upload-run-download acceptance not run |
+| No network, environment or exec | Static dependency and source gates; sentinel listener receives no connection | |
+| Go client | Examples only | Exported submit/wait/capability client remains open |

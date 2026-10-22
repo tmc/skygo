@@ -34,3 +34,4 @@ build:
 	CGO_ENABLED=0 go build -o bin/skygo ./cmd/skygo
 	cd integrations/kubernetes && CGO_ENABLED=0 go build -o ../../bin/skygo-kubernetes ./cmd/skygo-kubernetes
 	cd integrations/skycompat && CGO_ENABLED=0 go build ./...
+	cd integrations/skycompat && CGO_ENABLED=0 go build -o ../../bin/skycompat ./cmd/skycompat

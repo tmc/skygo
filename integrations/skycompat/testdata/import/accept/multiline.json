@@ -1,0 +1,6 @@
+{
+  "argv": ["/bin/sh", "-c", "echo \"it's $(date +%Y) — ünïcødé ✓\"\nprintf '%s\\t%s\\n' \"a b\" 'c \"d\"'\ncat <<'END'\n$HOME stays literal\nEND\n"],
+  "env": {
+    "QUOTE": "say \"hi\"\tnow"
+  }
+}
