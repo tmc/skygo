@@ -14,6 +14,10 @@ import (
 
 var artifactsBucket = []byte("artifacts")
 
+// artifactFormat is the current artifact root floor. It is separate from the
+// database schema: schema9 added only environment metadata and kept floor8.
+const artifactFormat = 8
+
 // These counters are independent of job retention and remain mandatory when
 // retention is disabled. Fixed-width counters do not change their own charge.
 const (
@@ -116,12 +120,14 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	}
 	// The genuine legacy layout must be checked before migration adds a table.
 	tables := artifactTables
-	switch schemaNumber(tx) {
+	floor := schemaNumber(tx)
+	switch floor {
 	case 6:
 		tables = tables[:len(tables)-2]
 	case 7:
 		tables = tables[:len(tables)-1]
-	case schemaVersion:
+	case artifactFormat, schemaVersion:
+		floor = artifactFormat
 	default:
 		return nil, ErrUnsupportedSchema
 	}
@@ -129,7 +135,7 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	if err := artifactDecode(b.Get([]byte("state")), &s.Root); err != nil {
 		return nil, err
 	}
-	if s.Root.Layout != 1 || s.Root.Policy != "default-v1" || s.Root.SchemaFloor != schemaNumber(tx) || !artifactHex(s.Root.ID, 32) || s.Root.Unit < 512 || s.Root.Unit > 65536 || s.Root.Unit&(s.Root.Unit-1) != 0 || s.Root.Volume == 0 {
+	if s.Root.Layout != 1 || s.Root.Policy != "default-v1" || s.Root.SchemaFloor != floor || !artifactHex(s.Root.ID, 32) || s.Root.Unit < 512 || s.Root.Unit > 65536 || s.Root.Unit&(s.Root.Unit-1) != 0 || s.Root.Volume == 0 {
 		return nil, artifactCorrupt()
 	}
 	known := map[string]bool{"state": true, "usage": true}
@@ -881,7 +887,7 @@ func artifactChange(tx *bolt.Tx, budget uint64, change func(*artifactState) erro
 // initializeArtifacts is called only after the successor fence exists. The
 // stopped InstallArtifacts caller supplies previously verified root geometry.
 func initializeArtifacts(tx *bolt.Tx, root artifactRoot) error {
-	if root.SchemaFloor != schemaVersion || schemaNumber(tx) != schemaVersion || tx.Bucket(artifactsBucket) != nil {
+	if root.SchemaFloor != artifactFormat || schemaNumber(tx) != schemaVersion || tx.Bucket(artifactsBucket) != nil {
 		return ErrArtifactConflict
 	}
 	b, err := tx.CreateBucket(artifactsBucket)

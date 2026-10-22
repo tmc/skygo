@@ -441,6 +441,12 @@ func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
 			workflowFound = true
 			continue
 		}
+		if bytes.Equal(b.Name, environmentsBucket) {
+			if b.Sequence != 0 || len(b.Entries) != 0 || len(b.Buckets) != 0 {
+				t.Fatal("migration added environment contents or sequence")
+			}
+			continue
+		}
 		if bytes.Equal(b.Name, attemptJobsBucket) || bytes.Equal(b.Name, retentionBucket) {
 			continue
 		}

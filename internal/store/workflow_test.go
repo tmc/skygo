@@ -1087,6 +1087,9 @@ func workflowSchemaSeven(t *testing.T, dir string) backend.Job {
 		if err := tx.DeleteBucket(workflowsBucket); err != nil {
 			return err
 		}
+		if err := tx.DeleteBucket(environmentsBucket); err != nil {
+			return err
+		}
 		b := tx.Bucket(artifactsBucket)
 		if err := b.DeleteBucket([]byte("workflow_inputs")); err != nil {
 			return err
@@ -1129,7 +1132,7 @@ func TestWorkflowSchemaSevenMigration(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if schemaNumber(tx) != 8 || st.Root.SchemaFloor != 8 || len(st.WorkflowInputs) != 0 {
+		if schemaNumber(tx) != schemaVersion || st.Root.SchemaFloor != 8 || len(st.WorkflowInputs) != 0 {
 			return fmt.Errorf("migrated to %d floor %d", schemaNumber(tx), st.Root.SchemaFloor)
 		}
 		if k, _ := tx.Bucket(workflowsBucket).Cursor().First(); k != nil {
@@ -1159,7 +1162,7 @@ func TestWorkflowSchemaFences(t *testing.T) {
 		edit func(*bolt.Tx) error
 		want string
 	}{
-		{"future", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(9)) }, ErrUnsupportedSchema.Error()},
+		{"future", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion+1)) }, ErrUnsupportedSchema.Error()},
 		{"seven with workflows", func(tx *bolt.Tx) error {
 			_, err := tx.CreateBucket(workflowsBucket)
 			return err

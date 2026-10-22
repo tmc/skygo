@@ -49,7 +49,7 @@ func (s *Store) InstallArtifacts(installation ArtifactInstallation) (out Artifac
 				return ErrArtifactConflict
 			}
 		} else {
-			root := artifactRoot{Layout: 1, SchemaFloor: schemaVersion, Policy: "default-v1", ID: installation.ID, Unit: installation.Unit, Volume: installation.Volume}
+			root := artifactRoot{Layout: 1, SchemaFloor: artifactFormat, Policy: "default-v1", ID: installation.ID, Unit: installation.Unit, Volume: installation.Volume}
 			// Root geometry was bounded before this transaction. The fixed marker and root
 			// allowance is two files and 2*Unit, not a physical usage sample.
 			if e := initializeArtifacts(tx, root); e != nil {

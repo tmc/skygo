@@ -22,7 +22,7 @@ func artifactTestInstall(t *testing.T, s *Store) {
 	t.Helper()
 	s.now = func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) }
 	if err := s.db.Update(func(tx *bolt.Tx) error {
-		return initializeArtifacts(tx, artifactRoot{Layout: 1, SchemaFloor: schemaVersion, Policy: "default-v1", ID: strings.Repeat("a", 32), Unit: 4096, Volume: 17})
+		return initializeArtifacts(tx, artifactRoot{Layout: 1, SchemaFloor: artifactFormat, Policy: "default-v1", ID: strings.Repeat("a", 32), Unit: 4096, Volume: 17})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -106,6 +106,9 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 		if err := tx.DeleteBucket(workflowsBucket); err != nil {
 			return err
 		}
+		if err := tx.DeleteBucket(environmentsBucket); err != nil {
+			return err
+		}
 		return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5))
 	}); err != nil {
 		t.Fatal(err)
@@ -123,6 +126,9 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 	}
 	if err := s.db.Update(func(tx *bolt.Tx) error {
 		if err := tx.DeleteBucket(workflowsBucket); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket(environmentsBucket); err != nil {
 			return err
 		}
 		if err := tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5)); err != nil {

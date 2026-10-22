@@ -341,11 +341,14 @@ func schemaSixFixture(t *testing.T, dir string) backend.Job {
 		if err := initialize(tx, "unused"); err != nil {
 			return err
 		}
-		root := artifactRoot{Layout: 1, SchemaFloor: schemaVersion, Policy: "default-v1", ID: strings.Repeat("a", 32), Unit: 4096, Volume: 17}
+		root := artifactRoot{Layout: 1, SchemaFloor: artifactFormat, Policy: "default-v1", ID: strings.Repeat("a", 32), Unit: 4096, Volume: 17}
 		if err := initializeArtifacts(tx, root); err != nil {
 			return err
 		}
 		if err := tx.DeleteBucket(workflowsBucket); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket(environmentsBucket); err != nil {
 			return err
 		}
 		b := tx.Bucket(artifactsBucket)
@@ -395,7 +398,7 @@ func TestRemoteSchemaSixMigration(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if st.Root.SchemaFloor != schemaVersion || st.Root.Layout != 1 || len(st.Remote) != 0 {
+		if st.Root.SchemaFloor != artifactFormat || st.Root.Layout != 1 || len(st.Remote) != 0 {
 			t.Error("incorrect remote migration")
 		}
 		if tx.Bucket(artifactsBucket).Bucket([]byte("remote_attempts")) == nil {
@@ -408,6 +411,9 @@ func TestRemoteSchemaSixMigration(t *testing.T) {
 			if k, _ := b.Cursor().First(); k != nil || b.Sequence() != 0 {
 				t.Fatal("migration invented workflow contents")
 			}
+		}
+		if b := tx.Bucket(environmentsBucket); b == nil || b.Sequence() != 0 || b.Stats().KeyN != 0 {
+			t.Fatal("migration omitted or filled environment metadata")
 		}
 		if !bytes.Equal(tx.Bucket(jobsBucket).Get([]byte(j.ID)), wantJob) {
 			t.Error("accepted job rewritten")
@@ -511,6 +517,9 @@ func TestRemoteSchemaSixMigrationRollback(t *testing.T) {
 		}
 		if tx.Bucket(workflowsBucket) != nil || tx.Bucket(artifactsBucket).Bucket([]byte("workflow_inputs")) != nil {
 			t.Error("workflow metadata escaped rollback")
+		}
+		if tx.Bucket(environmentsBucket) != nil {
+			t.Error("environment metadata escaped rollback")
 		}
 		st, err := artifactLoad(tx)
 		if err != nil {

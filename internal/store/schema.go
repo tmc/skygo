@@ -10,7 +10,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 8
+const schemaVersion = 9
 
 var schemaKey = []byte("schema_version")
 
@@ -28,7 +28,7 @@ func inspect(tx *bolt.Tx) error {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != 2 && n != 3 && n != 4 && n != 5 && n != 6 && n != 7 && n != schemaVersion {
+			if n != 1 && n != 2 && n != 3 && n != 4 && n != 5 && n != 6 && n != 7 && n != 8 && n != schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
@@ -43,6 +43,9 @@ func inspect(tx *bolt.Tx) error {
 	}
 	if schemaNumber(tx) < 8 && tx.Bucket(workflowsBucket) != nil {
 		return errors.New("workflow metadata requires schema 8")
+	}
+	if schemaNumber(tx) < 9 && tx.Bucket(environmentsBucket) != nil {
+		return errors.New("environment metadata requires schema 9")
 	}
 	count := 0
 	for _, name := range [][]byte{jobsBucket, requestsBucket, sequenceBucket, metadataBucket} {
@@ -139,13 +142,18 @@ func initialize(tx *bolt.Tx, owner string) error {
 		if err := migrateArtifactFence(tx); err != nil {
 			return err
 		}
-	} else if n := schemaNumber(tx); n != 7 && n != schemaVersion {
+	} else if n := schemaNumber(tx); n != 7 && n != 8 && n != schemaVersion {
 		if err := m.Put(schemaKey, sequenceKey(7)); err != nil {
 			return err
 		}
 	}
 	if schemaNumber(tx) == 7 {
 		if err := migrateWorkflowFence(tx); err != nil {
+			return err
+		}
+	}
+	if schemaNumber(tx) == 8 {
+		if err := migrateEnvironmentFence(tx); err != nil {
 			return err
 		}
 	}
@@ -221,7 +229,7 @@ func migrateWorkflowFence(tx *bolt.Tx) error {
 		if _, err := b.CreateBucket([]byte("workflow_inputs")); err != nil {
 			return err
 		}
-		root.SchemaFloor = schemaVersion
+		root.SchemaFloor = artifactFormat
 		raw, err := json.Marshal(root)
 		if err != nil {
 			return err
@@ -230,7 +238,7 @@ func migrateWorkflowFence(tx *bolt.Tx) error {
 			return err
 		}
 	}
-	return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion))
+	return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(8))
 }
 
 // validateSnapshot checks references before publishing a restore. It does not
@@ -305,5 +313,8 @@ func validateSnapshot(tx *bolt.Tx) error {
 	if err := artifactValidateTaskRows(tx, art); err != nil {
 		return err
 	}
-	return validateWorkflows(tx, art)
+	if err := validateWorkflows(tx, art); err != nil {
+		return err
+	}
+	return validateEnvironments(tx)
 }
