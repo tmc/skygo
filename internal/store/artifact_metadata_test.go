@@ -22,7 +22,7 @@ func artifactTestInstall(t *testing.T, s *Store) {
 	t.Helper()
 	s.now = func() time.Time { return time.Date(2026, 10, 19, 12, 0, 0, 0, time.UTC) }
 	if err := s.db.Update(func(tx *bolt.Tx) error {
-		return initializeArtifacts(tx, artifactRoot{Layout: 1, SchemaFloor: 6, Policy: "default-v1", ID: strings.Repeat("a", 32), Unit: 4096, Volume: 17})
+		return initializeArtifacts(tx, artifactRoot{Layout: 1, SchemaFloor: schemaVersion, Policy: "default-v1", ID: strings.Repeat("a", 32), Unit: 4096, Volume: 17})
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestArtifactUninstalledRefusesWithoutMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.db.View(func(tx *bolt.Tx) error {
-		if schemaNumber(tx) != 6 || tx.Bucket(artifactsBucket) != nil {
+		if schemaNumber(tx) != schemaVersion || tx.Bucket(artifactsBucket) != nil {
 			t.Fatal("dormant installation mutated")
 		}
 		return nil
@@ -103,6 +103,9 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 	if err := s.db.Update(func(tx *bolt.Tx) error {
 		row = bytes.Clone(tx.Bucket(jobsBucket).Get([]byte(j.ID)))
 		request = bytes.Clone(tx.Bucket(requestsBucket).Get([]byte("unchanged")))
+		if err := tx.DeleteBucket(workflowsBucket); err != nil {
+			return err
+		}
 		return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5))
 	}); err != nil {
 		t.Fatal(err)
@@ -111,7 +114,7 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.db.View(func(tx *bolt.Tx) error {
-		if schemaNumber(tx) != 6 || tx.Bucket(artifactsBucket) != nil || !bytes.Equal(row, tx.Bucket(jobsBucket).Get([]byte(j.ID))) || !bytes.Equal(request, tx.Bucket(requestsBucket).Get([]byte("unchanged"))) {
+		if schemaNumber(tx) != schemaVersion || tx.Bucket(artifactsBucket) != nil || !bytes.Equal(row, tx.Bucket(jobsBucket).Get([]byte(j.ID))) || !bytes.Equal(request, tx.Bucket(requestsBucket).Get([]byte("unchanged"))) {
 			t.Fatal("migration changed accepted bytes or invented root")
 		}
 		return nil
@@ -119,6 +122,9 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := s.db.Update(func(tx *bolt.Tx) error {
+		if err := tx.DeleteBucket(workflowsBucket); err != nil {
+			return err
+		}
 		if err := tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5)); err != nil {
 			return err
 		}

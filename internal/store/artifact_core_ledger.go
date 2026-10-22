@@ -124,15 +124,21 @@ func artifactAttemptLedger(tx *bolt.Tx, job, candidate string) *artifactCoreLedg
 		l.row(tx, artifactCorePath{root: string(attemptJobsBucket)}, []byte(candidate))
 		retention(retainedOutputsBucket, []byte(candidate))
 	}
+	// A workflow child's publication advances its workflow's revision.
+	var c workflowChild
+	if workflowDecode(workflowRow(tx, workflowChildKey(job)), &c) == nil {
+		l.row(tx, artifactCorePath{root: string(workflowsBucket)}, workflowStateKey(c.Workflow))
+	}
 	return l
 }
 
-func artifactAcceptLedger(tx *bolt.Tx, job, principal, request string, domain RequestDomain, legacy bool) *artifactCoreLedger {
+// artifactJobLedger observes the rows a new job's acceptance writes, except
+// any request binding. A workflow child is accepted with exactly these.
+func artifactJobLedger(tx *bolt.Tx, job, principal string) *artifactCoreLedger {
 	l := artifactAttemptLedger(tx, job, job)
 	retention := artifactCorePath{root: string(retentionBucket)}
 	l.row(tx, retention, retentionStateKey)
 	l.row(tx, artifactCorePath{string(retentionBucket), string(retainedScopesBucket)}, []byte(principal))
-	l.row(tx, artifactCorePath{string(retentionBucket), string(retainedRequestsBucket)}, requestKey(principal, domain, request))
 	seq := artifactCorePath{root: string(sequenceBucket)}
 	l.bucket(tx, seq)
 	l.row(tx, seq, sequenceKey(tx.Bucket(sequenceBucket).Sequence()+1))
@@ -145,12 +151,19 @@ func artifactAcceptLedger(tx *bolt.Tx, job, principal, request string, domain Re
 			next = b.Sequence() + 1
 		}
 		l.row(tx, index, sequenceKey(next))
-		if legacy {
-			requests := artifactCorePath{string(principalRequestsBucket), principal}
-			l.bucket(tx, requests)
-			l.row(tx, requests, []byte(request))
-		}
-	} else if legacy {
+	}
+	return l
+}
+
+func artifactAcceptLedger(tx *bolt.Tx, job, principal, request string, domain RequestDomain, legacy bool) *artifactCoreLedger {
+	l := artifactJobLedger(tx, job, principal)
+	l.row(tx, artifactCorePath{string(retentionBucket), string(retainedRequestsBucket)}, requestKey(principal, domain, request))
+	switch {
+	case legacy && isScoped(tx):
+		requests := artifactCorePath{string(principalRequestsBucket), principal}
+		l.bucket(tx, requests)
+		l.row(tx, requests, []byte(request))
+	case legacy:
 		l.row(tx, artifactCorePath{root: string(requestsBucket)}, []byte(request))
 	}
 	return l

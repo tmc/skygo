@@ -91,6 +91,20 @@ func EnableRetention(dir string, p RetentionPolicy) (out RetentionInfo, err erro
 			if e = putRetentionRecord(tx, retainedRequestsBucket, requestKey(r.Principal, r.Domain, r.requestID()), r); e != nil {
 				return e
 			}
+			if r.WorkflowID != "" {
+				if r.Expired {
+					continue
+				}
+				ws, e := loadWorkflowState(tx, r.WorkflowID)
+				if e != nil {
+					return e
+				}
+				ws.Domain = r.Domain
+				if e = putWorkflowState(tx, r.WorkflowID, ws); e != nil {
+					return e
+				}
+				continue
+			}
 			var m retainedJob
 			if e = loadJSON(retentionTable(tx, retainedJobsBucket), []byte(r.JobID), &m); e != nil {
 				return e
@@ -146,7 +160,11 @@ func EnableRetention(dir string, p RetentionPolicy) (out RetentionInfo, err erro
 		if e != nil {
 			return e
 		}
-		if e = tx.Bucket(metadataBucket).Put(taskBytesKey, sequenceKey(u[TaskBytesQuota])); e != nil {
+		graphs, _, e := workflowUsage(tx)
+		if e != nil {
+			return e
+		}
+		if e = tx.Bucket(metadataBucket).Put(taskBytesKey, sequenceKey(u[TaskBytesQuota]-graphs)); e != nil {
 			return e
 		}
 		st.TaskCounterOffset = 0

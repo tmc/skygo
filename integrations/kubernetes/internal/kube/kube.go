@@ -39,6 +39,10 @@ type Backend struct {
 	canceled         map[string]bool
 	retries          map[string]*retryReceipt
 	retryOwners      map[string]int
+	data             *dataProfile            // nil when the target has no data block
+	dataQual         *dataQualification      // nil until a native qualification exists
+	dataStarts       map[string]bool         // attempt IDs whose StartData was called
+	dataFrames       map[string][]*dataFrame // data operation custody; see dataFrame
 }
 
 // Check validates capability requirements without making network requests.
@@ -69,6 +73,9 @@ func (b *Backend) Check(t backend.Task) error {
 			return errors.New("invalid environment name")
 		}
 	}
+	if dataTask(t) {
+		return b.checkData(t)
+	}
 	return nil
 }
 
@@ -93,6 +100,9 @@ func (b *Backend) owned(j *batchv1.Job, id string) error {
 // Start creates a Job or adopts an existing Job with the same owner and task.
 // Enabled retry instead creates one directly owned Pod and never adopts it.
 func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
+	if dataTask(t) {
+		return errors.New("kubernetes data task requires StartData")
+	}
 	if t.Retry != nil {
 		return b.startRetry(ctx, id, t)
 	}
@@ -201,6 +211,10 @@ func (b *Backend) pods(ctx context.Context, j *batchv1.Job, id string) ([]corev1
 // was successfully delivered for an observed UID through this Backend instance.
 // It never recreates missing Jobs.
 func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	if dataTask(ref.Task) {
+		o, err := b.ObserveData(ctx, ref)
+		return o.Status, err
+	}
 	if ref.Task.Retry != nil {
 		return b.observeRetry(ctx, ref)
 	}
@@ -250,6 +264,9 @@ func int32ptr(v int32) *int32 { return &v }
 // Cancel requests foreground deletion, using UID preconditions to avoid deleting
 // a replacement Job. Observe confirms cancellation only after disappearance.
 func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
+	if dataTask(ref.Task) {
+		return b.cancelData(ctx, ref)
+	}
 	if ref.Task.Retry != nil {
 		return b.cancelRetry(ctx, ref)
 	}
@@ -284,6 +301,9 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 // Logs reads the bounded output prefix of the sole owned Pod. Multiple Pods are
 // explicitly ambiguous, since native Job execution is not exactly once.
 func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64, limit int) (backend.LogChunk, error) {
+	if dataTask(ref.Task) {
+		return b.logsData(ctx, ref, offset, limit)
+	}
 	if ref.Task.Retry != nil {
 		return b.logsRetry(ctx, ref, offset, limit)
 	}

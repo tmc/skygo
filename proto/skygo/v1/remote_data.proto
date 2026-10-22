@@ -1,0 +1,99 @@
+syntax = "proto3";
+
+package skygo.v1;
+
+import "skygo/v1/control.proto";
+
+option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
+
+// RemoteDataService transfers bounded chunks for one authenticated attempt.
+// Input and output scopes are distinct; messages carry no scope credentials.
+service RemoteDataService {
+  // ReadInput requires the input scope for the accepted input artifact.
+  rpc ReadInput(ReadInputRequest) returns (ReadInputResponse);
+  // PollRelease returns metadata only; its response grants no byte authority.
+  rpc PollRelease(PollReleaseRequest) returns (PollReleaseResponse);
+  // BeginOutput requires the output scope and its current collect release.
+  rpc BeginOutput(BeginOutputRequest) returns (BeginOutputResponse);
+  // WriteOutput acknowledges only the contiguous original output prefix.
+  rpc WriteOutput(WriteOutputRequest) returns (WriteOutputResponse);
+  // FinishOutput seals a private candidate; it does not attach a job result.
+  rpc FinishOutput(FinishOutputRequest) returns (FinishOutputResponse);
+}
+
+message ReadInputRequest {
+  int64 offset = 1;
+  // Positive bounded chunk limit, at most 64 KiB.
+  int32 limit = 2;
+}
+
+message ReadInputResponse {
+  bytes data = 1;
+  int64 next_offset = 2;
+  // End of input bytes, not a reader-close or job-completion receipt.
+  bool complete = 3;
+  ArtifactRef reference = 4;
+}
+
+message PollReleaseRequest {}
+
+// RemoteReleaseState describes the durable collection decision, not task death
+// or a byte grant. Every transfer still requires its current authenticated scope.
+enum RemoteReleaseState {
+  REMOTE_RELEASE_STATE_UNSPECIFIED = 0;
+  REMOTE_RELEASE_STATE_WAIT = 1;
+  REMOTE_RELEASE_STATE_COLLECT = 2;
+  REMOTE_RELEASE_STATE_ABORT = 3;
+}
+
+message PollReleaseResponse {
+  RemoteReleaseState state = 1;
+  uint64 revision = 2;
+  // Absent on abort without a qualified main execution, including no-launch.
+  string task_container_id = 3;
+  // Presence distinguishes a qualified main exit zero from no main exit.
+  optional int32 task_exit_code = 4;
+}
+
+message BeginOutputRequest {
+  string sha256 = 1;
+  int64 size = 2;
+}
+
+// RemoteOutputState describes a private upload. SEALED does not publish an
+// owner grant, attach a result or establish successful job completion.
+enum RemoteOutputState {
+  REMOTE_OUTPUT_STATE_UNSPECIFIED = 0;
+  REMOTE_OUTPUT_STATE_WRITABLE = 1;
+  REMOTE_OUTPUT_STATE_SEALING = 2;
+  REMOTE_OUTPUT_STATE_SEALED = 3;
+}
+
+message BeginOutputResponse {
+  int64 acknowledged = 1;
+  RemoteOutputState state = 2;
+}
+
+message WriteOutputRequest {
+  int64 offset = 1;
+  // At most 64 KiB; exact retransmission does not append the prefix again.
+  bytes data = 2;
+}
+
+message WriteOutputResponse {
+  int64 acknowledged = 1;
+}
+
+message FinishOutputRequest {}
+
+// RemoteOutputSealState excludes writable: finishing concerns private sealing,
+// not publication or the authority to append more bytes.
+enum RemoteOutputSealState {
+  REMOTE_OUTPUT_SEAL_STATE_UNSPECIFIED = 0;
+  REMOTE_OUTPUT_SEAL_STATE_SEALING = 1;
+  REMOTE_OUTPUT_SEAL_STATE_SEALED = 2;
+}
+
+message FinishOutputResponse {
+  RemoteOutputSealState state = 1;
+}

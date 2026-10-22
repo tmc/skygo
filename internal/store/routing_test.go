@@ -432,7 +432,15 @@ func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
 		t.Fatal(err)
 	}
 	var out []fixtureBucket
+	workflowFound := false
 	for _, b := range buckets {
+		if bytes.Equal(b.Name, workflowsBucket) {
+			if b.Sequence != 0 || len(b.Entries) != 0 || len(b.Buckets) != 0 {
+				t.Fatal("migration added workflow contents or sequence")
+			}
+			workflowFound = true
+			continue
+		}
 		if bytes.Equal(b.Name, attemptJobsBucket) || bytes.Equal(b.Name, retentionBucket) {
 			continue
 		}
@@ -446,6 +454,14 @@ func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
 			b.Entries = entries
 		}
 		out = append(out, b)
+	}
+	if err := db.View(func(tx *bolt.Tx) error {
+		if schemaNumber(tx) >= 8 && !workflowFound {
+			t.Fatal("migration omitted workflow bucket")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
 	}
 	data, err := json.Marshal(out)
 	if err != nil {

@@ -1,0 +1,11 @@
+# skygo dashboard help names the boundary and no credential.
+# Run by TestDashboardScripts; needs the cli.go dashboardCommand registration.
+env SKYGO_TOKEN=dashboard-token
+skygo dashboard --help
+stdout 'read-only'
+stdout '127.0.0.1 or \[::1\]'
+stdout 'one-time login code'
+stdout '--listen'
+stdout 'never cancels a job'
+! stdout 'dashboard-token'
+! stderr .

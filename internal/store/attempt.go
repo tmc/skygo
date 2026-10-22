@@ -87,6 +87,9 @@ func (s *Store) BeginAttempt(jobID, expectedAttemptID string, outputReserve uint
 
 func beginAttempt(tx *bolt.Tx, id, expected, candidate, resultCandidate string, outputReserve uint64, now time.Time) (j backend.Job, start bool, err error) {
 	j, err = get(tx, id)
+	if err == nil && remoteRoute(tx, id) {
+		return j, false, ErrRemoteAttemptRequired
+	}
 	if err != nil || j.CurrentAttemptID() != expected {
 		return
 	}
@@ -193,6 +196,9 @@ func (s *Store) ObserveAttempt(jobID, expectedAttemptID string, status backend.S
 
 func observeAttempt(tx *bolt.Tx, id, expected string, status backend.Status, now time.Time) (backend.Job, error) {
 	j, err := get(tx, id)
+	if err == nil && remoteRoute(tx, id) {
+		return j, ErrRemoteAttemptRequired
+	}
 	if err != nil || j.CurrentAttemptID() != expected || j.Status.State.Terminal() || j.Status.State == backend.Retrying {
 		return j, err
 	}

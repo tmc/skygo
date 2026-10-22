@@ -1,0 +1,7 @@
+{{define "content"}}
+<p><a href="{{.Job}}">job {{.ID}}</a> · <a href="{{.Text}}">as text</a>{{if .Attempt}} · attempt {{.Attempt}}{{end}}</p>
+{{if .Truncated}}<p class="problem">logs truncated: retained output limit reached</p>{{end}}
+{{if .Ended}}<p class="problem">stream ended: {{.Ended}}</p>{{end}}
+<pre>{{.Output}}</pre>
+<p>{{if .Complete}}complete{{else}}not complete{{end}}{{if .Next}} · <a href="{{.Next}}">more</a>{{end}}</p>
+{{end}}

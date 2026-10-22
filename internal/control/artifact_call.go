@@ -16,6 +16,7 @@ var ErrArtifactBusy = errors.New("artifact operation busy")
 // response has finished, even if the operation returned an error.
 // The zero value does not own a slot.
 type ArtifactCall struct {
+	worker           *workerPermit
 	service          *artifactService
 	used             bool
 	ioActive         bool
@@ -87,7 +88,7 @@ func (a *ArtifactCall) Done() {
 }
 
 func (a *ArtifactCall) releaseLocked() {
-	if !a.httpDone || a.ioActive || a.fileError != nil {
+	if !a.httpDone || a.ioActive || a.fileError != nil || a.worker != nil && a.worker.pending {
 		return
 	}
 	if _, ok := a.service.calls[a]; !ok {
@@ -113,7 +114,7 @@ func (c *Control) beginArtifactCall(a *ArtifactCall, upload string) (func(), err
 	s := a.service
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if _, ok := s.calls[a]; !ok || a.used || a.httpDone {
+	if _, ok := s.calls[a]; !ok || a.used || a.httpDone || a.worker != nil {
 		return nil, ErrInvalid
 	}
 	a.used = true

@@ -145,7 +145,7 @@ func artifactValidateCorePlanned(tx *bolt.Tx, st *artifactState, plan *retention
 			return artifactCorrupt()
 		}
 	}
-	return nil
+	return workflowValidateInputs(tx, st, plan)
 }
 
 // artifactAcceptInput belongs at the end of the existing accepting transaction,
@@ -392,6 +392,11 @@ func artifactExpireResult(st *artifactState, owner, job, attempt string, now tim
 	}
 	for _, w := range st.Workspaces {
 		if w.ResultID == r.Ref.ID || w.Input.ID == r.Ref.ID {
+			return ErrArtifactConflict
+		}
+	}
+	for _, in := range st.WorkflowInputs {
+		if in.Ref != nil && in.Ref.ID == r.Ref.ID {
 			return ErrArtifactConflict
 		}
 	}

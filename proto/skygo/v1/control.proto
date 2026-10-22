@@ -30,6 +30,8 @@ service ControlService {
   rpc StreamRetainedJobLogs(StreamRetainedJobLogsRequest) returns (stream StreamRetainedJobLogsResponse);
   // Workspace submission never falls back to an older submit method.
   rpc SubmitWorkspaceJob(SubmitWorkspaceJobRequest) returns (SubmitWorkspaceJobResponse);
+  // Data submission requires explicit endpoint and selected-target support; never fall back.
+  rpc SubmitDataJob(SubmitDataJobRequest) returns (SubmitDataJobResponse);
   // Artifact transfers use bounded unary chunks, not whole-archive messages.
   rpc BeginArtifactUpload(BeginArtifactUploadRequest) returns (BeginArtifactUploadResponse);
   rpc GetArtifactUpload(GetArtifactUploadRequest) returns (GetArtifactUploadResponse);
@@ -65,6 +67,14 @@ message Task {
   repeated string setup = 17;
   // At most 16 disjoint canonical relative roots, without glob expansion.
   repeated string outputs = 18;
+  // Ordered mounts are immutable after acceptance; no implicit read-only default.
+  repeated DataMount data_mounts = 19;
+}
+// DataMount names one configured reference and its canonical destination.
+message DataMount {
+  string reference = 1;
+  string destination = 2;
+  bool read_only = 3;
 }
 // RetryPolicy selects bounded attempts after qualified stopped failures.
 message RetryPolicy {
@@ -122,6 +132,17 @@ enum Capability {
   CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1 = 6;
   // Advertised only by a target implementing the workspace lifecycle.
   CAPABILITY_WORKDIR_SNAPSHOT_V1 = 7;
+  // Endpoint-installed worker transfer service, separate from target support.
+  CAPABILITY_REMOTE_DATA_TRANSFER_V1 = 8;
+  // Selected-target remote data execution support.
+  CAPABILITY_REMOTE_DATA_V1 = 9;
+  // Selected-target configured data mount support.
+  CAPABILITY_DATA_MOUNTS_V1 = 10;
+  // Selected-target remote retry support; also requires FINITE_JOB_RETRY_V1.
+  CAPABILITY_REMOTE_DATA_RETRY_V1 = 11;
+  // Reserved endpoint fact for WorkflowService. Not advertised until all four
+  // handlers and Control workflow admission and cancellation exist.
+  CAPABILITY_STATIC_WORKFLOWS_V1 = 12;
 }
 message Target {
   string name = 1;
@@ -129,6 +150,16 @@ message Target {
   repeated Capability capabilities = 3;
   map<string, string> labels = 4;
   repeated string accelerator_names = 5;
+  // Discovery only; policy is fixed by the configured target, not by this client.
+  DataPolicy data_policy = 6;
+}
+// DataPolicy describes the configured finite remote execution budgets in seconds.
+message DataPolicy {
+  int64 stage_seconds = 1;
+  int64 collection_seconds = 2;
+  int64 default_task_seconds = 3;
+  int64 max_task_seconds = 4;
+  int64 shutdown_seconds = 5;
 }
 message Rejection {
   string target = 1;
@@ -526,6 +557,12 @@ message SubmitWorkspaceJobRequest {
   RequestDomain domain = 3;
 }
 message SubmitWorkspaceJobResponse { Job job = 1; }
+message SubmitDataJobRequest {
+  Task task = 1;
+  string request_id = 2;
+  RequestDomain domain = 3;
+}
+message SubmitDataJobResponse { Job job = 1; }
 enum ArtifactResultState {
   ARTIFACT_RESULT_STATE_UNSPECIFIED = 0;
   ARTIFACT_RESULT_STATE_ABSENT = 1;

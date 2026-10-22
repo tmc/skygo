@@ -35,7 +35,10 @@ type Candidate struct {
 	digest                     hash.Hash
 	err                        error
 	closed, aborted, uncertain bool
-	reference                  Ref
+	// scratch records a failed trim that may have left one byte past the
+	// counted prefix on the original writer; restore removes it before Close.
+	scratch   bool
+	reference Ref
 }
 
 func (f *Files) candidateOwned(id string) bool {
@@ -120,6 +123,7 @@ func (c *Candidate) Description() CandidateFile {
 
 // Write appends at most MaxSize bytes in total. Errors are sticky. A short or
 // failed write records only the actual accepted prefix and cannot be sealed.
+// A complete write trims allocation past that prefix on the original writer.
 func (c *Candidate) Write(p []byte) (int, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -172,13 +176,61 @@ func (c *Candidate) Write(p []byte) (int, error) {
 	if err == nil && n != len(p) {
 		err = io.ErrShortWrite
 	}
+	if err == nil {
+		if err = f.trim(c.file, c.description.Size); err != nil {
+			c.scratch = true
+		}
+	}
 	c.err = err
 	return n, err
+}
+
+// restore truncates the original writer back to its counted prefix after a
+// failed trim, on that same exact private single-link descriptor, before the
+// writer is relinquished. Cleanup of the closed prefix requires its counted
+// size. The scratch byte is never payload, and success clears no error.
+func (c *Candidate) restore(f *Files) error {
+	name := c.description.ID + ".part"
+	size := c.description.Size
+	info, err := c.file.Stat()
+	if err == nil {
+		err = f.checkOwnedFile(info, c.description.File, 1, size+1)
+	}
+	if err == nil {
+		err = f.checkPath(name, info)
+	}
+	if err == nil && info.Size() < size {
+		err = ErrFileConflict
+	}
+	if err == nil && info.Size() > size {
+		err = f.truncate(c.file, size)
+	}
+	if err == nil {
+		err = f.syncFile(c.file)
+	}
+	if err == nil {
+		info, err = c.file.Stat()
+	}
+	if err == nil {
+		err = f.checkOwnedFile(info, c.description.File, 1, size)
+	}
+	if err == nil && info.Size() != size {
+		err = ErrFileConflict
+	}
+	if err == nil {
+		err = f.checkPath(name, info)
+	}
+	if err == nil {
+		c.scratch = false
+	}
+	return err
 }
 
 // Close aborts the candidate and joins any actual Write. It never publishes.
 // A failed original Close remains uncertain. Ordinary write/sync failures after
 // successful actual Close release only FD ownership, never storage charge.
+// After a failed trim, Close first restores the counted prefix on the
+// original writer; if that fails, the writer stays owned and open.
 func (c *Candidate) Close() error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -195,6 +247,11 @@ func (c *Candidate) Close() error {
 	f := c.files
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if c.scratch {
+		if err := c.restore(f); err != nil {
+			return errors.Join(c.err, err)
+		}
+	}
 	err := f.closeFile(c.file)
 	c.closed = true
 	if err != nil {
@@ -215,6 +272,8 @@ func (c *Candidate) Close() error {
 // abort with exact cleanup facts. An unproved Close retains the original owner.
 // checkLinkGrowth has SealPart's cached-only contract and runs after original
 // writer Close, under Candidate.mu then Files.mu; nil refuses only a new link.
+// Before that Close, Seal trims allocation past the counted prefix on the
+// original writer, as a backstop to Write.
 func (c *Candidate) Seal(checkLinkGrowth func() error) (SealReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -239,7 +298,19 @@ func (c *Candidate) Seal(checkLinkGrowth func() error) (SealReceipt, error) {
 			err = f.checkPath(c.description.ID+".part", info)
 		}
 		if err == nil {
+			if err = f.trim(c.file, c.description.Size); err != nil {
+				c.scratch = true
+			}
+		}
+		if err == nil {
 			err = f.syncFile(c.file)
+		}
+		if c.scratch {
+			if restoreErr := c.restore(f); restoreErr != nil {
+				// The original writer stays open; Close retries restoration.
+				c.err = errors.Join(err, restoreErr)
+				return SealReceipt{}, c.err
+			}
 		}
 		closeErr := f.closeFile(c.file)
 		c.closed = true

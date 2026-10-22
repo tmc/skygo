@@ -55,7 +55,10 @@ type artifactState struct {
 	Expired      map[string]artifactExpiredResult
 	Workspaces   map[string]artifactWorkspace
 	Completions  map[string]artifactCompletion
+	Remote       map[string]remoteRecord
 	Deletes      map[string]artifactDelete
+	// WorkflowInputs are input edges prepaid at graph acceptance.
+	WorkflowInputs map[string]workflowInput
 }
 
 type artifactRows map[string]map[string][]byte
@@ -66,7 +69,8 @@ var artifactTables = []struct {
 }{
 	{"uploads", 2048}, {"objects", 1536}, {"grants", 1024}, {"reads", 1024},
 	{"job_inputs", 1024}, {"manual_inputs", 1024}, {"results", 1536},
-	{"result_expired", 512}, {"workspaces", 4096}, {"completions", 1024}, {"gc", 2048}, {"owners", 80},
+	{"result_expired", 512}, {"workspaces", 4096}, {"completions", 1024}, {"gc", 2048}, {"owners", 80}, {"remote_attempts", 4096},
+	{"workflow_inputs", 1024},
 }
 
 func artifactCorrupt() error { return errors.New("invalid artifact metadata") }
@@ -104,21 +108,32 @@ func artifactReadMap[T any](b *bolt.Bucket) (map[string]T, error) {
 
 func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	b := tx.Bucket(artifactsBucket)
+	if schemaNumber(tx) > schemaVersion {
+		return nil, ErrUnsupportedSchema
+	}
 	if schemaNumber(tx) <= 5 || b == nil {
 		return nil, ErrArtifactsDisabled
 	}
-	if schemaNumber(tx) != schemaVersion {
+	// The genuine legacy layout must be checked before migration adds a table.
+	tables := artifactTables
+	switch schemaNumber(tx) {
+	case 6:
+		tables = tables[:len(tables)-2]
+	case 7:
+		tables = tables[:len(tables)-1]
+	case schemaVersion:
+	default:
 		return nil, ErrUnsupportedSchema
 	}
 	s := new(artifactState)
 	if err := artifactDecode(b.Get([]byte("state")), &s.Root); err != nil {
 		return nil, err
 	}
-	if s.Root.Layout != 1 || s.Root.Policy != "default-v1" || s.Root.SchemaFloor != schemaVersion || !artifactHex(s.Root.ID, 32) || s.Root.Unit < 512 || s.Root.Unit > 65536 || s.Root.Unit&(s.Root.Unit-1) != 0 || s.Root.Volume == 0 {
+	if s.Root.Layout != 1 || s.Root.Policy != "default-v1" || s.Root.SchemaFloor != schemaNumber(tx) || !artifactHex(s.Root.ID, 32) || s.Root.Unit < 512 || s.Root.Unit > 65536 || s.Root.Unit&(s.Root.Unit-1) != 0 || s.Root.Volume == 0 {
 		return nil, artifactCorrupt()
 	}
 	known := map[string]bool{"state": true, "usage": true}
-	for _, t := range artifactTables {
+	for _, t := range tables {
 		known[t.name] = true
 	}
 	if err := b.ForEach(func(k, v []byte) error {
@@ -130,7 +145,7 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 		return nil, err
 	}
 	var count, rawBytes uint64
-	for _, t := range artifactTables {
+	for _, t := range tables {
 		table := b.Bucket([]byte(t.name))
 		if table == nil {
 			return nil, artifactCorrupt()
@@ -183,6 +198,35 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	if s.Deletes, err = artifactReadMap[artifactDelete](b.Bucket([]byte("gc"))); err != nil {
 		return nil, err
 	}
+	if schemaNumber(tx) >= 7 {
+		if s.Remote, err = artifactReadMap[remoteRecord](b.Bucket([]byte("remote_attempts"))); err != nil {
+			return nil, err
+		}
+	} else {
+		s.Remote = make(map[string]remoteRecord)
+		for _, r := range s.Uploads {
+			if r.RemoteAttemptID != "" {
+				return nil, artifactCorrupt()
+			}
+		}
+		for _, r := range s.Reads {
+			if r.RemoteAttemptID != "" {
+				return nil, artifactCorrupt()
+			}
+		}
+		for _, r := range s.Objects {
+			if r.Origin == "remote_result" {
+				return nil, artifactCorrupt()
+			}
+		}
+	}
+	if schemaNumber(tx) >= 8 {
+		if s.WorkflowInputs, err = artifactReadMap[workflowInput](b.Bucket([]byte("workflow_inputs"))); err != nil {
+			return nil, err
+		}
+	} else {
+		s.WorkflowInputs = make(map[string]workflowInput)
+	}
 	rows, usage, owners, err := s.encode()
 	if err != nil {
 		return nil, err
@@ -193,7 +237,7 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	if e != nil || len(rootBytes) > 2048 || !bytes.Equal(rootBytes, b.Get([]byte("state"))) {
 		return nil, artifactCorrupt()
 	}
-	for _, t := range artifactTables {
+	for _, t := range tables {
 		if t.name == "owners" {
 			continue
 		}
@@ -229,6 +273,11 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	}
 	if err := artifactValidateCore(tx, s); err != nil {
 		return nil, err
+	}
+	if schemaNumber(tx) >= 7 {
+		if err := remoteValidateCore(tx, s, nil); err != nil {
+			return nil, err
+		}
 	}
 	return s, nil
 }
@@ -271,6 +320,13 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 			}
 		}
 		b, err := json.Marshal(value)
+		if table == "remote_attempts" {
+			r, ok := value.(remoteRecord)
+			if !ok {
+				return artifactCorrupt()
+			}
+			b, err = remoteEncode(r)
+		}
 		if err != nil || uint64(len(b)) > max || max == 0 {
 			return artifactCorrupt()
 		}
@@ -306,8 +362,33 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 		}
 		return charge(owner, aFiles, 1)
 	}
+	if len(s.Remote) > 1024 {
+		return nil, usage, nil, artifactCorrupt()
+	}
+	for id, r := range s.Remote {
+		owner, err := remoteRecordOwner(s, id, r)
+		if err != nil {
+			return nil, usage, nil, err
+		}
+		if _, exists := s.Workspaces[id]; exists {
+			return nil, usage, nil, artifactCorrupt()
+		}
+		if _, exists := s.Completions[id]; exists {
+			return nil, usage, nil, artifactCorrupt()
+		}
+		if err := put("remote_attempts", id, owner, r); err != nil {
+			return nil, usage, nil, err
+		}
+		// Accepted and closed-but-not-retired attempts retain their slot. Remote
+		// Pods do not claim local inode, allocation, or filesystem evidence.
+		if r.State != 4 {
+			if err := charge(owner, aWorkspaces, 1); err != nil {
+				return nil, usage, nil, err
+			}
+		}
+	}
 	for id, r := range s.Uploads {
-		if r.Ref.ID != id || !artifactRefValid(r.Ref) || r.Revision == 0 || r.Created.IsZero() || !r.Expires.Equal(r.Created.Add(time.Hour)) || r.Ack > r.Ref.Size {
+		if r.Ref.ID != id || !artifactRefValid(r.Ref) || r.Revision == 0 || r.Created.IsZero() || r.RemoteAttemptID == "" && !r.Expires.Equal(r.Created.Add(time.Hour)) || r.Ack > r.Ref.Size {
 			return nil, usage, nil, artifactCorrupt()
 		}
 		switch r.State {
@@ -324,12 +405,53 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 				return nil, usage, nil, artifactCorrupt()
 			}
 		case "complete":
-			if o, ok := s.Objects[id]; !ok || o.Ref != r.Ref || o.Owner != r.Owner || o.Origin != "upload" || o.State != "complete" && o.State != "deleting" {
+			if o, ok := s.Objects[id]; !ok || o.Ref != r.Ref || o.Owner != r.Owner || (o.Origin != "upload" && o.Origin != "remote_result") || o.State != "complete" && o.State != "deleting" {
 				return nil, usage, nil, artifactCorrupt()
 			}
 		default:
 			return nil, usage, nil, artifactCorrupt()
 		}
+		if r.RemoteAttemptID != "" {
+			if !artifactHex(r.RemoteAttemptID, 32) || !remoteCheckTime(r.Created) || !remoteCheckTime(r.Expires) || !r.Expires.After(r.Created) || r.Expires.Sub(r.Created) > 600*time.Second {
+				return nil, usage, nil, artifactCorrupt()
+			}
+			rr, present := s.Remote[r.RemoteAttemptID]
+			o, exists := s.Objects[id]
+			if present {
+				owner, err := remoteRecordOwner(s, r.RemoteAttemptID, rr)
+				if err != nil || owner != r.Owner || remoteOutputID(rr) != id {
+					return nil, usage, nil, artifactCorrupt()
+				}
+				if rr.Active != nil {
+					deadline, err := remoteCollectionDeadline(rr.Active)
+					if err != nil || deadline == nil || !r.Expires.Equal(*deadline) {
+						return nil, usage, nil, artifactCorrupt()
+					}
+				}
+			} else {
+				return nil, usage, nil, artifactCorrupt()
+			}
+			if exists {
+				if o.Origin != "remote_result" || o.Source != r.RemoteAttemptID || o.Ref != r.Ref || o.Owner != r.Owner || present && o.JobID != rr.Job {
+					return nil, usage, nil, artifactCorrupt()
+				}
+			} else {
+				// Failed private uploads may have no installed Object, but retain
+				// their original attempt and the concrete pending removal intent.
+				intent := false
+				for _, d := range s.Deletes {
+					if d.Kind == "upload" && d.ObjectID == id && d.Owner == r.Owner && d.File == r.Part && d.Revision == r.Revision {
+						intent = true
+					}
+				}
+				if !present || rr.State < 2 || rr.State > 4 || r.State != "deleting" || !artifactFileValid(r.Part) || !intent {
+					return nil, usage, nil, artifactCorrupt()
+				}
+			}
+		} else if o, ok := s.Objects[id]; ok && o.Origin == "remote_result" {
+			return nil, usage, nil, artifactCorrupt()
+		}
+
 		if r.LastSize != 0 && (r.LastSize > artifactChunkSize || r.LastOffset > r.Ack || r.LastSize != r.Ack-r.LastOffset || !artifactHex(r.LastSHA256, 64)) {
 			return nil, usage, nil, artifactCorrupt()
 		}
@@ -360,7 +482,7 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 		}
 	}
 	for id, r := range s.Objects {
-		reserved := r.State == "reserved" && r.Origin == "result" && artifactHex(id, 32) && r.Ref.ID == id && r.Ref.SHA256 == "" && r.Ref.Size == artifactMaxSize
+		reserved := r.State == "reserved" && (r.Origin == "result" || r.Origin == "remote_result") && artifactHex(id, 32) && r.Ref.ID == id && r.Ref.SHA256 == "" && r.Ref.Size == artifactMaxSize
 		if r.Ref.ID != id || !reserved && !artifactRefValid(r.Ref) || (r.State != "reserved" && r.State != "publishing" && r.State != "complete" && r.State != "deleting") || r.Expires.IsZero() || r.DeleteAfter.IsZero() || r.DeleteAfter.Before(r.Expires) {
 			return nil, usage, nil, artifactCorrupt()
 		}
@@ -379,6 +501,23 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 					return nil, usage, nil, artifactCorrupt()
 				}
 			}
+		} else if r.Origin == "remote_result" {
+			rr, present := s.Remote[r.Source]
+			if present {
+				owner, err := remoteRecordOwner(s, r.Source, rr)
+				if err != nil || owner != r.Owner || rr.Job != r.JobID || remoteOutputID(rr) != id {
+					return nil, usage, nil, artifactCorrupt()
+				}
+			} else {
+				return nil, usage, nil, artifactCorrupt()
+			}
+			if !reserved && (r.State == "reserved" || r.State == "publishing") {
+				u, ok := s.Uploads[id]
+				if !ok || u.RemoteAttemptID != r.Source || u.Ref != r.Ref || u.Owner != r.Owner {
+					return nil, usage, nil, artifactCorrupt()
+				}
+			}
+
 		} else {
 			return nil, usage, nil, artifactCorrupt()
 		}
@@ -425,7 +564,7 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 		if !ok || o.Owner != r.Owner || o.Ref != r.Ref || o.State != "complete" || r.Expires.IsZero() || r.Expires.Before(o.Expires) || r.Source != o.Origin || r.SourceID != o.Source {
 			return nil, usage, nil, artifactCorrupt()
 		}
-		if r.Source == "result" {
+		if r.Source == "result" || r.Source == "remote_result" {
 			v, ok := s.Results[r.SourceID]
 			if !ok || v.Ref != r.Ref || v.Owner != r.Owner {
 				return nil, usage, nil, artifactCorrupt()
@@ -444,9 +583,14 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 				return nil, usage, nil, artifactCorrupt()
 			}
 		}
-		if o.Origin == "result" {
+		if o.Origin == "result" || o.Origin == "remote_result" {
 			if r, ok := s.Results[o.Source]; ok {
 				if r.Ref != o.Ref || r.Owner != o.Owner || r.JobID != o.JobID {
+					return nil, usage, nil, artifactCorrupt()
+				}
+			} else if rr, ok := s.Remote[o.Source]; o.Origin == "remote_result" && ok && rr.State == 2 && remoteOutputID(rr) == id {
+				// A sealed private candidate is not published until Complete.
+				if _, granted := s.Grants[id]; granted {
 					return nil, usage, nil, artifactCorrupt()
 				}
 			} else {
@@ -468,6 +612,22 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 		if r.Closing && r.Revision != 2 || !r.Closing && r.Revision != 1 {
 			return nil, usage, nil, artifactCorrupt()
 		}
+		if r.RemoteAttemptID != "" {
+			if !artifactHex(r.RemoteAttemptID, 32) {
+				return nil, usage, nil, artifactCorrupt()
+			}
+			rr, present := s.Remote[r.RemoteAttemptID]
+			if present {
+				owner, err := remoteRecordOwner(s, r.RemoteAttemptID, rr)
+				pin, pinned := s.JobInputs[rr.Job]
+				if err != nil || owner != r.Owner || !pinned || pin.Ref != r.Ref || pin.Owner != r.Owner {
+					return nil, usage, nil, artifactCorrupt()
+				}
+			} else {
+				return nil, usage, nil, artifactCorrupt()
+			}
+		}
+
 		if err := put("reads", id, r.Owner, r); err != nil {
 			return nil, usage, nil, err
 		}
@@ -494,7 +654,7 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 	for id, r := range s.Results {
 		o, ok := s.Objects[r.Ref.ID]
 		g, granted := s.Grants[r.Ref.ID]
-		if !ok || !granted || o.Owner != r.Owner || o.Ref != r.Ref || o.State != "complete" || o.Origin != "result" || o.Source != id || o.JobID != r.JobID || g.SourceID != id || id != r.AttemptID || !artifactHex(r.JobID, 32) || r.Receipt == ([32]byte{}) {
+		if !ok || !granted || o.Owner != r.Owner || o.Ref != r.Ref || o.State != "complete" || (o.Origin != "result" && o.Origin != "remote_result") || o.Source != id || o.JobID != r.JobID || g.SourceID != id || id != r.AttemptID || !artifactHex(r.JobID, 32) || r.Receipt == ([32]byte{}) {
 			return nil, usage, nil, artifactCorrupt()
 		}
 		if _, ok := s.Expired[id]; ok {
@@ -509,7 +669,7 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 			return nil, usage, nil, artifactCorrupt()
 		}
 		object, exists := s.Objects[r.ObjectID]
-		if exists && (object.Owner != r.Owner || object.Source != id || object.JobID != r.JobID || object.Origin != "result") || r.Collected && !exists {
+		if exists && (object.Owner != r.Owner || object.Source != id || object.JobID != r.JobID || (object.Origin != "result" && object.Origin != "remote_result")) || r.Collected && !exists {
 			return nil, usage, nil, artifactCorrupt()
 		}
 		if err := put("result_expired", id, r.Owner, r); err != nil {
@@ -574,6 +734,14 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 	}
 	if artifactCompletionCount(s) > 1024 {
 		return nil, usage, nil, artifactCorrupt()
+	}
+	for id, in := range s.WorkflowInputs {
+		if err := workflowInputValid(s, id, in); err != nil {
+			return nil, usage, nil, err
+		}
+		if err := put("workflow_inputs", id, in.Owner, in); err != nil {
+			return nil, usage, nil, err
+		}
 	}
 	seen := make(map[string]bool)
 	for id, r := range s.Deletes {

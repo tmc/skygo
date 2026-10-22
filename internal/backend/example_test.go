@@ -31,3 +31,13 @@ func ExampleLogChunk() {
 	// hello 5 true
 	// true
 }
+
+func ExampleValidateDataTemplate() {
+	task := backend.Task{Argv: []string{"./run"}, Outputs: []string{"result"}, DataMounts: []backend.DataMount{{Reference: "cache", Destination: "/mnt/skygo/cache"}}}
+	fmt.Println(backend.ValidateDataTemplate(task))
+	task.DataMounts[0].Destination = "cache"
+	fmt.Println(backend.ValidateDataTemplate(task))
+	// Output:
+	// <nil>
+	// invalid data mount destination
+}

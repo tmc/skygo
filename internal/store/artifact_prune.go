@@ -12,6 +12,20 @@ import (
 // artifactWholeReady uses only the prior trusted completion/root retirement
 // record. Terminal state or a missing workspace alone is never this proof.
 func artifactWholeReady(st *artifactState, j backend.Job) bool {
+	if st != nil {
+		remote := false
+		for _, r := range st.Remote {
+			if r.Job == j.ID {
+				remote = true
+				if r.State != 4 {
+					return false
+				}
+			}
+		}
+		if remote {
+			return !remoteLinkedArtifacts(st, j.ID)
+		}
+	}
 	if j.Task.Workdir == nil {
 		return false
 	}
@@ -64,6 +78,14 @@ func artifactTransferInputPlanned(st *artifactState, plan *retentionMutation, jo
 }
 
 func artifactWholePrune(st *artifactState, j backend.Job, now time.Time) error {
+	for _, r := range st.Remote {
+		if r.Job == j.ID && r.State != 4 {
+			return ErrArtifactConflict
+		}
+	}
+	if remoteLinkedArtifacts(st, j.ID) {
+		return ErrArtifactConflict
+	}
 	for _, w := range st.Workspaces {
 		if w.JobID == j.ID {
 			return ErrArtifactConflict
@@ -78,7 +100,15 @@ func artifactWholePrune(st *artifactState, j backend.Job, now time.Time) error {
 			}
 		}
 	}
-	return artifactDropInput(st, j.ID, now)
+	if e := artifactDropInput(st, j.ID, now); e != nil {
+		return e
+	}
+	for id, r := range st.Remote {
+		if r.Job == j.ID {
+			delete(st.Remote, id)
+		}
+	}
+	return nil
 }
 
 func artifactResultSelection(tx *bolt.Tx, st *artifactState, x PruneSubject, sel PruneSelection, blocked map[string]bool, now time.Time) (string, error) {

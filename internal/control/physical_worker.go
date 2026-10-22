@@ -23,7 +23,7 @@ func physicalRequestShape(r maintenanceRequest) bool {
 	t := r.target
 	return r.readerRecovery == nil && r.downloadClose == nil && r.closeOwner == nil && r.artifactDelete == nil && r.workspaceRetirement == nil && r.physicalOwner != nil && r.record == nil && r.directory == "" && r.usage == nil && r.reusable == 0 && r.reservedBytes == 0 && r.reservedFiles == 0 &&
 		t.Name == "" && t.Backend == nil && t.Kind == "" && t.Binding == "" && t.Advice == nil && t.Labels == nil && t.AcceleratorNames == nil &&
-		!t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.OutputStorage == 0 && t.OutputReservation == 0
+		!t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.DataPolicy == nil && !t.SupportsRemoteData && !t.SupportsDataMounts && !t.SupportsRemoteDataRetry && t.OutputStorage == 0 && t.OutputReservation == 0
 }
 
 func physicalReturnedHeld(q physicalQuantumResult) bool {

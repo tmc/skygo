@@ -41,7 +41,11 @@ func (admissionBackend) Logs(context.Context, backend.Reference, int64, int) (ba
 }
 
 func TestMixedCredentialHTTPIdentity(t *testing.T) {
+	// safeParent rejects a credential parent with group or other write.
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	state := filepath.Join(dir, "state")
 	s, err := store.Open(state)
 	if err != nil {

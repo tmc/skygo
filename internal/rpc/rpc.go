@@ -32,8 +32,9 @@ type handler struct {
 type actorKey struct{}
 type responseKey struct{}
 
-// NewHandler authenticates and serves the control RPCs. Transport encryption is
-// the caller's responsibility. The control and handler must share one Engine.
+// NewHandler authenticates and serves the control and workflow RPCs. Transport
+// encryption is the caller's responsibility. The control and handler must share
+// one Engine.
 func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
 	h := &handler{control: c, engine: engine, streams: make(chan struct{}, 32)}
 	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10), connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
@@ -49,10 +50,23 @@ func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
 		}
 		return []connect.HandlerOption{connect.WithCodec(quoteJSONCodec{name: "json"}), connect.WithCodec(quoteJSONCodec{name: "json; charset=utf-8"})}
 	}))
+	remotePath, remoteService := skyv1connect.NewRemoteDataServiceHandler(h,
+		connect.WithCompressMinBytes(1<<20), connect.WithReadMaxBytes(96<<10), connect.WithSendMaxBytes(96<<10),
+		connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
+			if info.Procedure == skyv1connect.RemoteDataServiceWriteOutputProcedure {
+				return nil
+			}
+			return []connect.HandlerOption{connect.WithReadMaxBytes(16 << 10)}
+		}))
+	workflowPath, workflowService := skyv1connect.NewWorkflowServiceHandler(h, connect.WithReadMaxBytes(512<<10))
 	mux := http.NewServeMux()
 	mux.Handle(path, service)
+	mux.Handle(workflowPath, workflowService)
 	lifetime := &HTTPHandler{owners: make(map[*artifactResponse]struct{}), terminal: make(chan struct{})}
 	lifetime.serve = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.serveRemoteHTTP(lifetime, remotePath, remoteService, w, r) {
+			return
+		}
 		actor, err := engine.Authenticate(r.Header.Get("Authorization"))
 		if err != nil {
 			h.denialMu.Lock()
@@ -133,10 +147,10 @@ func task(t *v1.Task) backend.Task {
 	if t == nil {
 		return backend.Task{}
 	}
-	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: retry(t.Retry), Workdir: taskWorkdir(t.Workdir), Setup: slices.Clone(t.Setup), Outputs: slices.Clone(t.Outputs)}
+	return backend.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CPUMillis: t.CpuMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CPULimitMillis: t.CpuLimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: retry(t.Retry), Workdir: taskWorkdir(t.Workdir), Setup: slices.Clone(t.Setup), Outputs: slices.Clone(t.Outputs), DataMounts: taskDataMounts(t.DataMounts)}
 }
 func wireTask(t backend.Task) *v1.Task {
-	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: wireRetry(t.Retry), Workdir: wireTaskWorkdir(t.Workdir), Setup: slices.Clone(t.Setup), Outputs: slices.Clone(t.Outputs)}
+	return &v1.Task{Argv: slices.Clone(t.Argv), Env: maps.Clone(t.Env), Directory: t.Directory, Image: t.Image, CpuMillis: t.CPUMillis, MemoryBytes: t.MemoryBytes, Accelerator: t.Accelerator, AcceleratorCount: t.AcceleratorCount, Target: t.Target, TimeoutSeconds: t.TimeoutSeconds, CpuLimitMillis: t.CPULimitMillis, MemoryLimitBytes: t.MemoryLimitBytes, TargetLabels: maps.Clone(t.TargetLabels), NodeSelector: maps.Clone(t.NodeSelector), Retry: wireRetry(t.Retry), Workdir: wireTaskWorkdir(t.Workdir), Setup: slices.Clone(t.Setup), Outputs: slices.Clone(t.Outputs), DataMounts: wireDataMounts(t.DataMounts)}
 }
 
 var states = map[backend.State]v1.JobState{backend.Queued: v1.JobState_JOB_STATE_QUEUED, backend.Starting: v1.JobState_JOB_STATE_STARTING, backend.Running: v1.JobState_JOB_STATE_RUNNING, backend.Succeeded: v1.JobState_JOB_STATE_SUCCEEDED, backend.Failed: v1.JobState_JOB_STATE_FAILED, backend.Canceled: v1.JobState_JOB_STATE_CANCELED, backend.Unknown: v1.JobState_JOB_STATE_UNKNOWN, backend.Retrying: v1.JobState_JOB_STATE_RETRYING}
@@ -187,7 +201,13 @@ func rpcError(err error) error {
 	return connect.NewError(code, err)
 }
 func (h *handler) PlanTask(ctx context.Context, r *connect.Request[v1.PlanTaskRequest]) (*connect.Response[v1.PlanTaskResponse], error) {
-	if hasWorkspaceTask(r.Msg.Task) {
+	if r == nil || r.Msg == nil || !validDataTaskUTF8(r.Msg.Task) {
+		if _, err := h.engine.Check(requestActor(ctx), auth.Read); err != nil {
+			return nil, rpcError(err)
+		}
+		return nil, rpcError(control.ErrInvalid)
+	}
+	if hasWorkspaceTask(r.Msg.Task) && !h.remotePlanTask(ctx, r.Msg.Task) {
 		if _, err := h.engine.Check(requestActor(ctx), auth.Read); err != nil {
 			return nil, rpcError(err)
 		}
@@ -294,7 +314,9 @@ func wireTarget(t backend.Target) *v1.Target {
 	if t.SupportsRetry {
 		capabilities = append(capabilities, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1)
 	}
-	return &v1.Target{Name: t.Name, Kind: t.Kind, Capabilities: capabilities, Labels: maps.Clone(t.Labels), AcceleratorNames: slices.Clone(t.AcceleratorNames)}
+	out := &v1.Target{Name: t.Name, Kind: t.Kind, Capabilities: capabilities, Labels: maps.Clone(t.Labels), AcceleratorNames: slices.Clone(t.AcceleratorNames)}
+	addRemoteTarget(t, out)
+	return out
 }
 
 func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
@@ -306,6 +328,14 @@ func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetSe
 	h.record(ctx, "info", "", err)
 	if err != nil {
 		return nil, rpcError(err)
+	}
+	if h.control.ArtifactsEnabled() && requestActor(ctx).TokenID() != "" && remoteRouteAvailable(targets) {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1)
+	}
+	// NewHandler always mounts the four workflow methods on Control. Accepting a
+	// workflow captures file authority, which a legacy credential cannot supply.
+	if requestActor(ctx).TokenID() != "" {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_STATIC_WORKFLOWS_V1)
 	}
 	for _, t := range targets {
 		out.Targets = append(out.Targets, h.wireTarget(t))
@@ -330,5 +360,5 @@ func wireTaskWorkdir(ref *artifact.Ref) *v1.ArtifactRef {
 }
 
 func hasWorkspaceTask(value *v1.Task) bool {
-	return value != nil && (value.Workdir != nil || len(value.Setup) != 0 || len(value.Outputs) != 0)
+	return value != nil && (value.Workdir != nil || len(value.Setup) != 0 || len(value.Outputs) != 0 || len(value.DataMounts) != 0)
 }

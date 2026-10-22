@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/rest"
 )
 
 const targetDocument = `version: 1
@@ -368,4 +369,59 @@ func ExampleAcceleratorPolicy() {
 	}
 	fmt.Println(policy.ResourceName, policy.RequiredNodeSelector["skygo.test/model"])
 	// Output: nvidia.com/gpu a100
+}
+
+func TestConfigDataQualification(t *testing.T) {
+	block := configDataBlock() + "qualification:\n  record: ./private/record.json\n  build_receipt: /etc/skygo/build.json\n" +
+		"  policy_revision: policy-1\n  storage_policy: {models: storage-1}\n"
+	path := configFile(t, configDataDocument(block))
+	c, err := ReadConfig(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := &DataQualification{Record: filepath.Join(filepath.Dir(path), "private", "record.json"), BuildReceipt: "/etc/skygo/build.json",
+		PolicyRevision: "policy-1", StoragePolicy: map[string]string{"models": "storage-1"}}
+	target := c.Targets()[0]
+	if !reflect.DeepEqual(target.Data.Qualification, want) {
+		t.Fatalf("qualification = %+v", target.Data.Qualification)
+	}
+	target.Data.Qualification.StoragePolicy["models"] = "changed"
+	target.Data.Qualification.Record = "/changed"
+	if !reflect.DeepEqual(c.Targets()[0].Data.Qualification, want) {
+		t.Fatal("snapshot aliases the qualification settings")
+	}
+	// The settings are input policy, not target identity.
+	with, err := newDataProfile(c.Targets()[0].Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	without := c.Targets()[0]
+	without.Data.Qualification = nil
+	d, err := newDataProfile(without.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := &rest.Config{Host: "https://kube.example.com", TLSClientConfig: rest.TLSClientConfig{CAData: []byte(configDataPEM)}}
+	a, errA := bindingJSON(c.Targets()[0], config, with, nil)
+	b, errB := bindingJSON(without, config, d, nil)
+	if errA != nil || errB != nil || string(a) != string(b) {
+		t.Fatal("qualification settings entered the binding")
+	}
+	for _, tt := range []struct{ name, block string }{
+		{"secret storage policy", "qualification:\n  record: /r\n  build_receipt: /b\n  policy_revision: p\n  storage_policy: {creds: s}\n"},
+		{"missing policy", "qualification:\n  record: /r\n  build_receipt: /b\n"},
+		{"missing receipt", "qualification:\n  record: /r\n  policy_revision: p\n"},
+		{"unknown field", "qualification:\n  record: /r\n  build_receipt: /b\n  policy_revision: p\n  signature: x\n"},
+		{"integer policy", "qualification:\n  record: /r\n  build_receipt: /b\n  policy_revision: 7\n"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ReadConfig(configFile(t, configDataDocument(configDataBlock()+tt.block)), false)
+			if err == nil {
+				t.Fatal("accepted")
+			}
+			if strings.Contains(err.Error(), "/r") || strings.Contains(err.Error(), "/b") {
+				t.Fatalf("error carries a value: %v", err)
+			}
+		})
+	}
 }

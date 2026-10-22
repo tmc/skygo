@@ -169,7 +169,7 @@ func artifactCompletionOrigin(st *artifactState, w artifactWorkspace, c Workspac
 }
 
 func artifactCompletionCount(st *artifactState) int {
-	n := len(st.Completions)
+	n := len(st.Completions) + len(st.Remote)
 	for id := range st.Workspaces {
 		if _, ok := st.Completions[id]; !ok {
 			n++
@@ -478,6 +478,9 @@ func (change workspaceCompletionChange) apply(tx *bolt.Tx, owner string, budget 
 		}
 		job, e = observeAttemptCore(tx, jobID, execution.ID, status, now.UTC())
 		if e != nil {
+			return e
+		}
+		if e = workflowPublish(tx, st, job, execution.ID); e != nil {
 			return e
 		}
 		out = WorkspaceCommit{Job: job, State: WorkspaceCommitMarked, Cleanup: &work}

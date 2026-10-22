@@ -88,6 +88,16 @@ func (st *artifactState) pinned(id string) bool {
 			return true
 		}
 	}
+	for _, r := range st.Remote {
+		if r.State == 2 && remoteOutputID(r) == id {
+			return true
+		}
+	}
+	for _, in := range st.WorkflowInputs {
+		if in.Ref != nil && in.Ref.ID == id {
+			return true
+		}
+	}
 	return false
 }
 
@@ -143,7 +153,7 @@ func (s *Store) GetArtifactDownload(actor auth.Actor, id string) (out ArtifactLe
 			return e
 		}
 		r, ok := st.Reads[id]
-		if !ok || r.Owner != actor.Principal() {
+		if !ok || r.Owner != actor.Principal() || r.RemoteAttemptID != "" {
 			return ErrNotFound
 		}
 		if r.Closing || !s.now().Before(r.Expires) {
@@ -167,7 +177,7 @@ func (s *Store) CloseArtifactDownload(actor auth.Actor, c ArtifactCursor) (out A
 	}
 	err = s.artifactUpdate(func(st *artifactState) error {
 		r, ok := st.Reads[c.ID]
-		if !ok || r.Owner != actor.Principal() {
+		if !ok || r.Owner != actor.Principal() || r.RemoteAttemptID != "" {
 			return ErrNotFound
 		}
 		if r.Revision != c.Revision {
@@ -239,6 +249,9 @@ func artifactMarkObjectDelete(st *artifactState, id, operation string, now time.
 // owned file receipt after unlink+parent sync. Already absent may confirm only
 // this recorded intent; absence never creates authority or stopped proof.
 func artifactFinishDelete(st *artifactState, operation string, expected artifactDelete) error {
+	if remoteDeleteDeferred(st, expected) {
+		return ErrArtifactConflict
+	}
 	d, ok := st.Deletes[operation]
 	if !ok || d != expected {
 		return ErrArtifactConflict

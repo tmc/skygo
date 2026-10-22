@@ -28,6 +28,7 @@ type Task struct {
 	Workdir          *artifact.Ref     `json:"workdir,omitempty" yaml:"workdir,omitempty"`
 	Setup            []string          `json:"setup,omitempty" yaml:"setup,omitempty"`
 	Outputs          []string          `json:"outputs,omitempty" yaml:"outputs,omitempty"`
+	DataMounts       []DataMount       `json:"data_mounts,omitempty" yaml:"data_mounts,omitempty"`
 }
 
 // State records an observed execution state. Unknown does not imply termination.
@@ -152,4 +153,16 @@ type Target struct {
 	Retention              *Retention
 	OutputStorage          OutputStorage
 	OutputReservation      uint64
+	// DataPolicy is optional immutable configured data-route policy, not capability.
+	DataPolicy *DataPolicy
+	// SupportsRemoteData reports qualified remote data execution. It is a trusted
+	// constructor fact, not permission, available capacity or implied by DataPolicy.
+	// Unqualified and legacy targets leave it false.
+	SupportsRemoteData bool
+	// SupportsDataMounts reports qualified configured data mounts and requires
+	// SupportsRemoteData.
+	SupportsDataMounts bool
+	// SupportsRemoteDataRetry reports qualified remote data retry and requires
+	// SupportsRemoteData. It stays false until retry execution is qualified.
+	SupportsRemoteDataRetry bool
 }

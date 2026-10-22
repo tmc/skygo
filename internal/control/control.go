@@ -48,6 +48,7 @@ type Control struct {
 	recoverStoppedReaders bool
 	shutdown              *shutdownState
 	localBackend          *local.Backend
+	dataTargets           []dataTarget
 }
 
 // New validates targets and orders selection by name.
@@ -136,12 +137,26 @@ func NewWithConfig(s *store.Store, targets []backend.Target, engine *auth.Engine
 	if err := control.configureWorkspace(config.LocalWorkspace); err != nil {
 		return nil, err
 	}
+	if err := control.configureDataTargets(); err != nil {
+		return nil, err
+	}
 	control.retention.wantSample.Store(enabled)
 	return control, nil
 }
 
 // Validate rejects malformed tasks before capability checks or side effects.
 func Validate(t backend.Task) error {
+	return validateTask(t, backend.ValidateWorkspace)
+}
+
+// validateTemplate applies Validate's rules to a workflow node whose input is
+// not yet resolved: only the workspace check differs, requiring the snapshot
+// template form instead of a Workdir. It never supplies a Ref.
+func validateTemplate(t backend.Task) error {
+	return validateTask(t, backend.ValidateWorkspaceTemplate)
+}
+
+func validateTask(t backend.Task, workspace func(backend.Task) error) error {
 	var err error
 	t, err = normalizeTask(t)
 	if err != nil {
@@ -186,7 +201,7 @@ func Validate(t backend.Task) error {
 	if !validLabels(t.TargetLabels, 16) || !validLabels(t.NodeSelector, 16) {
 		return fmt.Errorf("%w: invalid placement labels or selectors", ErrInvalid)
 	}
-	if err := backend.ValidateWorkspace(t); err != nil {
+	if err := workspace(t); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	data, err := backend.TaskBytes(t)
@@ -226,6 +241,19 @@ func (c *Control) plan(t backend.Task) (string, []Rejection, error) {
 	}
 	if err := Validate(t); err != nil {
 		return "", nil, err
+	}
+	// An explicit qualified target disambiguates remote data planning from
+	// Local workspaces. Planning remains read-only; only SubmitData delegates.
+	if t.Target != "" && (t.Workdir != nil || len(t.DataMounts) != 0) {
+		for _, target := range c.targets {
+			if target.Name == t.Target && target.SupportsRemoteData {
+				selected, err := c.planData(t)
+				if err != nil {
+					return "", nil, err
+				}
+				return selected.Name, nil, nil
+			}
+		}
 	}
 	var selected string
 	var rejected []Rejection
@@ -274,6 +302,9 @@ func (c *Control) submit(actor auth.Actor, domain *store.RequestDomain, requestI
 	}
 	if err := Validate(t); err != nil {
 		return backend.Job{}, err
+	}
+	if len(t.DataMounts) != 0 {
+		return backend.Job{}, fmt.Errorf("%w: data submission required", ErrInvalid)
 	}
 	if workspace {
 		if t.Workdir == nil {

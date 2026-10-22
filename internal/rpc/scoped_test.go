@@ -66,8 +66,14 @@ func scoped(t *testing.T, b *logBackend) *scopedFixture {
 			t.Error(err)
 		}
 	})
-	f := &scopedFixture{path: filepath.Join(dir, "auth.json"), tokens: make(map[string]string), ids: make(map[string]string), store: s}
-	initial := filepath.Join(dir, "legacy.token")
+	// Credentials live in a fixture-owned private directory: auth refuses a
+	// group- or other-writable parent, and t.TempDir does not guarantee one.
+	private := filepath.Join(dir, "auth")
+	if err := os.Mkdir(private, 0700); err != nil {
+		t.Fatal(err)
+	}
+	f := &scopedFixture{path: filepath.Join(private, "auth.json"), tokens: make(map[string]string), ids: make(map[string]string), store: s}
+	initial := filepath.Join(private, "legacy.token")
 	if _, err := auth.Initialize(f.path, initial, s.Owner()); err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +89,7 @@ func scoped(t *testing.T, b *logBackend) *scopedFixture {
 		if err := auth.AddPrincipal(f.path, p.name, p.role); err != nil {
 			t.Fatal(err)
 		}
-		path := filepath.Join(dir, p.name+".token")
+		path := filepath.Join(private, p.name+".token")
 		info, err := auth.Issue(f.path, p.name, path, time.Hour)
 		if err != nil {
 			t.Fatal(err)

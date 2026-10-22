@@ -104,11 +104,15 @@ func validateRetention(tx *bolt.Tx) error {
 		if !validPrincipal([]byte(m.Principal)) || isScoped(tx) && string(tx.Bucket(jobPrincipalsBucket).Get(id)) != m.Principal {
 			return errors.New("invalid retained principal")
 		}
-		if !validJobRequestIdentity(st, m) || !m.Legacy && !validBinding(j.TargetBinding) {
+		if m.WorkflowID != "" {
+			if e := validateWorkflowChild(tx, j, m); e != nil {
+				return e
+			}
+		} else if !validJobRequestIdentity(st, m) || !m.Legacy && !validBinding(j.TargetBinding) {
 			return errors.New("invalid retained job request identity")
 		}
 		requestLive := !st.Enabled || m.Domain.Lineage == st.Lineage && (m.Domain.Epoch == 0 && st.LegacyReplayOpen || m.Domain.Epoch > st.RetiredThrough)
-		if requestLive {
+		if requestLive && m.WorkflowID == "" {
 			if m.LegacyRequestRetired {
 				return errors.New("live request has retired legacy metadata")
 			}
@@ -162,6 +166,17 @@ func validateRetention(tx *bolt.Tx) error {
 		var r requestRecord
 		if e := json.Unmarshal(v, &r); e != nil {
 			return e
+		}
+		if r.WorkflowID != "" {
+			// The workflow alternative: live while its state exists, then an
+			// expired typed witness. validateWorkflows checks the live relation.
+			if !validWorkflowRequest(r) || !bytes.Equal(k, requestKey(r.Principal, r.Domain, r.RequestID)) || !st.Enabled && r.Domain != (RequestDomain{}) || st.Enabled && r.Domain.Lineage == "" {
+				return errors.New("invalid workflow request")
+			}
+			if live := workflowRow(tx, workflowStateKey(r.WorkflowID)) != nil; live == r.Expired {
+				return errors.New("workflow request state mismatch")
+			}
+			return nil
 		}
 		if !validPrincipal([]byte(r.Principal)) || !bytes.Equal(k, requestKey(r.Principal, r.Domain, r.requestID())) || !validRequestIdentity(r.Domain, r.RequestID, r.LegacyRequestID) || !validAttemptID(r.JobID) {
 			return errors.New("invalid retained request")
@@ -420,7 +435,7 @@ func validateRetentionSideRecords(tx *bolt.Tx, st retentionState) error {
 		if e := json.Unmarshal(v, &r); e != nil {
 			return e
 		}
-		if r.Expired {
+		if r.Expired && r.WorkflowID == "" {
 			if expired[r.JobID] != "" {
 				return errors.New("duplicate expired result binding")
 			}

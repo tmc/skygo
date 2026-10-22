@@ -75,11 +75,30 @@ func retentionRequestID(text string) bool {
 }
 
 func validTaskUTF8(task *v1.Task) bool {
+	return task != nil && len(task.DataMounts) == 0 && validDataTaskUTF8(task)
+}
+
+func validDataTaskUTF8(task *v1.Task) bool {
 	if task == nil {
 		return false
 	}
 	for _, text := range append([]string{task.Directory, task.Image, task.Accelerator, task.Target}, task.Argv...) {
 		if !utf8.ValidString(text) {
+			return false
+		}
+	}
+	for _, values := range [][]string{task.Setup, task.Outputs} {
+		for _, text := range values {
+			if !utf8.ValidString(text) {
+				return false
+			}
+		}
+	}
+	if task.Workdir != nil && (!utf8.ValidString(task.Workdir.Id) || !utf8.ValidString(task.Workdir.Sha256)) {
+		return false
+	}
+	for _, mount := range task.DataMounts {
+		if mount == nil || !utf8.ValidString(mount.Reference) || !utf8.ValidString(mount.Destination) {
 			return false
 		}
 	}

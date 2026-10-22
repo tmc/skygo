@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/tmc/skygo/internal/backend"
+
 	bolt "go.etcd.io/bbolt"
 )
 
@@ -314,5 +316,199 @@ func TestArtifactReservationsStatusAndManualTransferAreNotPhysicalChanges(t *tes
 	}
 	if marked.AllocatedBytes != manual.AllocatedBytes || marked.Files != manual.Files {
 		t.Fatal("manual marked root charged allowance twice")
+	}
+}
+
+// NotAttempted is logical CREATE-not-entered evidence for one exact remote
+// reservation, not an empty-filesystem observation. All native and File receipts
+// below are MODELED; the Store/auth transactions and read-only snapshots are real.
+func TestArtifactReservationsRemoteNotAttemptedLifecycle(t *testing.T) {
+	f := newRemoteTransactionFixture(t)
+	j := f.submit(t, "reservation-create-boundary", f.task(t))
+	key, start, hashes := f.begin(t, j)
+	row := remoteTransactionGet(t, f.s, key)
+	if row.Active == nil || row.Active.ResultID == "" {
+		t.Fatal("fixture has no original remote output reservation")
+	}
+	id := row.Active.ResultID
+	usage := artifactTestUsage(t, f.s)
+	initial := reservationSnapshot(t, f.s)
+	reserved := reservationSubject(t, initial, "object", id)
+	if !reserved.NotAttempted || reserved.File != (ArtifactFile{}) {
+		t.Fatalf("original CREATE-not-entered reservation: %+v", reserved)
+	}
+	if initial.AllocatedBytes != usage[aAllocatedBytes] || initial.Files != usage[aFiles] || usage != artifactTestUsage(t, f.s) {
+		t.Fatal("logical NotAttempted fact altered prepaid counters")
+	}
+	if fresh := reservationSnapshot(t, f.s); !reflect.DeepEqual(fresh, initial) {
+		t.Fatal("repeated validated projection changed digest or counters")
+	}
+	copy := initial
+	copy.Subjects = append([]ArtifactPhysicalSubject(nil), initial.Subjects...)
+	for i := range copy.Subjects {
+		if copy.Subjects[i].Kind == "object" && copy.Subjects[i].ID == id {
+			copy.Subjects[i].NotAttempted = false
+		}
+	}
+	if !reservationSubject(t, reservationSnapshot(t, f.s), "object", id).NotAttempted {
+		t.Fatal("caller changed durable NotAttempted through copied DTO")
+	}
+	copy.Digest = [32]byte{}
+	raw, err := json.Marshal(copy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changedDigest := sha256.Sum256(append([]byte("skygo-artifact-reservations-v1\x00"), raw...))
+	if changedDigest == initial.Digest {
+		t.Fatal("canonical reservation digest did not bind NotAttempted")
+	}
+
+	row, err = f.s.RecordRemoteCreated(key, start.Revision, RemoteCreation{Resources: remoteTransactionCreated(), Succeeded: true}, f.now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stop, collector := remoteTransactionStop(f, 0)
+	zero := int32(0)
+	row, err = f.s.ObserveRemote(key, row.Revision, backend.DataObservation{Status: backend.Status{State: backend.Succeeded, Instance: row.Resources.Pod.UID, ExitCode: &zero, Termination: backend.StoppedWithExitCode}, Phase: backend.DataSettled, TaskStop: &stop, Collector: &collector}, f.now.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	beforeCreate := reservationSnapshot(t, f.s)
+	if !reflect.DeepEqual(beforeCreate, initial) || artifactTestUsage(t, f.s) != usage {
+		t.Fatal("native/status-only metadata changed untouched physical reservation")
+	}
+	grant, err := f.s.CheckRemoteGrant(key.AttemptID, RemoteOutput, hashes.Output, f.now.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	upload, err := f.s.BeginRemoteOutput(grant, strings.Repeat("d", 64), 1, f.now.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	creating := reservationSnapshot(t, f.s)
+	object := reservationSubject(t, creating, "object", id)
+	part := reservationSubject(t, creating, "upload", id)
+	if object.NotAttempted || part.NotAttempted || object.File != (ArtifactFile{}) || part.File != (ArtifactFile{}) {
+		t.Fatalf("zero File after CREATE admission acquired absence proof: object=%+v upload=%+v", object, part)
+	}
+	if creating.Digest == initial.Digest {
+		t.Fatal("CREATE entry failed to invalidate original physical cohort")
+	}
+	creatingUsage := artifactTestUsage(t, f.s)
+	_ = reservationSnapshot(t, f.s)
+	if creatingUsage != artifactTestUsage(t, f.s) {
+		t.Fatal("creating projection changed counters")
+	}
+	// The original part-create return is modeled explicitly. Zero/nonzero File
+	// never substitutes for the CREATE admission boundary.
+	file := ArtifactFile{Device: 17, Inode: 2901}
+	_, err = f.s.RemotePartCreated(grant, ArtifactCursor{ID: id, Revision: upload.Revision}, file, f.now.Add(4*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	writable := reservationSnapshot(t, f.s)
+	part = reservationSubject(t, writable, "upload", id)
+	if part.NotAttempted || part.File != file || reservationSubject(t, writable, "object", id).NotAttempted {
+		t.Fatal("known writable part retained CREATE-not-entered fact")
+	}
+	if writable.Digest == creating.Digest || writable.AllocatedBytes != creating.AllocatedBytes || writable.Files != creating.Files {
+		t.Fatal("exact part identity failed to invalidate without double charging")
+	}
+}
+
+func TestArtifactReservationsOrdinaryZeroFileIsNeverNotAttempted(t *testing.T) {
+	s := openTest(t)
+	artifactTestInstall(t, s)
+	u, err := s.BeginArtifactUpload(testActor(), strings.Repeat("e", 64), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage := artifactTestUsage(t, s)
+	snapshot := reservationSnapshot(t, s)
+	p := reservationSubject(t, snapshot, "upload", u.Reference.ID)
+	if p.File != (ArtifactFile{}) || p.NotAttempted {
+		t.Fatalf("ordinary creating upload must remain unknown: %+v", p)
+	}
+	if snapshot.Files != 3 || snapshot.AllocatedBytes == 0 || usage != artifactTestUsage(t, s) {
+		t.Fatal("ordinary unknown creation lost allowance or mutated counters")
+	}
+}
+
+func TestArtifactReservationsRemoteNotAttemptedCorruptionRefusesWholeSnapshot(t *testing.T) {
+	for _, kind := range []string{"missing-original-row", "wrong-original-result", "missing-active", "wrong-remote-state", "wrong-origin", "known-file", "known-manifest", "changed-ref", "gc-intent"} {
+		t.Run(kind, func(t *testing.T) {
+			f := newRemoteTransactionFixture(t)
+			j := f.submit(t, "corrupt-reservation", f.task(t))
+			key, _, _ := f.begin(t, j)
+			row := remoteTransactionGet(t, f.s, key)
+			id := row.Active.ResultID
+			if !reservationSubject(t, reservationSnapshot(t, f.s), "object", id).NotAttempted {
+				t.Fatal("valid original reservation fixture missing fact")
+			}
+			// Deliberate canonical-row corruption follows the existing fixture
+			// style. No counter repair, admission bypass, filesystem call or GC
+			// permission is inferred from these malformed rows.
+			if err := f.s.db.Update(func(tx *bolt.Tx) error {
+				root := tx.Bucket(artifactsBucket)
+				objects := root.Bucket([]byte("objects"))
+				var object artifactObject
+				if err := artifactDecode(objects.Get([]byte(id)), &object); err != nil {
+					return err
+				}
+				switch kind {
+				case "missing-original-row":
+					return root.Bucket([]byte("remote_attempts")).Delete([]byte(key.AttemptID))
+				case "wrong-original-result", "missing-active", "wrong-remote-state":
+					remote := root.Bucket([]byte("remote_attempts"))
+					var r remoteRecord
+					if err := artifactDecode(remote.Get([]byte(key.AttemptID)), &r); err != nil {
+						return err
+					}
+					switch kind {
+					case "wrong-original-result":
+						r.Active.ResultID = strings.Repeat("f", 32)
+					case "missing-active":
+						r.Active = nil
+					case "wrong-remote-state":
+						r.State = 1
+					}
+					raw, err := remoteEncode(r)
+					if err != nil {
+						return err
+					}
+					return remote.Put([]byte(key.AttemptID), raw)
+				case "wrong-origin":
+					object.Origin = "result"
+				case "known-file":
+					object.File = ArtifactFile{Device: 17, Inode: 2902}
+				case "known-manifest":
+					object.Manifest.RegularFiles = 1
+				case "changed-ref":
+					object.Ref.SHA256 = strings.Repeat("b", 64)
+				case "gc-intent":
+					deletion := artifactDelete{Kind: "object", ObjectID: id, Owner: object.Owner, Revision: 1}
+					raw, err := json.Marshal(deletion)
+					if err != nil {
+						return err
+					}
+					return root.Bucket([]byte("gc")).Put([]byte(strings.Repeat("c", 32)), raw)
+				}
+				raw, err := json.Marshal(object)
+				if err != nil {
+					return err
+				}
+				return objects.Put([]byte(id), raw)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			before := artifactDatabaseBytes(t, f.s)
+			out, err := f.s.ArtifactReservations()
+			if err == nil || !reflect.DeepEqual(out, ArtifactReservations{}) {
+				t.Fatalf("malformed reservation published partial snapshot: %+v %v", out, err)
+			}
+			if !bytes.Equal(before, artifactDatabaseBytes(t, f.s)) {
+				t.Fatal("reservation refusal repaired corrupt metadata or counters")
+			}
+		})
 	}
 }

@@ -49,13 +49,27 @@ func artifactTaskRef(task backend.Task) (ArtifactRef, error) {
 func (s *Store) SubmitWorkspace(actor auth.Actor, domain *RequestDomain, requestID string, task backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64) (backend.Job, error) {
 	task = backend.CloneTask(task)
 	if domain == nil {
-		return s.submit(actor, requestID, task, target, binding, true)
+		return s.submit(actor, requestID, task, target, binding, submissionWorkspace, nil)
 	}
-	return s.submitRetained(actor, *domain, requestID, task, target, binding, storage, reserve, true)
+	return s.submitRetained(actor, *domain, requestID, task, target, binding, storage, reserve, submissionWorkspace, nil)
 }
 
-func validateSubmitWorkspace(task backend.Task, workspace bool) error {
-	if !workspace {
+type submissionKind uint8
+
+const (
+	submissionOrdinary submissionKind = iota
+	submissionWorkspace
+	submissionRemote
+)
+
+func validateSubmitWorkspace(task backend.Task, kind submissionKind) error {
+	if kind == submissionRemote {
+		return backend.ValidateDataTask(task, nil)
+	}
+	if len(task.DataMounts) != 0 {
+		return ErrRemoteAttemptRequired
+	}
+	if kind == submissionOrdinary {
 		if hasWorkspaceFields(task) {
 			return ErrWorkspaceSubmitRequired
 		}
@@ -68,6 +82,11 @@ func validateSubmitWorkspace(task backend.Task, workspace bool) error {
 // The reverse walk belongs to snapshot validation, not every upload chunk.
 // Acceptance writes the new core row and its exact pin in one transaction.
 func artifactValidateTaskRows(tx *bolt.Tx, st *artifactState) error {
+	if st != nil {
+		if e := remoteValidateCore(tx, st, nil); e != nil {
+			return e
+		}
+	}
 	return tx.Bucket(jobsBucket).ForEach(func(id, raw []byte) error {
 		var job backend.Job
 		if err := json.Unmarshal(raw, &job); err != nil {

@@ -390,10 +390,11 @@ func TestObservationPacingDoesNotBlockOtherJobs(t *testing.T) {
 	c := routeControl(t, s, targetFor("good", b))
 	op := operation{kind: observeOperation, job: first}
 	loop := &loopState{workers: []targetWorker{{target: targetFor("good", b), input: make(chan operation, 1), pending: &op}}}
+	beforeIntegration := time.Now()
 	if err := c.integrate(loop, operationResult{operation: op, status: backend.Status{State: backend.Running}}); err != nil {
 		t.Fatal(err)
 	}
-	if !time.Now().Before(loop.due[first.ID]) {
+	if !loop.due[first.ID].After(beforeIntegration) {
 		t.Fatal("successful observation had no poll deadline")
 	}
 	// A long explicit deadline makes the no-redelivery check deterministic; peer

@@ -219,3 +219,20 @@ func artifactAction(procedure string) auth.Action {
 	}
 	return auth.Mutate
 }
+
+// finishRemote is called only after the actual Control invoker returned. It
+// performs bookkeeping without repeating that invoker's Close or Flush.
+func (r *artifactResponse) finishRemote(err error) {
+	if err != nil {
+		// Control retains the same actual response/error frame on uncertainty.
+		return
+	}
+	r.finishOnce.Do(func() {
+		h := r.handler
+		h.mu.Lock()
+		r.call.Done()
+		delete(h.owners, r)
+		h.completeLocked()
+		h.mu.Unlock()
+	})
+}

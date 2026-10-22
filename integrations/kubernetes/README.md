@@ -72,6 +72,49 @@ Job backend and its existing adoption behavior. See the
 [retry contract](../../docs/contracts.md#finite-retries) and the native
 checks in the [verification plan](../../docs/testing.md#finite-retry-checks).
 
+A named target may also have a `data` block, which fixes its helper image,
+approved task images, worker origin and PVC or Secret references. A data block
+alone advertises no remote data support: every data task is refused until the
+target installs a native qualification through `data.qualification`:
+
+```yaml
+    data:
+      # helper_image, helper_sha256, origin, ca_pem, task_images, references
+      qualification:
+        record: ./qualification.json      # operator-reviewed record
+        build_receipt: ./build-receipt.json
+        policy_revision: cluster-policy-7 # current operator policy
+        storage_policy:
+          datasets: csi-policy-3          # per PVC reference
+```
+
+Both files must be regular files of mode 0400 or 0600 owned by the server user;
+relative paths resolve against the target file's directory. The build receipt
+is one canonical JSON object, written by the release process, with no
+surrounding whitespace:
+
+```json
+{"version":"skygo-kubernetes-build-receipt-v1","executable_sha256":"…","helper_image":"…","helper_sha256":"…","helper_platform_digest":"…","helper_os":"linux","helper_architecture":"arm64"}
+```
+
+At startup the server hashes its own executable, which must match the
+receipt, and refuses the target unless the record matches that executable,
+the receipt, the target configuration and its coverage rules. It then reads
+the namespace, `/version`, the nodes matching the record's pool selector and
+each recorded PVC and its StorageClass, each response limited to 4 MiB, and
+refuses on any difference, including an added pool node. Every data start
+repeats those reads before its first create. The server needs `get` on its
+namespace, `list` on nodes, `get` on PVCs and StorageClasses for these reads;
+it never reads Secret data. The record identity becomes part of the target
+binding; file names do not. Every qualified task must name the record's pool
+in its own node selector, which the target's `node_selectors` must allow.
+
+The policy revisions are the operator's assertions, not facts the API can
+attest; runtime, admission and storage behavior can change behind unchanged
+API strings. Quiesce and requalify before changing them. A record is trusted
+operator configuration: this server consumes it but neither produces one nor
+qualifies a cluster.
+
 The local `replace github.com/tmc/skygo => ../..` supports development from this
 checkout. This is not an independently released module: publishing it requires
 a published root-module version and removal of the local replacement.

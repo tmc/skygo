@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"github.com/tmc/skygo/internal/auth"
@@ -39,6 +40,7 @@ type Store struct {
 	owner  string
 	scoped bool
 	now    func() time.Time
+	wf     workflowCursor
 }
 
 // Open opens or initializes a database in dir. Another writer is refused after
@@ -184,14 +186,14 @@ func (s *Store) Lookup(actor auth.Actor, requestID string, task backend.Task) (j
 // identical request returns the original job, including its target and binding,
 // before validating the newly proposed route.
 func (s *Store) Submit(actor auth.Actor, requestID string, task backend.Task, target, binding string) (j backend.Job, err error) {
-	return s.submit(actor, requestID, task, target, binding, false)
+	return s.submit(actor, requestID, task, target, binding, submissionOrdinary, nil)
 }
 
-func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, target, binding string, workspace bool) (j backend.Job, err error) {
+func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, target, binding string, kind submissionKind, remote *remoteSubmission) (j backend.Job, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
 		return
 	}
-	if err = validateSubmitWorkspace(task, workspace); err != nil {
+	if err = validateSubmitWorkspace(task, kind); err != nil {
 		return
 	}
 	task.Retry, err = backend.NormalizeRetry(task.Retry)
@@ -210,8 +212,11 @@ func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, ta
 		return backend.Job{}, err
 	}
 	now := time.Now().UTC()
-	if workspace {
+	if kind != submissionOrdinary {
 		now = s.now().UTC()
+		if remote != nil {
+			now = remote.now
+		}
 	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		st, e := loadRetention(tx)
@@ -230,7 +235,12 @@ func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, ta
 			return nil
 		}
 		accept := func(art *artifactState) error {
-			if art != nil {
+			if kind == submissionRemote {
+				if e := remote.validate(actor.Principal(), task); e != nil {
+					return e
+				}
+			}
+			if art != nil && task.Workdir != nil {
 				ref, e := artifactTaskRef(task)
 				if e != nil {
 					return e
@@ -246,7 +256,7 @@ func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, ta
 			if e != nil {
 				return e
 			}
-			if workspace && len(encodedTask) > 256<<10 {
+			if kind != submissionOrdinary && len(encodedTask) > 256<<10 {
 				return errors.New("task exceeds limit")
 			}
 			metadata := tx.Bucket(metadataBucket)
@@ -310,7 +320,7 @@ func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, ta
 			if e = trackLegacyAccepted(tx, accepted, actor.Principal(), requestID); e != nil {
 				return e
 			}
-			if art != nil {
+			if art != nil && task.Workdir != nil {
 				ref, e := artifactTaskRef(task)
 				if e != nil {
 					return e
@@ -319,9 +329,14 @@ func (s *Store) submit(actor auth.Actor, requestID string, task backend.Task, ta
 					return e
 				}
 			}
+			if kind == submissionRemote {
+				if e := remoteAccept(art, accepted.ID, actor.Principal(), remote); e != nil {
+					return e
+				}
+			}
 			return json.Unmarshal(data, &j)
 		}
-		if workspace {
+		if kind != submissionOrdinary {
 			core := artifactAcceptLedger(tx, id, actor.Principal(), requestID, RequestDomain{}, true)
 			_, e := artifactCoreChange(tx, core, maxChangeBytes, 100, accept)
 			return e
@@ -404,6 +419,9 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	}
 	if j.ID != before.ID || j.Target != before.Target || j.TargetBinding != before.TargetBinding || j.Sequence != before.Sequence || !j.CreatedAt.Equal(before.CreatedAt) || !bytes.Equal(originalTask, changedTask) {
 		return j, errors.New("cannot change immutable job fields")
+	}
+	if remoteRoute(tx, id) && !reflect.DeepEqual(before.Status, j.Status) {
+		return j, ErrRemoteAttemptRequired
 	}
 	if e = validateUpdate(before, j); e != nil {
 		return j, e

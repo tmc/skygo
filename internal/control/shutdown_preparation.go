@@ -103,6 +103,20 @@ func (c *Control) tryShutdownPrepared(s *loopState, m *maintenanceState) error {
 	if s.unmatched != nil || m.pending != nil || m.received != nil {
 		return nil
 	}
+	dataReady, err := c.dataOperationsPrepared(s)
+	if err != nil {
+		return err
+	}
+	if !dataReady {
+		return nil
+	}
+	transfersReady, err := c.remoteTransfersPrepared()
+	if err != nil {
+		return err
+	}
+	if !transfersReady {
+		return nil
+	}
 	for i := range s.workers {
 		w := &s.workers[i]
 		if w.pending != nil || w.received != nil {
@@ -168,6 +182,27 @@ func (c *Control) maintainShutdownPreparation(s *loopState, m *maintenanceState)
 		return fmt.Errorf("%w: original physical frame remains held", ErrUnavailable)
 	}
 	now := time.Now()
+	first := m.preparationFamily % 2
+	m.preparationFamily = (first + 1) % 2
+	for n := uint8(0); n < 2; n++ {
+		var dispatched bool
+		var err error
+		if (first+n)%2 == 0 {
+			dispatched, err = c.dispatchRemoteInputFinish(m, now)
+		} else {
+			dispatched, err = c.dispatchShutdownWorkspaceHandoff(s, m, now)
+		}
+		if err != nil {
+			return err
+		}
+		if dispatched {
+			return nil
+		}
+	}
+	return nil
+}
+
+func (c *Control) dispatchShutdownWorkspaceHandoff(s *loopState, m *maintenanceState, now time.Time) (bool, error) {
 	for i := range s.workers {
 		w := &s.workers[i]
 		p := w.completion
@@ -175,7 +210,7 @@ func (c *Control) maintainShutdownPreparation(s *loopState, m *maintenanceState)
 			continue
 		}
 		if p.held || p.retirement.held {
-			return fmt.Errorf("original workspace remains held: %w", errors.Join(ErrUnavailable, p.err, p.retirement.finishError))
+			return false, fmt.Errorf("original workspace remains held: %w", errors.Join(ErrUnavailable, p.err, p.retirement.finishError))
 		}
 		if !p.prepared || !p.durable || !p.acked || p.cleanup == nil || w.pending != nil || w.received != nil {
 			continue
@@ -187,31 +222,31 @@ func (c *Control) maintainShutdownPreparation(s *loopState, m *maintenanceState)
 			continue
 		}
 		if c.retirementOriginal(s, p) == nil {
-			return fmt.Errorf("%w: original workspace handoff route differs", ErrUnavailable)
+			return false, fmt.Errorf("%w: original workspace handoff route differs", ErrUnavailable)
 		}
 		intent, err := workspaceLocalIntent(*p.cleanup)
 		if err != nil {
-			return err
+			return false, err
 		}
 		if m.serial == ^uint64(0) {
-			return ErrUnavailable
+			return false, ErrUnavailable
 		}
 		owner, err := c.tryArtifactIO()
 		if err != nil {
 			p.err = err
 			p.retirement.due = now.Add(time.Second)
 			if errors.Is(err, ErrArtifactBusy) {
-				return nil
+				return false, nil
 			}
-			return fmt.Errorf("%w: pre-Stop original handoff admission: %w", ErrUnavailable, err)
+			return false, fmt.Errorf("%w: pre-Stop original handoff admission: %w", ErrUnavailable, err)
 		}
 		request := maintenanceRequest{sequence: m.serial + 1, workspaceRetirement: &workspaceRetirementRequest{original: p, control: c, backend: c.workspace.backend, work: *p.cleanup, intent: intent, owner: owner, step: workspaceRetirementHandoff}}
 		m.serial = request.sequence
 		m.pending = &request
 		m.input <- request
-		return nil
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
 // After actual preparation the original loop performs only physical Close for

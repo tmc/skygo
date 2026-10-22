@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/store"
@@ -19,17 +20,24 @@ const (
 	observeOperation
 	workspaceCommitOperation
 	workspacePrepareOperation
+	dataStartOperation
+	dataObserveOperation
+	dataRemoveOperation
+	workflowCheckOperation
 )
 
 type operation struct {
+	data         *dataRequest
 	kind         operationKind
 	job          backend.Job
 	output       *backend.OutputReference
 	workspace    *workspaceStart
 	prepareOwner *artifactIO
 	intent       *local.WorkspaceRootIntent
+	workflow     *workflowCheck
 }
 type operationResult struct {
+	data       *dataResult
 	operation  operation
 	status     backend.Status
 	err        error
@@ -38,23 +46,29 @@ type operationResult struct {
 	prepared   *workspacePrepared
 }
 type targetWorker struct {
-	target        backend.Target
-	input         chan operation
-	pending       *operation
-	after         uint64
-	bindOutput    func(backend.OutputReference) error
-	completion    *workspacePending
-	done          chan struct{}
-	received      *receivedOperation
-	shutdownStart *receivedOperation // original possible canceled-before-parent pair
+	dataCompletion *remotePending
+	target         backend.Target
+	input          chan operation
+	pending        *operation
+	after          uint64
+	bindOutput     func(backend.OutputReference) error
+	completion     *workspacePending
+	done           chan struct{}
+	received       *receivedOperation
+	shutdownStart  *receivedOperation // original possible canceled-before-parent pair
 }
 type loopState struct {
+	dataAfter           string
 	workers             []targetWorker
 	results             chan operationResult
 	nextTarget          int
 	due                 map[string]time.Time
 	unmatched           *operationResult
 	preparing, prepared bool
+	workflows           []*workflowCheck
+	workflowHeld        map[workflowHold]time.Time
+	workflowDue         time.Time
+	workflowPoll        func() ([]store.WorkflowCandidate, error) // nil polls c.store
 }
 
 // Run reconciles until canceled. It may be called only once per Control,
@@ -158,7 +172,7 @@ func (c *Control) Run(ctx context.Context) (result error) {
 	}
 }
 func (c *Control) newLoop(ctx context.Context) *loopState {
-	s := &loopState{workers: make([]targetWorker, len(c.targets)), results: make(chan operationResult, len(c.targets)), due: make(map[string]time.Time)}
+	s := &loopState{workers: make([]targetWorker, len(c.targets)), results: make(chan operationResult, len(c.targets)), due: make(map[string]time.Time), workflowHeld: make(map[workflowHold]time.Time)}
 	for i, t := range c.targets {
 		s.workers[i] = targetWorker{target: t, input: make(chan operation, 1), done: make(chan struct{})}
 		if t.Name == c.retention.local.Target && t.Binding == c.retention.local.Binding && t.OutputStorage == backend.LocalOutput {
@@ -186,6 +200,24 @@ func runWorkerWithOutput(ctx context.Context, b backend.Backend, bind func(backe
 func runWorkspaceWorker(ctx context.Context, b backend.Backend, bind func(backend.OutputReference) error, workspace *workspaceTarget, input <-chan operation, results chan<- operationResult) {
 	for op := range input {
 		result := operationResult{operation: op}
+		if op.kind == dataStartOperation || op.kind == dataObserveOperation || op.kind == dataRemoveOperation {
+			results <- runDataOperation(ctx, op)
+			continue
+		}
+		if op.kind == workflowCheckOperation {
+			if op.workflow == nil || op.data != nil {
+				result.err = ErrInvalid
+			} else if result.err = ctx.Err(); result.err == nil {
+				result.err = b.Check(cloneTask(op.workflow.task))
+			}
+			results <- result
+			continue
+		}
+		if op.data != nil {
+			result.err = ErrInvalid
+			results <- result
+			continue
+		}
 		if ctx.Err() != nil {
 			if op.workspace != nil {
 				op.workspace.owner.finish(nil)
@@ -292,11 +324,17 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 			i = len(s.workers)
 		}
 	}
+	if err := c.advanceData(ctx, s); err != nil {
+		return err
+	}
 	if err := c.advanceWorkspaces(ctx, s); err != nil {
 		return err
 	}
 	if s.preparing {
 		return c.scheduleShutdownLocal(ctx, s)
+	}
+	if err := c.advanceWorkflows(ctx, s); err != nil {
+		return err
 	}
 	jobs, err := c.store.Active()
 	if err != nil {
@@ -340,6 +378,37 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 		if err != nil {
 			return err
 		}
+		row, remote, err := c.remoteRoute(j)
+		if err != nil {
+			return err
+		}
+		if remote {
+			var authErr error
+			if needsStart(j) && !j.CancelRequested {
+				authErr = c.engine.CheckDelegation(row.Authority)
+			}
+			if errors.Is(authErr, auth.ErrUnavailable) {
+				if row.State != 3 {
+					continue // Unknown authority neither starts nor cancels queued work.
+				}
+				authErr = nil // State3 removal is cleanup-only; dispatch starts nothing.
+			}
+			if needsStart(j) && (j.CancelRequested || authErr != nil) {
+				if j.CancelRequested {
+					_, _, err = c.store.BeginRemoteAttempt(j.ID, j.CurrentAttemptID(), store.RemoteHashes{}, row.Policy, now.UTC())
+				} else {
+					err = c.cancelQueuedData(j, row, now.UTC())
+				}
+				if err != nil {
+					return err
+				}
+				continue
+			}
+			if !j.Status.State.Terminal() {
+				eligible[j.Target] = append(eligible[j.Target], j)
+			}
+			continue
+		}
 		if j.Status.State.Terminal() {
 			continue
 		}
@@ -382,7 +451,7 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 		}
 		i := (begin + n) % len(s.workers)
 		w := &s.workers[i]
-		if w.pending != nil || w.completion != nil && !w.completion.acked {
+		if w.pending != nil || w.dataCompletion != nil || w.completion != nil && !w.completion.acked {
 			continue
 		}
 		candidates := eligible[w.target.Name]
@@ -401,6 +470,24 @@ func (c *Control) schedule(ctx context.Context, s *loopState) error {
 				return err
 			}
 			j = current
+			row, remote, err := c.remoteRoute(j)
+			if err != nil {
+				return err
+			}
+			if remote {
+				dispatched, err := c.dispatchData(ctx, s, w, j, row, now.UTC())
+				if err != nil {
+					return err
+				}
+				if dispatched {
+					if w.pending != nil && w.pending.kind == dataStartOperation {
+						active++
+					}
+					s.nextTarget = (i + 1) % len(s.workers)
+					break
+				}
+				continue
+			}
 			if j.Task.Workdir != nil && w.completion != nil {
 				continue
 			}
@@ -536,6 +623,12 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 	}
 	if worker == nil || worker.pending == nil || worker.pending.kind != r.operation.kind || !sameExecution(worker.pending.job, r.operation.job) {
 		return nil
+	}
+	if r.operation.kind == dataStartOperation || r.operation.kind == dataObserveOperation || r.operation.kind == dataRemoveOperation {
+		return c.integrateData(s, worker, r)
+	}
+	if r.operation.data != nil || r.data != nil {
+		return ErrUnavailable
 	}
 	if c.ownedLocalJob(r.operation.job) && r.operation.kind == startOperation && r.operation.workspace != nil && !r.notStarted && worker.received != nil && (errors.Is(r.err, context.Canceled) || errors.Is(r.err, context.DeadlineExceeded)) {
 		worker.shutdownStart = worker.received

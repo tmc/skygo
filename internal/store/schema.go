@@ -1,7 +1,6 @@
 package store
 
 import (
-	"bytes"
 	"encoding/binary"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 6
+const schemaVersion = 8
 
 var schemaKey = []byte("schema_version")
 
@@ -22,6 +21,18 @@ var ErrUnsupportedSchema = errors.New("unsupported database schema")
 // inspect checks the refusal fence before inspecting any records. An empty
 // database is initialized by Open; a partly missing layout is corruption.
 func inspect(tx *bolt.Tx) error {
+	m := tx.Bucket(metadataBucket)
+	if m != nil {
+		if v := m.Get(schemaKey); v != nil {
+			if len(v) != 8 {
+				return errors.New("invalid database schema marker")
+			}
+			n := binary.BigEndian.Uint64(v)
+			if n != 1 && n != 2 && n != 3 && n != 4 && n != 5 && n != 6 && n != 7 && n != schemaVersion {
+				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
+			}
+		}
+	}
 	// Fence before decoding ANY artifact or accepted job record. Schema5
 	// never promised this root, even if the rows happen to look familiar.
 	if schemaNumber(tx) <= 5 && tx.Bucket(artifactsBucket) != nil {
@@ -30,17 +41,8 @@ func inspect(tx *bolt.Tx) error {
 	if schemaNumber(tx) < 5 && retentionRoot(tx) != nil {
 		return errors.New("retention metadata requires schema 5")
 	}
-	m := tx.Bucket(metadataBucket)
-	if m != nil {
-		if v := m.Get(schemaKey); v != nil {
-			if len(v) != 8 {
-				return errors.New("invalid database schema marker")
-			}
-			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != 2 && n != 3 && n != 4 && n != 5 && n != schemaVersion {
-				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
-			}
-		}
+	if schemaNumber(tx) < 8 && tx.Bucket(workflowsBucket) != nil {
+		return errors.New("workflow metadata requires schema 8")
 	}
 	count := 0
 	for _, name := range [][]byte{jobsBucket, requestsBucket, sequenceBucket, metadataBucket} {
@@ -129,12 +131,21 @@ func initialize(tx *bolt.Tx, owner string) error {
 	if err := initializeRetention(tx); err != nil {
 		return err
 	}
-	if schemaNumber(tx) == 5 {
+	if schemaNumber(tx) == 6 {
+		if err := migrateRemoteFence(tx); err != nil {
+			return err
+		}
+	} else if schemaNumber(tx) == 5 {
 		if err := migrateArtifactFence(tx); err != nil {
 			return err
 		}
-	} else if !bytes.Equal(m.Get(schemaKey), sequenceKey(schemaVersion)) {
-		if err := m.Put(schemaKey, sequenceKey(schemaVersion)); err != nil {
+	} else if n := schemaNumber(tx); n != 7 && n != schemaVersion {
+		if err := m.Put(schemaKey, sequenceKey(7)); err != nil {
+			return err
+		}
+	}
+	if schemaNumber(tx) == 7 {
+		if err := migrateWorkflowFence(tx); err != nil {
 			return err
 		}
 	}
@@ -150,6 +161,74 @@ func migrateArtifactFence(tx *bolt.Tx) error {
 	}
 	if err := validateRetention(tx); err != nil {
 		return err
+	}
+	return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(7))
+}
+
+// migrateRemoteFence validates the complete old installation before changing
+// either marker or adding the remote table. The caller owns the transaction.
+func migrateRemoteFence(tx *bolt.Tx) error {
+	if schemaNumber(tx) != 6 {
+		return ErrArtifactConflict
+	}
+	if err := validateSnapshot(tx); err != nil {
+		return err
+	}
+	if b := tx.Bucket(artifactsBucket); b != nil {
+		var root artifactRoot
+		if err := artifactDecode(b.Get([]byte("state")), &root); err != nil {
+			return err
+		}
+		if root.SchemaFloor != 6 || b.Bucket([]byte("remote_attempts")) != nil {
+			return artifactCorrupt()
+		}
+		if _, err := b.CreateBucket([]byte("remote_attempts")); err != nil {
+			return err
+		}
+		root.SchemaFloor = 7
+		raw, err := json.Marshal(root)
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte("state"), raw); err != nil {
+			return err
+		}
+	}
+	return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(7))
+}
+
+// migrateWorkflowFence validates the genuine schema7 installation before
+// installing the empty workflow bucket and, with installed artifacts, the
+// empty input table and root floor8. The caller owns the transaction.
+func migrateWorkflowFence(tx *bolt.Tx) error {
+	if schemaNumber(tx) != 7 || tx.Bucket(workflowsBucket) != nil {
+		return ErrArtifactConflict
+	}
+	if err := validateSnapshot(tx); err != nil {
+		return err
+	}
+	if _, err := tx.CreateBucket(workflowsBucket); err != nil {
+		return err
+	}
+	if b := tx.Bucket(artifactsBucket); b != nil {
+		var root artifactRoot
+		if err := artifactDecode(b.Get([]byte("state")), &root); err != nil {
+			return err
+		}
+		if root.SchemaFloor != 7 || b.Bucket([]byte("workflow_inputs")) != nil {
+			return artifactCorrupt()
+		}
+		if _, err := b.CreateBucket([]byte("workflow_inputs")); err != nil {
+			return err
+		}
+		root.SchemaFloor = schemaVersion
+		raw, err := json.Marshal(root)
+		if err != nil {
+			return err
+		}
+		if err := b.Put([]byte("state"), raw); err != nil {
+			return err
+		}
 	}
 	return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion))
 }
@@ -216,12 +295,15 @@ func validateSnapshot(tx *bolt.Tx) error {
 			return err
 		}
 	}
+	var art *artifactState
 	if tx.Bucket(artifactsBucket) != nil {
-		st, err := artifactLoad(tx)
-		if err != nil {
+		var err error
+		if art, err = artifactLoad(tx); err != nil {
 			return err
 		}
-		return artifactValidateTaskRows(tx, st)
 	}
-	return artifactValidateTaskRows(tx, nil)
+	if err := artifactValidateTaskRows(tx, art); err != nil {
+		return err
+	}
+	return validateWorkflows(tx, art)
 }

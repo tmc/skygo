@@ -91,7 +91,7 @@ users:
 }
 
 func ExampleFromTarget() {
-	_, err := FromTarget(TargetConfig{Name: "training", Namespace: "workloads"}, "example")
+	_, err := FromTarget(context.Background(), TargetConfig{Name: "training", Namespace: "workloads"}, "example")
 	// A named target never guesses a default kubeconfig or context.
 	fmt.Println(err)
 	// Output: target requires kubeconfig and context or explicit in_cluster

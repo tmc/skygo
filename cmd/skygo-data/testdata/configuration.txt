@@ -1,0 +1,36 @@
+# Invalid/missing configuration returns only its fixed public category.
+# This script installs no token file and is not a token-I/O oracle. Markers
+# stand for sensitive input and must never reach diagnostics.
+env SKYGO_DATA_ORIGIN=
+env SKYGO_DATA_CA_PEM=
+env SKYGO_DATA_HELPER_SHA256=
+env SKYGO_DATA_INPUT_ID=
+env SKYGO_DATA_INPUT_SHA256=
+env SKYGO_DATA_INPUT_SIZE=
+
+! skygo-data stage
+stderr '^skygo-data: invalid configuration\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=1\n$'
+
+env SKYGO_DATA_ORIGIN=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_CA_PEM=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_HELPER_SHA256=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_INPUT_ID=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_INPUT_SHA256=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_INPUT_SIZE=DO_NOT_PRINT_HELPER_SECRET
+
+! skygo-data stage
+stderr '^skygo-data: invalid configuration\n$'
+! stdout .
+! stderr DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=1\n$'
+
+! skygo-data collect -- out
+stderr '^skygo-data: invalid configuration\n$'
+! stdout .
+! stderr DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=1\n$'

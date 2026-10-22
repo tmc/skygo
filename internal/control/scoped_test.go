@@ -28,7 +28,11 @@ type scopedControl struct {
 func newScopedControl(t *testing.T) scopedControl {
 	t.Helper()
 	s := openStore(t)
+	// The credential parent must be private; TempDir follows the umask.
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	config := filepath.Join(dir, "auth.json")
 	initial := filepath.Join(dir, "legacy.token")
 	if _, err := auth.Initialize(config, initial, s.Owner()); err != nil {

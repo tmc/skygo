@@ -1,0 +1,37 @@
+# Old protocol behavior, not a predecessor binary or Store compatibility test.
+data-peer unimplemented
+! skygo run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id old-1
+stderr 'unimplemented'
+calls SubmitDataJob 1
+! skygo run --remote-data -f mounts.yaml --request-id old-1
+stderr 'unimplemented|remote-data'
+calls SubmitDataJob 1
+# A discovered endpoint that lacks SubmitDataJob also has no legacy fallback.
+data-peer submit-unimplemented
+! skygo run --remote-data -f mounts.yaml --request-id new-1
+stderr 'unimplemented'
+calls SubmitDataJob 2
+data-peer unimplemented
+skygo --json run -f plain.yaml --request-id ordinary-1
+stdout 'JOB_STATE_QUEUED'
+calls SubmitJob 1
+calls SubmitWorkspaceJob 0
+calls SubmitRetainedJob 0
+calls SubmitRetryJob 0
+calls BeginArtifactUpload 0
+
+-- mounts.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- plain.yaml --
+argv: [echo, hello]
+target: local

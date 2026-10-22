@@ -67,6 +67,8 @@ type retainedJob struct {
 	Started              bool                  `json:"started"`
 	OutputStart          uint32                `json:"output_start"`
 	Ordinal              uint64                `json:"ordinal"`
+	WorkflowID           string                `json:"workflow_id,omitempty"`
+	Node                 uint8                 `json:"node,omitempty"`
 }
 type requestRecord struct {
 	Principal       string        `json:"principal"`
@@ -77,6 +79,8 @@ type requestRecord struct {
 	TaskDigest      [32]byte      `json:"task_digest"`
 	Expired         bool          `json:"expired"`
 	LegacyBytes     uint64        `json:"legacy_bytes"`
+	WorkflowID      string        `json:"workflow_id,omitempty"`
+	GraphDigest     string        `json:"graph_digest,omitempty"`
 }
 type outputReservation struct {
 	JobID      string `json:"job_id"`

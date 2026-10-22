@@ -111,6 +111,9 @@ func lookupRecord(tx *bolt.Tx, actor auth.Actor, d RequestDomain, id string, t b
 	if r.Principal != actor.Principal() || r.Domain != d || r.requestID() != id {
 		return j, true, errors.New("request identity hash collision")
 	}
+	if r.WorkflowID != "" {
+		return j, true, ErrConflict
+	}
 	digest, e := taskDigest(t)
 	if e != nil {
 		return j, true, e
@@ -205,14 +208,14 @@ func trackLegacyAccepted(tx *bolt.Tx, j backend.Job, principal, id string) error
 	return trackJob(tx, j, retainedJob{Principal: principal, LegacyRequestID: []byte(id), Legacy: true}, r)
 }
 func (s *Store) SubmitRetained(actor auth.Actor, d RequestDomain, id string, t backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64) (j backend.Job, err error) {
-	return s.submitRetained(actor, d, id, t, target, binding, storage, reserve, false)
+	return s.submitRetained(actor, d, id, t, target, binding, storage, reserve, submissionOrdinary, nil)
 }
 
-func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64, workspace bool) (j backend.Job, err error) {
+func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t backend.Task, target, binding string, storage backend.OutputStorage, reserve uint64, kind submissionKind, remote *remoteSubmission) (j backend.Job, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
 		return
 	}
-	if err = validateSubmitWorkspace(t, workspace); err != nil {
+	if err = validateSubmitWorkspace(t, kind); err != nil {
 		return
 	}
 	if !validRetainedRequestID(id) {
@@ -236,7 +239,7 @@ func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t b
 	var result error
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		var core *artifactCoreLedger
-		if workspace {
+		if kind != submissionOrdinary {
 			core = artifactAcceptLedger(tx, identity, actor.Principal(), id, d, false)
 		}
 		st, r, e := gateDomain(tx, d, s.now())
@@ -262,7 +265,12 @@ func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t b
 			}
 		}
 		accept := func(art *artifactState) error {
-			if art != nil {
+			if kind == submissionRemote {
+				if e := remote.validate(actor.Principal(), t); e != nil {
+					return e
+				}
+			}
+			if art != nil && t.Workdir != nil {
 				ref, e := artifactTaskRef(t)
 				if e != nil {
 					return e
@@ -287,54 +295,11 @@ func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t b
 			if len(data) > 256<<10 {
 				return errors.New("task exceeds limit")
 			}
-			jobs, seq := tx.Bucket(jobsBucket), tx.Bucket(sequenceBucket)
-			if jobs.Get([]byte(identity)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(identity)) != nil {
-				return errors.New("random job identity collision")
-			}
-			if seq.Sequence() == math.MaxUint64 {
-				return errors.New("acceptance sequence exhausted")
-			}
-			n, e := seq.NextSequence()
-			if e != nil {
-				return e
-			}
 			now := s.now()
-			j = backend.Job{ID: identity, Task: t, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
-			if e = acceptAttempts(tx, &j); e != nil {
-				return e
+			if remote != nil {
+				now = remote.now
 			}
-			if e = putJSON(jobs, []byte(j.ID), j); e != nil {
-				return e
-			}
-			if e = seq.Put(sequenceKey(n), []byte(j.ID)); e != nil {
-				return e
-			}
-			if isScoped(tx) {
-				if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(j.ID), []byte(actor.Principal())); e != nil {
-					return e
-				}
-				index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(actor.Principal()))
-				if e != nil {
-					return e
-				}
-				if index.Sequence() == math.MaxUint64 {
-					return errors.New("scope sequence exhausted")
-				}
-				ord, e := index.NextSequence()
-				if e != nil {
-					return e
-				}
-				if e = index.Put(sequenceKey(ord), []byte(j.ID)); e != nil {
-					return e
-				}
-			}
-			m := tx.Bucket(metadataBucket)
-			used := binary.BigEndian.Uint64(m.Get(taskBytesKey))
-			next, e := addChecked(used, uint64(len(data)))
-			if e != nil {
-				return e
-			}
-			if e = m.Put(taskBytesKey, sequenceKey(next)); e != nil {
+			if j, e = acceptJobRow(tx, identity, actor.Principal(), t, target, binding, now); e != nil {
 				return e
 			}
 			digest, e := taskDigest(t)
@@ -344,16 +309,21 @@ func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t b
 			if e := trackJob(tx, j, retainedJob{Principal: actor.Principal(), Domain: d, RequestID: id, Storage: storage, OutputReserve: reserve}, requestRecord{Principal: actor.Principal(), Domain: d, RequestID: id, JobID: j.ID, TaskDigest: digest}); e != nil {
 				return e
 			}
-			if art != nil {
+			if art != nil && t.Workdir != nil {
 				ref, e := artifactTaskRef(t)
 				if e != nil {
 					return e
 				}
-				return artifactAcceptInput(tx, art, actor.Principal(), j.ID, ref, now)
+				if e := artifactAcceptInput(tx, art, actor.Principal(), j.ID, ref, now); e != nil {
+					return e
+				}
+			}
+			if kind == submissionRemote {
+				return remoteAccept(art, j.ID, actor.Principal(), remote)
 			}
 			return nil
 		}
-		if workspace {
+		if kind != submissionOrdinary {
 			_, e := artifactCoreChange(tx, core, maxChangeBytes, 100, accept)
 			return e
 		}
@@ -363,6 +333,62 @@ func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t b
 		err = result
 	}
 	return
+}
+
+// acceptJobRow writes a new queued job's canonical, sequence and scope rows
+// and charges its task bytes to the core counter.
+func acceptJobRow(tx *bolt.Tx, identity, principal string, t backend.Task, target, binding string, now time.Time) (j backend.Job, err error) {
+	data, e := backend.TaskBytes(t)
+	if e != nil {
+		return j, e
+	}
+	jobs, seq := tx.Bucket(jobsBucket), tx.Bucket(sequenceBucket)
+	if jobs.Get([]byte(identity)) != nil || tx.Bucket(attemptJobsBucket).Get([]byte(identity)) != nil {
+		return j, errors.New("random job identity collision")
+	}
+	if seq.Sequence() == math.MaxUint64 {
+		return j, errors.New("acceptance sequence exhausted")
+	}
+	n, e := seq.NextSequence()
+	if e != nil {
+		return j, e
+	}
+	j = backend.Job{ID: identity, Task: t, Target: target, TargetBinding: binding, Status: backend.Status{State: backend.Queued}, CreatedAt: now, UpdatedAt: now, Sequence: n}
+	if e = acceptAttempts(tx, &j); e != nil {
+		return j, e
+	}
+	if e = putJSON(jobs, []byte(j.ID), j); e != nil {
+		return j, e
+	}
+	if e = seq.Put(sequenceKey(n), []byte(j.ID)); e != nil {
+		return j, e
+	}
+	if isScoped(tx) {
+		if e = tx.Bucket(jobPrincipalsBucket).Put([]byte(j.ID), []byte(principal)); e != nil {
+			return j, e
+		}
+		index, e := tx.Bucket(principalIndexBucket).CreateBucketIfNotExists([]byte(principal))
+		if e != nil {
+			return j, e
+		}
+		if index.Sequence() == math.MaxUint64 {
+			return j, errors.New("scope sequence exhausted")
+		}
+		ord, e := index.NextSequence()
+		if e != nil {
+			return j, e
+		}
+		if e = index.Put(sequenceKey(ord), []byte(j.ID)); e != nil {
+			return j, e
+		}
+	}
+	m := tx.Bucket(metadataBucket)
+	used := binary.BigEndian.Uint64(m.Get(taskBytesKey))
+	next, e := addChecked(used, uint64(len(data)))
+	if e != nil {
+		return j, e
+	}
+	return j, m.Put(taskBytesKey, sequenceKey(next))
 }
 
 // MaintainRetention advances irreversible phases and performs one bounded

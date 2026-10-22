@@ -7,6 +7,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/store"
 )
 
@@ -29,9 +30,9 @@ func (c *Control) dispatchArtifactExpiry(m *maintenanceState, now time.Time) (bo
 	if closing {
 		return false, nil
 	}
-	families := uint8(2)
+	families := uint8(3)
 	if c.recoverStoppedReaders {
-		families = 3
+		families = 4
 	}
 	first := m.expiryFamily % families
 	m.expiryFamily = (first + 1) % families
@@ -44,6 +45,8 @@ func (c *Control) dispatchArtifactExpiry(m *maintenanceState, now time.Time) (bo
 		case 1:
 			admitted, err = c.dispatchExpiredDownload(m, now)
 		case 2:
+			admitted, err = c.dispatchRemoteInputFinish(m, now)
+		case 3:
 			admitted, err = c.dispatchArtifactReaderRecovery(m)
 		}
 		if err != nil || admitted {
@@ -98,7 +101,7 @@ func (c *Control) nextExpiredDownload(after string, now time.Time) *ArtifactDown
 	defer s.mu.Unlock()
 	var choices []*ArtifactDownload
 	for d := range s.downloads {
-		if d.lease.ID != "" && !d.lease.ExpiresAt.IsZero() && !now.Before(d.lease.ExpiresAt) && !d.finished && !d.settling {
+		if (d.remote == nil || d.remote.call == nil && d.remote.finish == nil) && d.lease.ID != "" && !d.lease.ExpiresAt.IsZero() && !now.Before(d.lease.ExpiresAt) && !d.finished && !d.settling {
 			choices = append(choices, d)
 		}
 	}
@@ -181,14 +184,15 @@ func (c *Control) dispatchExpiredDownload(m *maintenanceState, now time.Time) (b
 func artifactDownloadCloseShape(r maintenanceRequest) bool {
 	frame, t := r.downloadClose, r.target
 	return frame != nil && frame.download != nil && frame.download.control != nil &&
-		frame.download.control.artifacts != nil && r.closeOwner != nil &&
-		r.closeOwner.service == frame.download.control.artifacts && r.sequence != 0 &&
+		frame.download.control.artifacts != nil &&
+		(frame.remote == nil && r.closeOwner != nil && r.closeOwner.service == frame.download.control.artifacts ||
+			frame.remote != nil && r.closeOwner == nil && frame.remote.call != nil && frame.remote.call.service == frame.download.control.artifacts && frame.remote.close == frame && frame.remote.download == frame.download) && r.sequence != 0 &&
 		frame.closure.LeaseID != "" && frame.closure.Revision != 0 &&
 		(frame.reader != nil && !frame.neverOpened || frame.reader == nil && frame.neverOpened) &&
 		r.readerRecovery == nil && r.artifactDelete == nil && r.workspaceRetirement == nil && r.physicalOwner == nil && !r.physicalClose &&
 		r.record == nil && r.directory == "" && r.usage == nil && r.reusable == 0 && r.reservedBytes == 0 && r.reservedFiles == 0 &&
 		t.Name == "" && t.Backend == nil && t.Kind == "" && t.Binding == "" && t.Advice == nil && t.Labels == nil && t.AcceleratorNames == nil &&
-		!t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.OutputStorage == 0 && t.OutputReservation == 0
+		!t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.DataPolicy == nil && !t.SupportsRemoteData && !t.SupportsDataMounts && !t.SupportsRemoteDataRetry && t.OutputStorage == 0 && t.OutputReservation == 0
 }
 
 // Called under service.mu, including before entry and before Store Finish.
@@ -215,8 +219,13 @@ func runArtifactDownloadClose(ctx context.Context, r maintenanceRequest) (*artif
 	frame := r.downloadClose
 	s := frame.download.control.artifacts
 	s.mu.Lock()
-	_, owned := s.workspaceIO[r.closeOwner]
-	valid := owned && !r.closeOwner.finished && frame.originalLocked() && !frame.download.uncertain
+	valid := frame.originalLocked() && !frame.download.uncertain
+	if frame.remote == nil {
+		_, owned := s.workspaceIO[r.closeOwner]
+		valid = valid && owned && !r.closeOwner.finished
+	} else {
+		valid = valid && frame.remoteOriginalLocked()
+	}
 	s.mu.Unlock()
 	err := ctx.Err()
 	if err == nil && !valid {
@@ -244,6 +253,12 @@ func (c *Control) integrateArtifactDownloadClose(m *maintenanceState, r maintena
 		// unused claim. Neither durable Finish nor map removal occurs here.
 		if r.downloadClose != nil && !r.downloadClose.invoked && errors.Is(r.err, context.Canceled) {
 			frame.release()
+			if frame.remote != nil {
+				s := c.artifacts
+				s.mu.Lock()
+				frame.remote.close = nil
+				s.mu.Unlock()
+			}
 			m.pending = nil
 			return nil
 		}
@@ -255,6 +270,9 @@ func (c *Control) integrateArtifactDownloadClose(m *maintenanceState, r maintena
 	s := c.artifacts
 	s.mu.Lock()
 	valid := frame.originalLocked() && !frame.download.uncertain
+	if frame.remote != nil {
+		valid = valid && frame.remoteOriginalLocked()
+	}
 	s.mu.Unlock()
 	if !valid {
 		return fmt.Errorf("%w: download close original changed", ErrUnavailable)
@@ -262,9 +280,33 @@ func (c *Control) integrateArtifactDownloadClose(m *maintenanceState, r maintena
 	// A positive Close is retained in BOTH original slots until exact Finish.
 	// ErrNotFound, timeout and transaction ambiguity never become credit.
 	if err := frame.finish(); err != nil {
-		return err
+		if frame.remote == nil || !errors.Is(err, auth.ErrUnavailable) {
+			return err
+		}
+		// Unknown authority keeps the SAME invoked frame and all its custody;
+		// dispatchRemoteInputFinish retries only its Finish.
+		s.mu.Lock()
+		frame.remote.held = true
+		s.mu.Unlock()
+		m.pending = nil
+		return nil
 	}
 	frame.release()
 	m.pending = nil
 	return nil
+}
+
+// Called under the original service lock. The retained common-four call is the
+// remote close owner; an ordinary artifactIO must not coexist with it.
+func (frame *artifactDownloadClose) remoteOriginalLocked() bool {
+	f := frame.remote
+	if f == nil || f.close != frame || f.download != frame.download || f.call == nil {
+		return false
+	}
+	d := frame.download
+	s := d.control.artifacts
+	p := f.call.worker
+	_, owned := s.calls[f.call]
+	return owned && f.call.service == s && p != nil && p.call == f.call && p.input == f && p.pending && p.readerUseDetached && f.call.httpDone && !f.call.ioActive && f.call.download == nil &&
+		d.remote != nil && d.remote.call == f.call && d.remote.finish == f && (!f.complete || frame.reader != nil && !frame.neverOpened)
 }

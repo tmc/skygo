@@ -1,17 +1,27 @@
-# Restart loses process ownership; Unknown cannot authorize a retry.
+# Abrupt daemon death loses process ownership; Unknown cannot authorize a retry.
 server start
+custody listen
 retry-task task.json hold 1
 skygo --json run -f task.json --request-id retry-restart
 job-id JOB
 await-file first
-server stop
-! stderr .
+# The test holds the workload's own pidfd before the daemon dies.
+custody acquire
+server crash
 server start
 await-state $JOB unknown
 history unknown
 ! exists second
 ! skygo --json run -f task.json --request-id retry-restart --wait
 stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_UNKNOWN"'
+history unknown
+! exists second
+# The killed daemon cannot stop its surviving workload, and recovery never
+# signals it. Release it and require its pidfd to report exit.
+custody release
+# With the original workload gone, nothing remains that could run attempt two.
+skygo --json jobs get $JOB
 stdout '"state": *"JOB_STATE_UNKNOWN"'
 history unknown
 ! exists second

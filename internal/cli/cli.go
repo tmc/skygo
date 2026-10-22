@@ -95,7 +95,7 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 	srv.Flags().StringVar(&s.AuthFile, "auth-file", "", "Private scoped authentication file")
 	srv.Flags().BoolVar(&s.RecoverStoppedArtifactReaders, "recover-stopped-artifact-readers", false, "Recover stopped readers only when ALL historical producers have no surviving descriptor copy or use and the same-domain kernel is qualified")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
-	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.infoCommand(), o.stateCommand(), o.authCommand(), o.artifactsCommand())
+	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.workflowCommand(), o.dashboardCommand(), o.infoCommand(), o.stateCommand(), o.authCommand(), o.artifactsCommand())
 	targets := &cobra.Command{Use: "targets", Short: "Inspect configured execution targets"}
 	targets.AddCommand(&cobra.Command{Use: "list", Short: "List execution targets", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
@@ -155,7 +155,7 @@ func (o *options) job(w io.Writer, j *skyv1.Job) error {
 
 func (o *options) taskCommand(run bool) *cobra.Command {
 	var file, id, domain string
-	var wait bool
+	var wait, remoteData bool
 	var quote quoteFlags
 	name, short := "plan", "Validate a task and select an eligible target"
 	if run {
@@ -171,6 +171,17 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		if err != nil {
 			return err
 		}
+		if len(task.DataMounts) != 0 && !remoteData {
+			return errors.New("data mounts require --remote-data")
+		}
+		if remoteData {
+			if err := validateDataTask(task); err != nil {
+				return err
+			}
+			if !run && quote.objective != "first-fit" {
+				return errors.New("remote data does not support rate quoting")
+			}
+		}
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
 		defer cancel()
 		client := o.client()
@@ -178,7 +189,15 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 			if quote.objective == "lowest-rate" {
 				return o.quoteTask(ctx, cmd, task, quote)
 			}
-			r, err := o.planTask(ctx, client, task)
+			var r *skyv1.PlanTaskResponse
+			if remoteData {
+				r, err = o.planDataTask(ctx, client, task)
+			} else {
+				r, err = o.planTask(ctx, client, task)
+			}
+			if err == nil && !remoteData && workspaceTask(task) {
+				_, err = o.requireCapabilities(ctx, r.Target, skyv1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1)
+			}
 			if err != nil {
 				return err
 			}
@@ -213,6 +232,7 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		return nil
 	}}
 	c.Flags().StringVarP(&file, "file", "f", "", "Task YAML path, or - for stdin")
+	c.Flags().BoolVar(&remoteData, "remote-data", false, "Use the explicit target's qualified remote data route")
 	if !run {
 		quote.flags(c)
 	}
@@ -333,6 +353,7 @@ type taskFile struct {
 	Workdir          *artifact.Ref        `yaml:"workdir"`
 	Setup            []string             `yaml:"setup"`
 	Outputs          []string             `yaml:"outputs"`
+	DataMounts       []backend.DataMount  `yaml:"data_mounts"`
 }
 
 func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
@@ -374,6 +395,15 @@ func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
 	if err := backend.ValidateWorkspace(backend.Task{Directory: f.Directory, Workdir: f.Workdir, Setup: f.Setup, Outputs: f.Outputs}); err != nil {
 		return nil, fmt.Errorf("workspace: %w", err)
 	}
+	if len(f.DataMounts) != 0 {
+		if err := backend.ValidateDataTask(backend.Task{Directory: f.Directory, Workdir: f.Workdir, Setup: f.Setup, Outputs: f.Outputs, DataMounts: f.DataMounts}, nil); err != nil {
+			return nil, fmt.Errorf("data mounts: %w", err)
+		}
+	}
+	var mounts []*skyv1.DataMount
+	for _, m := range f.DataMounts {
+		mounts = append(mounts, &skyv1.DataMount{Reference: m.Reference, Destination: m.Destination, ReadOnly: m.ReadOnly})
+	}
 	var workdir *skyv1.ArtifactRef
 	if f.Workdir != nil {
 		workdir = &skyv1.ArtifactRef{Id: f.Workdir.ID, Sha256: f.Workdir.SHA256, Size: f.Workdir.Size}
@@ -382,5 +412,5 @@ func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
 	if f.Retry != nil {
 		retry = &skyv1.RetryPolicy{MaxAttempts: f.Retry.MaxAttempts, DelaySeconds: f.Retry.DelaySeconds, ExitCodes: f.Retry.ExitCodes}
 	}
-	return &skyv1.Task{Workdir: workdir, Setup: f.Setup, Outputs: f.Outputs, Retry: retry, Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
+	return &skyv1.Task{DataMounts: mounts, Workdir: workdir, Setup: f.Setup, Outputs: f.Outputs, Retry: retry, Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
 }

@@ -1,0 +1,85 @@
+# Only selected fixed diagnostics are public, never raw argv or environment.
+env SKYGO_DATA_ORIGIN=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_CA_PEM=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_HELPER_SHA256=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_INPUT_ID=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_INPUT_SHA256=DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_INPUT_SIZE=DO_NOT_PRINT_HELPER_SECRET
+
+skygo-data --help
+stdout '^usage: skygo-data stage \| exec -- argv\.\.\. \| collect -- root\.\.\.\n$'
+! stderr .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=0\n$'
+
+! skygo-data
+stderr '^usage: skygo-data stage \| exec -- argv\.\.\. \| collect -- root\.\.\.\n$'
+! stdout .
+! stderr DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data unsupported DO_NOT_PRINT_ARG_SECRET
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+! stderr DO_NOT_PRINT_ARG_SECRET
+! stderr DO_NOT_PRINT_HELPER_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data stage DO_NOT_PRINT_ARG_SECRET
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+! stderr DO_NOT_PRINT_ARG_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data exec
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data exec --
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data exec -- ''
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data exec DO_NOT_PRINT_ARG_SECRET
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+! stderr DO_NOT_PRINT_ARG_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data collect
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data collect --
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data collect DO_NOT_PRINT_ARG_SECRET
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+! stderr DO_NOT_PRINT_ARG_SECRET
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'
+
+! skygo-data collect -- a b c d e f g h i j k l m n o p q
+stderr '^skygo-data: invalid arguments\n$'
+! stdout .
+env SKYGO_DATA_EXIT_CODE
+stdout '^SKYGO_DATA_EXIT_CODE=2\n$'

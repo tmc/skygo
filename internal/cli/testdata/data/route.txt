@@ -1,0 +1,37 @@
+# These generated-handler QUEUED replies prove only the selected wire method.
+skygo --json plan --remote-data -f mounts.yaml
+stdout '"target":"data"'
+skygo --json run --remote-data -f mounts.yaml --request-id route-1
+stdout 'JOB_STATE_QUEUED'
+data-wire 0 route-1 none
+# The syntactically valid Ref is not an uploaded/granted artifact in this peer.
+skygo --json run --remote-data -f workdir.yaml --request-id workdir-1
+stdout 'JOB_STATE_QUEUED'
+calls PlanTask 1
+calls SubmitDataJob 2
+calls SubmitWorkspaceJob 0
+calls SubmitRetainedJob 0
+calls SubmitRetryJob 0
+calls SubmitJob 0
+calls BeginArtifactUpload 0
+calls QuoteTask 0
+
+-- mounts.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- workdir.yaml --
+argv: [echo, hello]
+target: data
+workdir:
+  id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  size: 1024

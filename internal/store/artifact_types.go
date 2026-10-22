@@ -135,17 +135,18 @@ type artifactRoot struct {
 }
 
 type artifactUploadRecord struct {
-	Owner      string
-	Ref        ArtifactRef
-	Revision   uint64
-	State      string
-	Ack        uint64
-	Created    time.Time
-	Expires    time.Time
-	Part       ArtifactFile
-	LastOffset uint64
-	LastSize   uint64
-	LastSHA256 string
+	RemoteAttemptID string `json:",omitempty"`
+	Owner           string
+	Ref             ArtifactRef
+	Revision        uint64
+	State           string
+	Ack             uint64
+	Created         time.Time
+	Expires         time.Time
+	Part            ArtifactFile
+	LastOffset      uint64
+	LastSize        uint64
+	LastSHA256      string
 }
 
 type artifactObject struct {
@@ -172,14 +173,15 @@ type artifactGrant struct {
 }
 
 type artifactRead struct {
-	Owner    string
-	Ref      ArtifactRef
-	Revision uint64
-	Expires  time.Time
-	Closing  bool
-	Closed   bool
-	ClosedAt time.Time
-	Producer *OriginalServerLifetime `json:",omitempty"`
+	RemoteAttemptID string `json:",omitempty"`
+	Owner           string
+	Ref             ArtifactRef
+	Revision        uint64
+	Expires         time.Time
+	Closing         bool
+	Closed          bool
+	ClosedAt        time.Time
+	Producer        *OriginalServerLifetime `json:",omitempty"`
 }
 
 // artifactPin is private and concrete: jobInputs and manualInputs have

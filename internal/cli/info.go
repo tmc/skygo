@@ -33,6 +33,14 @@ func (o *options) infoCommand() *cobra.Command {
 				capability = v1.Capability_CAPABILITY_TARGET_LABELS_V1
 			case "artifact-snapshot-service-v1":
 				capability = v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1
+			case "remote-data-transfer-v1":
+				capability = v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1
+			case "remote-data-v1":
+				capability = v1.Capability_CAPABILITY_REMOTE_DATA_V1
+			case "data-mounts-v1":
+				capability = v1.Capability_CAPABILITY_DATA_MOUNTS_V1
+			case "remote-data-retry-v1":
+				capability = v1.Capability_CAPABILITY_REMOTE_DATA_RETRY_V1
 			case "workdir-snapshot-v1":
 				capability = v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1
 			default:
@@ -54,6 +62,18 @@ func (o *options) infoCommand() *cobra.Command {
 			return err
 		}
 		if target != "" {
+			for _, capability := range required {
+				if capability == v1.Capability_CAPABILITY_REMOTE_DATA_V1 || capability == v1.Capability_CAPABILITY_DATA_MOUNTS_V1 || capability == v1.Capability_CAPABILITY_REMOTE_DATA_RETRY_V1 {
+					for _, t := range info.Targets {
+						if t.Name == target {
+							if err := advertisedDataPolicy(t, 0); err != nil {
+								return err
+							}
+						}
+					}
+					break
+				}
+			}
 			for _, t := range info.Targets {
 				if t.GetName() == target {
 					info = &v1.GetServerInfoResponse{Targets: []*v1.Target{t}, Capabilities: info.Capabilities}
@@ -82,7 +102,17 @@ func (o *options) infoCommand() *cobra.Command {
 			}
 			fmt.Fprintf(w, "%s\t%s\t%s\n", t.GetName(), t.GetKind(), strings.Join(capabilities, ","))
 		}
-		return w.Flush()
+		if err := w.Flush(); err != nil {
+			return err
+		}
+		for _, t := range info.Targets {
+			if p := t.DataPolicy; p != nil {
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "data-policy %s: stage=%d collection=%d default-task=%d max-task=%d shutdown=%d seconds\n", t.Name, p.StageSeconds, p.CollectionSeconds, p.DefaultTaskSeconds, p.MaxTaskSeconds, p.ShutdownSeconds); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	}}
 	cmd.Flags().StringVar(&target, "target", "", "Select one named target")
 	cmd.Flags().StringSliceVar(&names, "require", nil, "Require endpoint snapshot capabilities or existing target capabilities with --target")
@@ -105,6 +135,14 @@ func capabilityName(capability v1.Capability) string {
 		return "artifact-snapshot-service-v1"
 	case v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1:
 		return "workdir-snapshot-v1"
+	case v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1:
+		return "remote-data-transfer-v1"
+	case v1.Capability_CAPABILITY_REMOTE_DATA_V1:
+		return "remote-data-v1"
+	case v1.Capability_CAPABILITY_DATA_MOUNTS_V1:
+		return "data-mounts-v1"
+	case v1.Capability_CAPABILITY_REMOTE_DATA_RETRY_V1:
+		return "remote-data-retry-v1"
 	}
 	return fmt.Sprintf("unknown(%d)", capability)
 }
@@ -117,7 +155,7 @@ func (o *options) requireCapabilities(ctx context.Context, target string, requir
 	}
 	for _, capability := range required {
 		switch capability {
-		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1, v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1:
+		case v1.Capability_CAPABILITY_FINITE_JOBS_V1, v1.Capability_CAPABILITY_RESOURCE_LIMITS_V1, v1.Capability_CAPABILITY_NODE_SELECTOR_V1, v1.Capability_CAPABILITY_TARGET_LABELS_V1, v1.Capability_CAPABILITY_FINITE_JOB_RETRY_V1, v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1, v1.Capability_CAPABILITY_REMOTE_DATA_V1, v1.Capability_CAPABILITY_DATA_MOUNTS_V1, v1.Capability_CAPABILITY_REMOTE_DATA_RETRY_V1:
 		default:
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("unknown required capability %d", capability))
 		}
@@ -128,6 +166,19 @@ func (o *options) requireCapabilities(ctx context.Context, target string, requir
 			return nil, connect.NewError(connect.CodeUnimplemented, errors.New("server does not support capability discovery; legacy task commands remain available"))
 		}
 		return nil, fmt.Errorf("get server capabilities: %w", err)
+	}
+	if r == nil || r.Msg == nil {
+		return nil, errors.New("server returned no capability information")
+	}
+	seen := make(map[string]bool)
+	for _, t := range r.Msg.Targets {
+		if t == nil || t.Name == "" {
+			return nil, errors.New("server returned malformed target information")
+		}
+		if seen[t.Name] {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("server advertised duplicate target %q", t.Name))
+		}
+		seen[t.Name] = true
 	}
 	if target == "" {
 		return r.Msg, nil
@@ -197,7 +248,7 @@ func (o *options) planTask(ctx context.Context, client skyv1connect.ControlServi
 
 // Endpoint facts describe protocol semantics, independently of target placement.
 func endpointCapability(capability v1.Capability) bool {
-	return capability == v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1
+	return capability == v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1 || capability == v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1
 }
 
 func checkEndpointCapabilities(info *v1.GetServerInfoResponse, required ...v1.Capability) error {

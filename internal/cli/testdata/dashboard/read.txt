@@ -1,0 +1,114 @@
+# skygo dashboard serves a read-only view of a real scoped-auth server, logged
+# in with its one-time code. It needs the cli.go dashboardCommand registration.
+# Token files are written here; their parent must be private.
+chmod 0700 .
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+server start
+taskfile success.json success
+skygo --token-file alice.token --json run -f success.json --request-id alice-one --wait
+job-id ALICE
+skygo --token-file alice.token jobs logs $ALICE
+cp stdout alice.log
+
+dashboard start alice.token
+
+# Nothing is readable before login. The code is accepted only from the
+# dashboard's script: a same-origin POST carrying X-Skygo-Login.
+dashboard get /jobs
+stderr '^HTTP 303 /login$'
+dashboard get /login
+stderr '^HTTP 200$'
+stdout '<form id="login" method="post" action="/login">'
+stdout '<script src="/static/app.js" defer></script>'
+dashboard request POST /login origin=http://evil.example body=code=0 login=1
+stderr '^HTTP 403$'
+dashboard request POST /login body=code=0
+stderr '^HTTP 400$'
+stdout 'JavaScript'
+dashboard login
+stderr '^HTTP 200$'
+! stdout .
+dashboard login
+stderr '^HTTP 403$'
+stdout 'no longer valid'
+
+# The cookie alone, as any other local server the browser visits receives
+# it, gets only the static shell: no job data, no log bytes.
+dashboard request GET /jobs proof=
+stderr '^HTTP 200$'
+stdout 'id="view"'
+! stdout $ALICE
+dashboard request GET /jobs/$ALICE/logs.txt proof=
+stderr '^HTTP 200$'
+stdout 'id="view"'
+! stdout 'done'
+dashboard request GET /jobs/$ALICE/logs.txt proof=0000000000000000000000000000000000000000000000000000000000000000
+stderr '^HTTP 401$'
+dashboard request POST /logout proof=
+stderr '^HTTP 403$'
+
+# Reads match the CLI.
+dashboard get /jobs
+stderr '^HTTP 200$'
+stdout $ALICE
+dashboard get /jobs/$ALICE
+stderr '^HTTP 200$'
+stdout '<dt>State</dt><dd>succeeded</dd>'
+stdout '<dt>Retention</dt><dd>disabled</dd>'
+stdout 'SKYGO_COVERAGE_WORKLOAD'
+! stdout $WORK
+dashboard get /jobs/$ALICE/logs.txt
+stderr '^HTTP 200$'
+cmp stdout alice.log
+dashboard get /targets
+stderr '^HTTP 200$'
+stdout 'local'
+dashboard get /info
+stderr '^HTTP 200$'
+
+# Refusals: no mutation routes, exact Host, same-origin POST, no GET body.
+dashboard request POST /jobs/$ALICE/cancel
+stderr '^HTTP 404$'
+dashboard request DELETE /jobs/$ALICE
+stderr '^HTTP 405$'
+dashboard request GET /jobs host=localhost
+stderr '^HTTP 421$'
+dashboard request POST /logout origin=
+stderr '^HTTP 403$'
+dashboard request GET /jobs body=x
+stderr '^HTTP 400$'
+dashboard get /jobs/$ALICE/logs.txt?offset=-1
+stderr '^HTTP 400$'
+
+dashboard request POST /logout
+stderr '^HTTP 303 /login$'
+dashboard get /jobs
+stderr '^HTTP 401$'
+dashboard request GET /jobs proof=
+stderr '^HTTP 303 /login$'
+dashboard stop
+stdout '^dashboard: http://127\.0\.0\.1:[0-9]+/\nlogin code: <code>\n$'
+
+# Stopping the dashboard changed nothing.
+skygo --token-file alice.token --json jobs get $ALICE
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+! stdout '"cancel_requested": *true'
+
+# Another principal sees alice's job exactly as a missing one.
+dashboard start bob.token
+dashboard login
+dashboard get /jobs/$ALICE
+stderr '^HTTP 404$'
+cp stdout foreign.html
+dashboard get /jobs/00000000000000000000000000000000
+stderr '^HTTP 404$'
+cmp stdout foreign.html
+dashboard get /jobs
+! stdout $ALICE
+dashboard stop
+
+server stop

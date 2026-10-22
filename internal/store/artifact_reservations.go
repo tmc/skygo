@@ -28,6 +28,8 @@ type ArtifactReservations struct {
 // ArtifactPhysicalSubject is durable identity context for a bounded census.
 // Kind is upload, object or workspace. File comes ONLY from upload.Part or
 // object.File: zero means UNKNOWN for those kinds, never no physical allocation.
+// NotAttempted identifies only an untouched remote result reservation. It
+// supplies no filename, inode, filesystem absence or cleanup authority.
 // Workspace File is inapplicable. Unmarked workspace Parent/Root/RootState are
 // unknown zeros, not NeverCreated. Only a validated committed workspace GC row
 // supplies Parent/Root/RootState/Candidate identity. Input File is NEVER Root.
@@ -40,6 +42,10 @@ type ArtifactPhysicalSubject struct {
 	RootState     WorkspaceRootState
 	CandidateID   string
 	CandidateFile ArtifactFile
+	// NotAttempted is true only for an untouched remote_result reservation with
+	// its exact active attempt, no upload and no GC intent. A creating upload
+	// with an unknown File is never NotAttempted.
+	NotAttempted bool `json:",omitempty"`
 }
 
 // ArtifactReservations reads one bounded, validated metadata View. It returns
@@ -69,8 +75,23 @@ func (s *Store) ArtifactReservations() (out ArtifactReservations, err error) {
 		for id, u := range st.Uploads {
 			out.Subjects = append(out.Subjects, ArtifactPhysicalSubject{Kind: "upload", ID: id, File: u.Part})
 		}
+		gc := make(map[string]bool, len(st.Deletes))
+		for _, d := range st.Deletes {
+			gc[d.ObjectID] = true
+		}
 		for id, o := range st.Objects {
-			out.Subjects = append(out.Subjects, ArtifactPhysicalSubject{Kind: "object", ID: id, File: o.File})
+			_, upload := st.Uploads[id]
+			r, remote := st.Remote[o.Source]
+			// BeginRemoteOutput persists the creating upload BEFORE the original
+			// Files.CreatePart call. Only the prepaid, untouched alternative can
+			// omit a required observed identity; actual root entries still need
+			// their own exact identity in the sampler's complete projection.
+			notAttempted := o.Origin == "remote_result" && o.State == "reserved" &&
+				o.Ref.ID == id && o.Ref.Size == artifactMaxSize && o.Ref.SHA256 == "" &&
+				o.File == (ArtifactFile{}) && o.Manifest == (ArtifactManifest{}) &&
+				remote && r.State == 2 && r.Active != nil && r.Active.Output != nil && r.Active.ResultID == id &&
+				!upload && !gc[id]
+			out.Subjects = append(out.Subjects, ArtifactPhysicalSubject{Kind: "object", ID: id, File: o.File, NotAttempted: notAttempted})
 		}
 		// artifactLoad has already checked duplicate/orphan/kind relations.
 		// Reuse the concrete validator/work projection for marked root facts;

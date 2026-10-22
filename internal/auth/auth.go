@@ -47,12 +47,14 @@ type Actor struct {
 	principal, tokenID string
 	role               Role
 	digest             [32]byte
+	oidc               *oidcActor // nil unless authenticated by an OIDC ID token
 }
 
 // Principal returns the authenticated principal ID, or empty for a zero Actor.
 func (a Actor) Principal() string { return a.principal }
 
-// TokenID returns a nonsecret credential identifier, or empty in legacy mode.
+// TokenID returns a nonsecret file credential identifier. It is empty when
+// the Actor has no file credential: in legacy mode and for OIDC ID tokens.
 func (a Actor) TokenID() string { return a.tokenID }
 
 // Role returns the role at the Actor's most recent authentication or Check.
@@ -72,6 +74,11 @@ type Engine struct {
 	available          bool
 	changed            chan struct{}
 	now                func() time.Time
+	oidcPath           string                        // empty: no OIDC authentication
+	oidcRead           func() (*oidcSnapshot, error) // reads the OIDC files without e.mu
+	oidc               *oidcSnapshot                 // last published OIDC snapshot
+	oidcAvailable      bool
+	oidcLastRead       time.Time
 }
 
 // NewLegacy creates a single-operator authority. Empty token permits anonymous
@@ -117,6 +124,9 @@ func (e *Engine) Authenticate(header string) (Actor, error) {
 	token := strings.TrimPrefix(header, "Bearer ")
 	id, ok := tokenID(token)
 	if !ok {
+		if e.oidcPath != "" && strings.Count(token, ".") == 2 {
+			return e.authenticateOIDCLocked(token)
+		}
 		return Actor{}, ErrUnauthenticated
 	}
 	digest := tokenHash(token)
@@ -139,7 +149,13 @@ func (e *Engine) Check(actor Actor, action Action) (Actor, error) {
 	if !e.readyLocked() {
 		return Actor{}, ErrUnavailable
 	}
-	if !e.legacy {
+	if actor.oidc != nil {
+		role, err := e.checkOIDCLocked(actor)
+		if err != nil {
+			return Actor{}, err
+		}
+		actor.role = role
+	} else if !e.legacy {
 		found := false
 		for _, t := range e.snapshot.Tokens {
 			if t.ID == actor.tokenID && t.Principal == actor.principal && equalDigest(t.digest, actor.digest) && t.usable(e.now()) {
@@ -178,9 +194,22 @@ func (e *Engine) Changed() <-chan struct{} { e.mu.RLock(); defer e.mu.RUnlock();
 
 // Run refreshes a file authority until cancellation. Invalid snapshots deny
 // requests while the loop keeps attempting recovery. Legacy engines need no Run.
+// With OIDC configured, Run also starts one OIDC reader goroutine, which has
+// at most one OIDC read outstanding. A blocked OIDC read never delays the
+// credential file refresh; it only leaves OIDC unavailable. A file read cannot
+// be cancelled, so after cancellation Run returns only once a pending OIDC
+// read has returned and the reader has stopped.
 func (e *Engine) Run(ctx context.Context) {
 	if e == nil || e.legacy {
 		return
+	}
+	if e.oidcPath != "" {
+		oidcDone := make(chan struct{})
+		go func() {
+			defer close(oidcDone)
+			e.runOIDC(ctx)
+		}()
+		defer func() { <-oidcDone }()
 	}
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
@@ -194,7 +223,11 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
+// refresh reads and publishes the credential file. Freshness dates from the
+// start of the read, so a slow read that returns old bytes cannot renew the
+// window.
 func (e *Engine) refresh() error {
+	start := e.now()
 	c, data, _, err := readConfig(e.path)
 	if err == nil && c.Installation != e.installation {
 		err = ErrInvalid
@@ -208,7 +241,7 @@ func (e *Engine) refresh() error {
 	changed := e.available != (err == nil) || err == nil && e.hash != hash
 	e.available = err == nil
 	if err == nil {
-		e.snapshot, e.hash, e.lastRead = c, hash, e.now()
+		e.snapshot, e.hash, e.lastRead = c, hash, start
 	}
 	if changed {
 		close(e.changed)

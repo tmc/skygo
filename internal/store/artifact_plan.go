@@ -15,6 +15,20 @@ func (s *artifactState) clone() *artifactState {
 		Grants: maps.Clone(s.Grants), Reads: maps.Clone(s.Reads), JobInputs: maps.Clone(s.JobInputs),
 		ManualInputs: maps.Clone(s.ManualInputs), Results: maps.Clone(s.Results), Expired: maps.Clone(s.Expired),
 		Workspaces: maps.Clone(s.Workspaces), Completions: maps.Clone(s.Completions), Deletes: maps.Clone(s.Deletes),
+		Remote: make(map[string]remoteRecord, len(s.Remote)),
+	}
+	for id, r := range s.Remote {
+		out.Remote[id] = remoteClone(r)
+	}
+	if s.WorkflowInputs != nil {
+		out.WorkflowInputs = make(map[string]workflowInput, len(s.WorkflowInputs))
+		for id, in := range s.WorkflowInputs {
+			if in.Ref != nil {
+				ref := *in.Ref
+				in.Ref = &ref
+			}
+			out.WorkflowInputs[id] = in
+		}
 	}
 	for id, r := range out.Reads {
 		r.Producer = artifactCloneProducer(r.Producer)
@@ -52,6 +66,9 @@ func prepareArtifactChange(tx *bolt.Tx, before, after *artifactState, core *rete
 		return out, ErrArtifactConflict
 	}
 	if err := artifactValidateCorePlanned(tx, after, core); err != nil {
+		return out, err
+	}
+	if err := remoteValidateCore(tx, after, core); err != nil {
 		return out, err
 	}
 	oldRows, oldUsage, oldOwners, err := before.encode()

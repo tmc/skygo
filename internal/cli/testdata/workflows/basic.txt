@@ -1,0 +1,154 @@
+# Static workflows through the actual CLI and daemon, Store, Control and local
+# executor. Acceptance captures file authority, so scoped credentials are used.
+private-workdir
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth principal add bob --role operator --auth-file $AUTH
+skygo auth principal add viewer --role reader --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+skygo auth token issue bob --auth-file $AUTH --output bob.token --expires-in 24h
+skygo auth token issue viewer --auth-file $AUTH --output viewer.token --expires-in 24h
+server start
+
+# Discovery positively reports the workflow service.
+skygo --token-file alice.token --json info
+stdout 'CAPABILITY_STATIC_WORKFLOWS_V1'
+
+# b and c need a; join needs b and c. Each workload refuses to start before
+# the nodes it depends on have finished.
+graph-file diamond.tmpl diamond.yaml
+graph-file diamond-graph.tmpl diamond-graph.json
+skygo --token-file alice.token --json workflow run -f diamond.yaml --request-id diamond
+stderr '^request-id: diamond\n$'
+json-field id WF
+await-workflow alice.token $WF join succeeded
+cp stdout done.json
+event-count 4
+same-graph diamond-graph.json done.json
+json-field nodes.0.job_id AJOB
+skygo --token-file alice.token jobs logs $AJOB
+stdout '^node a\n$'
+skygo --token-file alice.token workflow get $WF
+stdout '^'$WF'\tcancel-requested=false\n'
+stdout '(?m)^NODE +DISPOSITION +JOB +STATE$'
+stdout '(?m)^a +pending +'$AJOB' +succeeded$'
+stdout '(?m)^join +pending +[0-9a-f]{32} +succeeded$'
+! stderr .
+
+# A listing has summaries, not graphs.
+skygo --token-file alice.token --json workflow list
+stdout '"id": *"'$WF'"'
+! stdout '"graph"'
+skygo --token-file alice.token workflow list
+stdout '(?m)^ID +CREATED +CANCEL-REQUESTED$'
+stdout '(?m)^'$WF' +\S+ +false$'
+
+# A reader cannot submit, and nothing runs for it.
+! skygo --token-file viewer.token workflow run -f diamond.yaml --request-id viewer
+stderr 'permission_denied'
+calls WorkflowService/SubmitWorkflow 2
+calls job-submissions 0
+event-count 4
+
+# Another operator cannot see or cancel the workflow; an admin can see it.
+! skygo --token-file bob.token workflow get $WF
+stderr '^not_found: '
+! skygo --token-file bob.token workflow cancel $WF --yes
+stderr '^not_found: '
+skygo --token-file bob.token --json workflow list
+! stdout $WF
+skygo --token-file admin.token --json workflow get $WF
+stdout '"id": *"'$WF'"'
+
+# A page token belongs to its owner and to workflow listing.
+graph-file single.tmpl single.yaml
+skygo --token-file alice.token --json workflow run -f single.yaml --request-id single
+json-field id SECOND
+skygo --token-file alice.token --json workflow list --page-size 1
+stdout '"id": *"'$WF'"'
+! stdout $SECOND
+json-field next_page_token PAGE
+skygo --token-file alice.token --json workflow list --page-token $PAGE
+stdout '"id": *"'$SECOND'"'
+! stdout $WF
+! skygo --token-file bob.token workflow list --page-token $PAGE
+stderr '^invalid_argument: '
+! skygo --token-file alice.token workflow list --page-token not-a-cursor
+stderr '^invalid_argument: '
+skygo --token-file alice.token --json jobs list --page-size 1
+json-field next_page_token JOBPAGE
+! skygo --token-file alice.token workflow list --page-token $JOBPAGE
+stderr '^invalid_argument: '
+! skygo --token-file alice.token workflow list --page-size 201
+stderr '^invalid_argument: '
+! skygo --token-file alice.token workflow get not-an-id
+stderr '^invalid_argument: '
+await-workflow alice.token $SECOND only succeeded
+event-count 5
+calls job-submissions 0
+server stop
+! stderr .
+
+-- diamond.tmpl --
+nodes:
+- name: a
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: a}
+- name: b
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: b, SKYGO_WORKFLOW_AFTER: a}
+  depends_on: [a]
+- name: c
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: c, SKYGO_WORKFLOW_AFTER: a}
+  depends_on: [a]
+- name: join
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: join, SKYGO_WORKFLOW_AFTER: "b,c"}
+  depends_on: [b, c]
+-- single.tmpl --
+nodes:
+- name: only
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: only}
+-- diamond-graph.tmpl --
+{
+  "nodes": [
+    {
+      "name": "a",
+      "task": {
+        "argv": ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"],
+        "env": {"SKYGO_WORKFLOW_WORKLOAD": "succeed", "SKYGO_WORKFLOW_DIR": "@DIR@", "SKYGO_WORKFLOW_NODE": "a"}
+      }
+    },
+    {
+      "name": "b",
+      "task": {
+        "argv": ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"],
+        "env": {"SKYGO_WORKFLOW_WORKLOAD": "succeed", "SKYGO_WORKFLOW_DIR": "@DIR@", "SKYGO_WORKFLOW_NODE": "b", "SKYGO_WORKFLOW_AFTER": "a"}
+      },
+      "depends_on": ["a"]
+    },
+    {
+      "name": "c",
+      "task": {
+        "argv": ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"],
+        "env": {"SKYGO_WORKFLOW_WORKLOAD": "succeed", "SKYGO_WORKFLOW_DIR": "@DIR@", "SKYGO_WORKFLOW_NODE": "c", "SKYGO_WORKFLOW_AFTER": "a"}
+      },
+      "depends_on": ["a"]
+    },
+    {
+      "name": "join",
+      "task": {
+        "argv": ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"],
+        "env": {"SKYGO_WORKFLOW_WORKLOAD": "succeed", "SKYGO_WORKFLOW_DIR": "@DIR@", "SKYGO_WORKFLOW_NODE": "join", "SKYGO_WORKFLOW_AFTER": "b,c"}
+      },
+      "depends_on": ["b", "c"]
+    }
+  ]
+}

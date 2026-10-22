@@ -1,4 +1,6 @@
 # Real credential file commands and real scoped control-plane requests.
+# Token outputs and auth files in this workdir need a private parent.
+chmod 0700 .
 skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
 ! stdout 'sky(go)?_[0-9a-f]{32}_'
 ! stderr .

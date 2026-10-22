@@ -21,7 +21,7 @@ func (h *handler) SubmitWorkspaceJob(ctx context.Context, request *connect.Reque
 	if err != nil {
 		return nil, artifactError(err)
 	}
-	if request.Msg == nil || !validTaskUTF8(request.Msg.Task) || !retentionRequestID(request.Msg.RequestId) || request.Msg.Task.Workdir == nil {
+	if request.Msg == nil || !validTaskUTF8(request.Msg.Task) || !retentionRequestID(request.Msg.RequestId) || request.Msg.Task.Workdir == nil || len(request.Msg.Task.DataMounts) != 0 {
 		return nil, artifactError(fmt.Errorf("%w: workspace task and valid request ID required", control.ErrInvalid))
 	}
 	var accepted backend.Job

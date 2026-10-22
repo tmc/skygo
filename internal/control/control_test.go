@@ -416,16 +416,48 @@ func TestActiveExecutionLimit(t *testing.T) {
 		}
 	}
 	answer(call, backend.Succeeded, nil)
-	// Completing one job frees one slot on the next pass.
-	for i := 1; i < 32; i++ {
-		answer(nextObservation(t, e), backend.Running, nil)
+	// Completing one job frees exactly one slot. Observation pacing decides
+	// how many passes precede the reuse, so wait for jobs[32] itself; every
+	// observation before it must be one of the 31 jobs still running.
+	running := map[string]bool{}
+	for _, j := range jobs[1:32] {
+		running[j.ID] = true
 	}
-	for i := 1; i < 32; i++ {
-		answer(nextObservation(t, e), backend.Running, nil)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		call = nextObservation(t, e)
+		if starts := e.starts.Load(); starts > 33 {
+			t.Fatalf("admission exceeded: starts=%d", starts)
+		}
+		active := 0
+		for i, j := range jobs {
+			got, err := c.Get(testActor(), j.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Status.State != backend.Queued && !got.Status.State.Terminal() {
+				active++
+			}
+			if i > 32 && got.Status.State != backend.Queued {
+				t.Fatalf("overflow job: %+v", got)
+			}
+		}
+		if active > 32 {
+			t.Fatalf("%d durable active jobs", active)
+		}
+		if call.id == jobs[32].ID {
+			break
+		}
+		if !running[call.id] {
+			t.Fatalf("foreign observation: %s", call.id)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("slot not reused: starts=%d", e.starts.Load())
+		}
+		answer(call, backend.Running, nil)
 	}
-	call = nextObservation(t, e)
-	if call.id != jobs[32].ID || e.starts.Load() != 33 {
-		t.Fatalf("slot not reused: next=%s starts=%d", call.id, e.starts.Load())
+	if e.starts.Load() != 33 {
+		t.Fatalf("slot not reused: starts=%d", e.starts.Load())
 	}
 	answer(call, backend.Running, nil)
 }

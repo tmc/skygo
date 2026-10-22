@@ -36,6 +36,11 @@ func (s *Store) ArtifactRequiredObjects() (out []ArtifactObjectIdentity, err err
 		for _, r := range st.Results {
 			ids[r.Ref.ID] = true
 		}
+		for _, in := range st.WorkflowInputs {
+			if in.Ref != nil {
+				ids[in.Ref.ID] = true
+			}
+		}
 		var size uint64
 		for id := range ids {
 			o, ok := st.Objects[id]

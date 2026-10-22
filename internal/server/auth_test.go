@@ -22,12 +22,17 @@ func scopedState(t *testing.T) (dir, path, token string) {
 	t.Helper()
 	root := t.TempDir()
 	dir = filepath.Join(root, "state")
-	path = filepath.Join(root, "auth.json")
+	// Auth refuses a group- or other-writable credential parent.
+	private := filepath.Join(root, "auth")
+	if err := os.Mkdir(private, 0700); err != nil {
+		t.Fatal(err)
+	}
+	path = filepath.Join(private, "auth.json")
 	s, err := store.Open(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	output := filepath.Join(root, "admin.token")
+	output := filepath.Join(private, "admin.token")
 	if _, err := auth.Initialize(path, output, s.Owner()); err != nil {
 		t.Fatal(err)
 	}

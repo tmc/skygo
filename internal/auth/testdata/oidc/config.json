@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "installation": "0123456789abcdef0123456789abcdef",
+  "generation": 3,
+  "issuer": "https://issuer.example/dex",
+  "audience": "skygo",
+  "jwks_uri": "https://issuer.example/dex/keys",
+  "ca_file": "issuer-ca.pem",
+  "max_token_lifetime": "1h",
+  "clock_skew": "30s",
+  "identities": [
+    {"subject": "alice-subject", "principal": "alice"},
+    {"subject": "alice-laptop", "principal": "alice"},
+    {"subject": "bob-subject", "principal": "bob"},
+    {"subject": "carol-subject", "principal": "carol"}
+  ]
+}

@@ -1,0 +1,210 @@
+# The CLI refuses every malformed graph before making any request.
+private-workdir
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+server start
+! skygo --token-file alice.token workflow run
+stderr '^graph requires --file\n$'
+! skygo --token-file alice.token workflow run -f cycle.yaml
+stderr '^graph: node "[ab]": dependency cycle\n$'
+! skygo --token-file alice.token workflow run -f missing.yaml
+stderr 'missing dependency "ghost"'
+! skygo --token-file alice.token workflow run -f node-field.yaml
+stderr 'field after not found'
+! skygo --token-file alice.token workflow run -f task-field.yaml
+stderr 'field cmd not found'
+! skygo --token-file alice.token workflow run -f duplicate.yaml
+stderr 'mapping key "name" already defined'
+! skygo --token-file alice.token workflow run -f null-input.yaml
+stderr 'node 1: input must not be null'
+! skygo --token-file alice.token workflow run -f null-node.yaml
+stderr 'node 1 must be a mapping'
+! skygo --token-file alice.token workflow run -f null-task.yaml
+stderr 'node 0: task must not be null'
+! skygo --token-file alice.token workflow run -f no-task.yaml
+stderr 'node 0 requires a task'
+! skygo --token-file alice.token workflow run -f empty-argv.yaml
+stderr 'task argv must not be empty'
+! skygo --token-file alice.token workflow run -f slot.yaml
+stderr 'input slot must be "result"'
+! skygo --token-file alice.token workflow run -f not-dependency.yaml
+stderr 'input node must be a dependency'
+! skygo --token-file alice.token workflow run -f no-outputs.yaml
+stderr 'declares no outputs'
+! skygo --token-file alice.token workflow run -f mount.yaml
+stderr 'data mounts: invalid data mount destination'
+! skygo --token-file alice.token workflow run -f two.yaml
+stderr 'exactly one YAML document'
+! skygo --token-file alice.token workflow run -f alias.yaml
+stderr '^line 3: graph must not use anchors or aliases\n$'
+! skygo --token-file alice.token workflow run -f merge.yaml
+stderr '^line 7: graph must not use merge keys\n$'
+# Data mounts need --remote-data, on input template nodes too. Each graph
+# also has an environment key only the daemon refuses, so if the local check
+# is missing the request fails remotely and the exact stderr line fails.
+! skygo --token-file alice.token workflow run -f consent.yaml
+stderr '^data mounts require --remote-data\n$'
+! skygo --token-file alice.token workflow run -f consent-template.yaml
+stderr '^data mounts require --remote-data\n$'
+calls all 0
+
+# A rule that only the daemon applies is refused before acceptance: no
+# workflow, job or workload exists afterwards.
+! skygo --token-file alice.token workflow run -f environment.yaml --request-id environment
+stderr 'invalid_argument'
+calls WorkflowService/SubmitWorkflow 1
+calls job-submissions 0
+skygo --token-file alice.token --json workflow list
+! stdout '"id"'
+skygo --token-file alice.token --json jobs list
+! stdout '"id"'
+event-count 0
+server stop
+! stderr .
+
+# The exact predecessor daemon does not advertise the workflow service. The
+# CLI submits no workflow and falls back to no job submission.
+old-server start
+! skygo --endpoint $OLD_ENDPOINT --token coverage-token workflow run -f valid.yaml --request-id old
+stderr 'endpoint does not advertise static-workflows-v1|capability discovery'
+old-calls ControlService/GetServerInfo 1
+old-calls all 1
+old-calls WorkflowService/SubmitWorkflow 0
+old-calls job-submissions 0
+event-count 0
+old-server stop
+! stderr .
+
+-- valid.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+-- cycle.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [b]
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [a]
+-- missing.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [ghost]
+-- node-field.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+  after: [b]
+-- task-field.yaml --
+nodes:
+- name: a
+  task: {cmd: [/nonexistent/workload]}
+-- duplicate.yaml --
+nodes:
+- name: a
+  name: b
+  task: {argv: [/nonexistent/workload]}
+-- null-input.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [a]
+  input: ~
+-- null-node.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+- ~
+-- null-task.yaml --
+nodes:
+- name: a
+  task: ~
+-- no-task.yaml --
+nodes:
+- name: a
+-- empty-argv.yaml --
+nodes:
+- name: a
+  task: {argv: []}
+-- slot.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [a]
+  input: {node: a, slot: output}
+-- not-dependency.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload], workdir: {id: 0123456789abcdef0123456789abcdef, sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, size: 2048}, outputs: [out]}
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  input: {node: a, slot: result}
+-- no-outputs.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [a]
+  input: {node: a, slot: result}
+-- mount.yaml --
+nodes:
+- name: a
+  task:
+    argv: [/nonexistent/workload]
+    data_mounts:
+    - {reference: corpus, destination: /tmp/corpus, read_only: false}
+-- two.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+---
+nodes: []
+-- alias.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload], directory: &n ~}
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [a]
+  input: *n
+-- merge.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload]}
+- name: b
+  task: {argv: [/nonexistent/workload]}
+  depends_on: [a]
+  <<: {name: a, input: ~}
+-- consent.yaml --
+nodes:
+- name: a
+  task:
+    argv: [/nonexistent/workload]
+    env: {BAD-KEY: value}
+    data_mounts:
+    - {reference: corpus, destination: /mnt/skygo/corpus, read_only: true}
+-- consent-template.yaml --
+nodes:
+- name: a
+  task: {argv: [/nonexistent/workload], env: {BAD-KEY: value}, workdir: {id: 0123456789abcdef0123456789abcdef, sha256: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef, size: 2048}, outputs: [out]}
+- name: b
+  task:
+    argv: [/nonexistent/workload]
+    data_mounts:
+    - {reference: corpus, destination: /mnt/skygo/corpus, read_only: true}
+  depends_on: [a]
+  input: {node: a, slot: result}
+-- environment.yaml --
+nodes:
+- name: a
+  task:
+    argv: [/nonexistent/workload]
+    env: {BAD-KEY: value}

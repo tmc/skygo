@@ -38,6 +38,9 @@ func physicalNamesMatch(sample artifact.PhysicalSample, cohort physicalCohort) e
 	// Store sorts object before upload; establish known upload identities before
 	// evaluating its paired publishing object, independent of subject ordering.
 	for _, s := range cohort.subjects {
+		if s.NotAttempted && (s.Kind != "object" || s.File != (store.ArtifactFile{})) {
+			return refuse()
+		}
 		if s.Kind == "upload" {
 			file := artifact.FileID{Device: s.File.Device, Inode: s.File.Inode}
 			if !physicalFileValid(file) || !add(s.ID+".part", file, artifact.PhysicalEntryRegular, "file:"+s.ID) || !add(s.ID+".tar", file, artifact.PhysicalEntryRegular, "file:"+s.ID) {
@@ -53,6 +56,18 @@ func physicalNamesMatch(sample artifact.PhysicalSample, cohort physicalCohort) e
 				return refuse()
 			}
 		case "object":
+			if s.NotAttempted {
+				if s.File != (store.ArtifactFile{}) {
+					return refuse()
+				}
+				if _, upload := names[s.ID+".part"]; upload {
+					return refuse()
+				}
+				// The exact Store reservation says CREATE has not been entered.
+				// Add NO filename/group: any actual .part/.tar entry for this ID
+				// remains unexplained below, never an adopted unknown inode.
+				continue
+			}
 			if physicalFileValid(file) {
 				if !add(s.ID+".tar", file, artifact.PhysicalEntryRegular, "file:"+s.ID) {
 					return refuse()

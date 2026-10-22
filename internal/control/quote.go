@@ -93,9 +93,34 @@ func checkTarget(t backend.Task, target backend.Target, requireOutputStorage boo
 }
 
 func checkWorkspaceTarget(t backend.Task, target backend.Target, requireOutputStorage bool, workspace *workspaceTarget) error {
-	switch {
-	case t.Workdir != nil && !workspace.matches(target):
+	if err := workspaceTargetFacts(t, target, requireOutputStorage, workspace); err != nil {
+		return err
+	}
+	return target.Backend.Check(cloneTask(t))
+}
+
+// workspaceTargetFacts is checkWorkspaceTarget without the Backend.Check call:
+// it only compares configuration facts and never blocks.
+func workspaceTargetFacts(t backend.Task, target backend.Target, requireOutputStorage bool, workspace *workspaceTarget) error {
+	if len(t.DataMounts) != 0 {
+		return errors.New("data submission required")
+	}
+	if t.Workdir != nil && !workspace.matches(target) {
 		return errors.New("local workspace service is unsupported")
+	}
+	return targetFacts(t, target, requireOutputStorage)
+}
+
+func checkTargetFacts(t backend.Task, target backend.Target, requireOutputStorage bool) error {
+	if err := targetFacts(t, target, requireOutputStorage); err != nil {
+		return err
+	}
+	return target.Backend.Check(cloneTask(t))
+}
+
+// targetFacts is checkTargetFacts without the Backend.Check call.
+func targetFacts(t backend.Task, target backend.Target, requireOutputStorage bool) error {
+	switch {
 	case t.Target != "" && t.Target != target.Name:
 		return errors.New("target constraint differs")
 	case requireOutputStorage && target.OutputStorage == backend.UnspecifiedOutput:
@@ -108,9 +133,8 @@ func checkWorkspaceTarget(t backend.Task, target backend.Target, requireOutputSt
 		return errors.New("resource limits are unsupported")
 	case len(t.NodeSelector) != 0 && !target.SupportsNodeSelector:
 		return errors.New("node selectors are unsupported")
-	default:
-		return target.Backend.Check(cloneTask(t))
 	}
+	return nil
 }
 
 func quoteDiagnostic(err error) string {
@@ -279,4 +303,19 @@ func (c *Control) QuoteTask(actor auth.Actor, task backend.Task, currency string
 		return QuotePlan{}, err
 	}
 	return quoteWorkspaceAt(task, currency, unit, billableSeconds, c.targets, time.Now().UTC(), c.retention.enabled, c.workspace)
+}
+
+func (c *Control) planData(task backend.Task) (backend.Target, error) {
+	if err := backend.ValidateDataTask(task, nil); err != nil {
+		return backend.Target{}, ErrInvalid
+	}
+	for _, route := range c.dataTargets {
+		if !route.target.SupportsRemoteData || len(task.DataMounts) != 0 && !route.target.SupportsDataMounts || task.Retry != nil && !route.target.SupportsRemoteDataRetry {
+			continue
+		}
+		if err := checkTargetFacts(cloneTask(task), route.target, c.retention.enabled); err == nil {
+			return cloneTarget(route.target), nil
+		}
+	}
+	return backend.Target{}, ErrUnsupported
 }

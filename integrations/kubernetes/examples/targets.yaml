@@ -25,3 +25,30 @@ targets:
           resource_name: nvidia.com/gpu
           required_node_selector:
             skygo.test/model: a100
+  # A data target names its native qualification explicitly; without one it
+  # refuses every data task. See the README.
+  #
+  # - name: data-c
+  #   in_cluster: true
+  #   namespace: skygo-c
+  #   resources:
+  #     node_selectors:
+  #       skygo.test/pool: [qualified]
+  #   data:
+  #     helper_image: registry.example.com/skygo/helper@sha256:...
+  #     helper_sha256: "..."
+  #     origin: https://skygo.example.com
+  #     ca_pem: |
+  #       -----BEGIN CERTIFICATE-----
+  #       ...
+  #     task_images: [registry.example.com/team/train@sha256:...]
+  #     references:
+  #       - name: datasets
+  #         pvc: datasets
+  #         destinations: [/mnt/skygo/data]
+  #     qualification:
+  #       record: ./qualification.json
+  #       build_receipt: ./build-receipt.json
+  #       policy_revision: cluster-policy-7
+  #       storage_policy:
+  #         datasets: csi-policy-3

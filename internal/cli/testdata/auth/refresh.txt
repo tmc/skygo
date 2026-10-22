@@ -1,4 +1,6 @@
 # Supported file changes affect new requests and an already attached stream.
+# Token outputs and auth files in this workdir need a private parent.
+chmod 0700 .
 skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
 skygo auth principal add alice --role operator --auth-file $AUTH
 skygo auth principal add bob --role operator --auth-file $AUTH

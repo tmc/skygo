@@ -139,10 +139,9 @@ func (m *retentionMutation) validate() error {
 	if e != nil {
 		return e
 	}
-	cap := limits(st.Policy)
 	for q := JobsQuota; q <= PrincipalScopesQuota; q++ {
-		if m.used[q] > m.initial[q] && m.used[q] > cap[q] {
-			return &CapacityError{q, m.initial[q], cap[q]}
+		if e := capacityError(st.Policy, q, m.initial[q], m.used[q]); e != nil {
+			return e
 		}
 	}
 	return nil
@@ -239,7 +238,17 @@ func encodeRetentionRecord(name []byte, value any) ([]byte, error) {
 	if bytes.Equal(name, cleanupOperationsBucket) && len(data) > cleanupOperationLimit {
 		return nil, errors.New("cleanup operation exceeds limit")
 	}
+	if bytes.Equal(name, retainedRequestsBucket) && workflowRequest(data) && len(data) > workflowRequestLimit {
+		return nil, errors.New("workflow request exceeds limit")
+	}
 	return data, nil
+}
+
+// workflowRequest reports whether a request record is the typed workflow
+// alternative. Its fixed reservation keeps expiry from changing its charge.
+func workflowRequest(data []byte) bool {
+	var r requestRecord
+	return json.Unmarshal(data, &r) == nil && r.WorkflowID != ""
 }
 
 // Mutable operation fields have a declared value reservation. Header count
@@ -266,6 +275,9 @@ func recordCharge(name, key, data []byte) uint64 {
 		}
 		return uint64(len(key) + len(v))
 	}
+	if bytes.Equal(name, retainedRequestsBucket) && workflowRequest(data) {
+		return uint64(len(key) + workflowRequestLimit)
+	}
 	return uint64(len(key) + len(data))
 }
 
@@ -274,7 +286,10 @@ func (m *retentionMutation) removeHeader(h cleanupHeader) error {
 	if e := m.drop(cleanupHeaderIndexBucket, sequenceKey(h.Sequence)); e != nil {
 		return e
 	}
-	return m.drop(cleanupHeadersBucket, []byte(h.ID))
+	if e := m.drop(cleanupHeadersBucket, []byte(h.ID)); e != nil {
+		return e
+	}
+	return m.retireWorkflowChild(h)
 }
 func (m *retentionMutation) dropLegacy(r *requestRecord) error {
 	if r.LegacyBytes == 0 {

@@ -401,7 +401,30 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 				}
 				continue
 			}
+			if sel.Mode != OutputOnly && x.Obligation == nil {
+				held, e := workflowHeld(tx, x.Job)
+				if e != nil {
+					return e
+				}
+				if held {
+					addSkip(&out, "workflow_dependency")
+					continue
+				}
+			}
 			workspaceRetired := artifactWholeReady(artifactProjected, x.Job)
+			remote := false
+			if artifactProjected != nil {
+				for _, r := range artifactProjected.Remote {
+					if r.Job == x.Job.ID {
+						remote = true
+						break
+					}
+				}
+			}
+			if sel.Mode == Whole && remote && !workspaceRetired {
+				addSkip(&out, "workspace_cleanup_pending")
+				continue
+			}
 			if sel.Mode == Whole && x.Job.Task.Workdir != nil && !workspaceRetired {
 				var tracked retainedJob
 				if e := loadJSON(retentionTable(tx, retainedJobsBucket), []byte(x.Job.ID), &tracked); e != nil {
@@ -421,7 +444,7 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 			if sel.Mode == MetadataOnly {
 				needed = 0
 			}
-			if sel.Mode == Whole && x.Job.Task.Workdir == nil {
+			if sel.Mode == Whole && x.Job.Task.Workdir == nil && !remote {
 				if len(x.Job.Attempts) == 0 {
 					if safeStatuses(x.Job) {
 						needed++
@@ -441,7 +464,7 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 				addSkip(&out, "cleanup_full")
 				continue
 			}
-			h, ops, e := makeCleanup(tx, x, sel, refs, pool[count:count+needed], now)
+			h, ops, e := makeCleanup(tx, x, sel, refs, pool[count:count+needed], now, remote)
 			if e != nil {
 				return e
 			}
@@ -539,7 +562,7 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 	return
 }
 
-func makeCleanup(tx *bolt.Tx, x PruneSubject, sel PruneSelection, refs []backend.OutputReference, ids []string, now time.Time) (h cleanupHeader, ops []cleanupOperation, err error) {
+func makeCleanup(tx *bolt.Tx, x PruneSubject, sel PruneSelection, refs []backend.OutputReference, ids []string, now time.Time, remote bool) (h cleanupHeader, ops []cleanupOperation, err error) {
 	if x.Obligation != nil {
 		if err = loadJSON(retentionTable(tx, cleanupHeadersBucket), []byte(x.Obligation.ID), &h); err != nil {
 			return
@@ -561,7 +584,7 @@ func makeCleanup(tx *bolt.Tx, x PruneSubject, sel PruneSelection, refs []backend
 			ops = append(ops, cleanupOperation{ID: ids[len(ops)], HeaderID: h.ID, Operation: OutputCleanup, AttemptID: r.AttemptID, ClosureID: r.ClosureID, Generation: r.Generation, PayloadReleased: r.PayloadReleased, UpdatedAt: now})
 		}
 	}
-	if sel.Mode == Whole && x.Job.Task.Workdir == nil {
+	if sel.Mode == Whole && x.Job.Task.Workdir == nil && !remote {
 		add := func(id string, status backend.Status) {
 			proof := status
 			proof.Reason = ""
@@ -652,10 +675,14 @@ func markPrune(m *retentionMutation, x PruneSubject, sel PruneSelection, h clean
 	if e != nil {
 		return e
 	}
-	if !validJobRequestIdentity(st, meta) {
+	if meta.WorkflowID != "" {
+		// A child has no request; its node keeps the terminal state.
+		if e = m.captureWorkflowChild(j, meta); e != nil {
+			return e
+		}
+	} else if !validJobRequestIdentity(st, meta) {
 		return errors.New("invalid pruned request identity")
-	}
-	if !meta.LegacyRequestRetired {
+	} else if !meta.LegacyRequestRetired {
 		key := requestKey(meta.Principal, meta.Domain, meta.requestID())
 		var req requestRecord
 		if e := loadJSON(retentionTable(tx, retainedRequestsBucket), key, &req); e == nil {

@@ -134,8 +134,13 @@ func TestBlockedObservationKeepsOneOwnerAndCleanupGetsNextSlot(t *testing.T) {
 func scopedRetention(t *testing.T) (*store.Store, store.RetentionInfo, *auth.Engine, auth.Actor, string) {
 	t.Helper()
 	s, info := retainedStore(t)
-	config := filepath.Join(t.TempDir(), "auth.json")
-	initial := filepath.Join(filepath.Dir(config), "admin.token")
+	// The credential parent must be private; TempDir follows the umask.
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "auth.json")
+	initial := filepath.Join(dir, "admin.token")
 	if _, err := auth.Initialize(config, initial, s.Owner()); err != nil {
 		t.Fatal(err)
 	}
@@ -372,8 +377,12 @@ func TestEnabledCursorRejectedAcrossScopedActivation(t *testing.T) {
 	if err != nil || old.Scoped {
 		t.Fatal(old, err)
 	}
-	config := filepath.Join(t.TempDir(), "auth.json")
-	tokenPath := filepath.Join(filepath.Dir(config), "admin.token")
+	dir := t.TempDir()
+	if err = os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	config := filepath.Join(dir, "auth.json")
+	tokenPath := filepath.Join(dir, "admin.token")
 	if _, err = auth.Initialize(config, tokenPath, s.Owner()); err != nil {
 		t.Fatal(err)
 	}

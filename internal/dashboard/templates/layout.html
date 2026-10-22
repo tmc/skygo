@@ -1,0 +1,24 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} · skygo</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header>
+<strong>skygo</strong>
+{{if .Nav}}<nav><a href="/jobs">jobs</a> <a href="/targets">targets</a> <a href="/info">info</a>
+<button type="button" id="logout">log out</button></nav>{{end}}
+</header>
+<main>
+{{template "content" .Data}}
+</main>
+</body>
+</html>
+{{end}}
+{{define "fragment"}}<h1>{{.Title}}</h1>
+{{template "content" .Data}}
+{{end}}

@@ -1,0 +1,11 @@
+{{define "content"}}
+{{if .Jobs}}
+<table>
+<thead><tr><th>ID</th><th>Target</th><th>State</th></tr></thead>
+<tbody>
+{{range .Jobs}}<tr><td><a href="{{.Link}}">{{.ID}}</a></td><td>{{.Target}}</td><td>{{.State}}</td></tr>
+{{end}}</tbody>
+</table>
+{{else}}<p>No jobs.</p>{{end}}
+{{if .Next}}<p><a href="{{.Next}}">next page</a></p>{{end}}
+{{end}}

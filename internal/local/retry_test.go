@@ -139,11 +139,47 @@ func TestRetryLifecycleOrder(t *testing.T) {
 	}
 }
 
+// retryHeld waits, bounded, for the original execution's own completion,
+// sole reaper and output pump, then requires the genuine original Close
+// failure. A timeout fails the test while the held fixture keeps custody.
+func retryHeld(t *testing.T, fixture *executionFixture, id string, e *execution, want error) {
+	t.Helper()
+	b := fixture.backend
+	for _, c := range []struct {
+		name string
+		done <-chan struct{}
+	}{{"completion", e.done}, {"original reaper", e.retry.reaped}, {"output pump", e.retry.outputDone}} {
+		select {
+		case <-c.done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("original %s did not finish; custody retained", c.name)
+		}
+	}
+	closeErr := fixture.close()
+	if !errors.Is(closeErr, want) {
+		t.Fatalf("Close=%v, want original %v", closeErr, want)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.jobs[id] != e {
+		t.Fatal("held original execution frame was replaced")
+	}
+	if !e.shutdownPublished || e.shutdownClosed {
+		t.Fatalf("shutdown published=%v closed=%v", e.shutdownPublished, e.shutdownClosed)
+	}
+	var exitErr *exec.ExitError
+	if e.cmd.ProcessState == nil || e.retry.waitErr != nil && !errors.As(e.retry.waitErr, &exitErr) {
+		t.Fatalf("original Wait=%v state=%v", e.retry.waitErr, e.cmd.ProcessState)
+	}
+}
+
 func TestRetryProofFailures(t *testing.T) {
 	for _, mode := range []string{"pin", "cleanup", "absence", "output"} {
 		t.Run(mode, func(t *testing.T) {
-			b := newBackend(t)
+			fixture := newExecutionFixture(t, false)
+			b := fixture.backend
 			requireRetry(t, b)
+			fixture.held = true
 			failure := errors.New("injected lifecycle failure")
 			switch mode {
 			case "pin":
@@ -164,15 +200,16 @@ func TestRetryProofFailures(t *testing.T) {
 			task := retryTask("fail")
 			if mode == "output" {
 				task = retryTask("retention")
-				task.Env["SKYGO_RELEASE"] = filepath.Join(t.TempDir(), "release")
+				task.Env["SKYGO_RELEASE"] = filepath.Join(fixture.directory, "release")
 			}
 			if err := b.Start(context.Background(), id, task); err != nil {
 				t.Fatal(err)
 			}
+			b.mu.Lock()
+			e := b.jobs[id]
+			b.mu.Unlock()
 			if mode == "output" {
-				b.mu.Lock()
-				out := b.jobs[id].output
-				b.mu.Unlock()
+				out := e.output
 				out.mu.Lock()
 				out.file.Close()
 				out.mu.Unlock()
@@ -184,6 +221,11 @@ func TestRetryProofFailures(t *testing.T) {
 			if s.Termination != backend.UnknownTermination || s.State != backend.Failed || s.Reason == "" {
 				t.Fatalf("status=%+v", s)
 			}
+			want := failure
+			if mode == "output" {
+				want = os.ErrClosed
+			}
+			retryHeld(t, fixture, id, e, want)
 		})
 	}
 }
@@ -294,9 +336,11 @@ func TestRetryCancelAfterReap(t *testing.T) {
 }
 
 func TestRetryPinFailureWhileLive(t *testing.T) {
-	b := newBackend(t)
+	fixture := newExecutionFixture(t, false)
+	b := fixture.backend
 	requireRetry(t, b)
-	marker := filepath.Join(t.TempDir(), "ready")
+	fixture.held = true
+	marker := filepath.Join(fixture.directory, "ready")
 	failure := errors.New("waitid failed while original leader is alive")
 	b.retryOps.wait = func(*exec.Cmd) error {
 		deadline := time.Now().Add(3 * time.Second)
@@ -315,21 +359,14 @@ func TestRetryPinFailureWhileLive(t *testing.T) {
 	if err := b.Start(context.Background(), id, retryProgram("live", marker)); err != nil {
 		t.Fatal(err)
 	}
+	b.mu.Lock()
+	e := b.jobs[id]
+	b.mu.Unlock()
 	s := completed(t, b, id)
 	if s.Termination != backend.UnknownTermination || s.State != backend.Failed || !strings.Contains(s.Reason, failure.Error()) {
 		t.Fatalf("status=%+v", s)
 	}
-	if err := b.Close(); err != nil {
-		t.Fatal(err)
-	}
-	b.mu.Lock()
-	e := b.jobs[id]
-	b.mu.Unlock()
-	select {
-	case <-e.retry.reaped:
-	default:
-		t.Fatal("original child was not reaped")
-	}
+	retryHeld(t, fixture, id, e, failure)
 	if _, err := e.retry.reader.Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
 		t.Fatalf("reader not closed: %v", err)
 	}
@@ -378,16 +415,19 @@ func TestRetryCancellationRedelivery(t *testing.T) {
 }
 
 func TestRetryOutputFailureDrains(t *testing.T) {
-	b := newBackend(t)
+	fixture := newExecutionFixture(t, false)
+	b := fixture.backend
 	requireRetry(t, b)
-	marker := filepath.Join(t.TempDir(), "release")
+	fixture.held = true
+	marker := filepath.Join(fixture.directory, "release")
 	id := strings.Repeat("6", 32)
 	if err := b.Start(context.Background(), id, retryProgram("retention-flood", marker)); err != nil {
 		t.Fatal(err)
 	}
 	b.mu.Lock()
-	out := b.jobs[id].output
+	e := b.jobs[id]
 	b.mu.Unlock()
+	out := e.output
 	out.mu.Lock()
 	out.file.Close()
 	out.mu.Unlock()
@@ -398,6 +438,7 @@ func TestRetryOutputFailureDrains(t *testing.T) {
 	if s.State != backend.Failed || s.Termination != backend.UnknownTermination || !strings.Contains(s.Reason, "retain output") {
 		t.Fatalf("status=%+v", s)
 	}
+	retryHeld(t, fixture, id, e, os.ErrClosed)
 }
 
 func TestRetryMissingForkHandle(t *testing.T) {

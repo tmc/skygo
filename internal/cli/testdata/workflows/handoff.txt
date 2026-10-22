@@ -1,0 +1,66 @@
+# A producer's actual published result becomes its consumer's input through
+# the artifact lifecycle, and the workflow survives a restart of the same
+# daemon. Only Linux qualifies the local workspace snapshot this needs.
+[!GOOS:linux] skip 'UNRUN: actual result-to-input handoff requires the Linux local workspace snapshot; this script remains required'
+private-workdir
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+server start
+skygo --token-file alice.token info --target local --require workdir-snapshot-v1
+skygo --token-file alice.token artifacts upload source
+cp stdout seed.json
+graph-file handoff.tmpl handoff.yaml seed.json
+skygo --token-file alice.token --json workflow run -f handoff.yaml --request-id handoff
+json-field id WF
+await-workflow alice.token $WF consume succeeded
+cp stdout done.json
+json-field nodes.0.job_id PRODUCER
+json-field nodes.1.job_id CONSUMER
+skygo --token-file alice.token --json jobs get $PRODUCER
+cp stdout producer.json
+skygo --token-file alice.token --json jobs get $CONSUMER
+cp stdout consumer.json
+same-input done.json consume producer.json consumer.json
+skygo --token-file alice.token jobs logs $CONSUMER
+cmp stdout expected.txt
+event-count 2
+calls ControlService/BeginArtifactUpload 1
+calls job-submissions 0
+
+# Replay after a restart neither reads the local input again nor runs any
+# node again.
+rm source/seed.txt
+server stop
+! stderr .
+server start
+skygo --token-file alice.token --json workflow run -f handoff.yaml --request-id handoff
+cmp stdout done.json
+skygo --token-file alice.token jobs logs $CONSUMER
+cmp stdout expected.txt
+event-count 2
+calls ControlService/BeginArtifactUpload 1
+calls job-submissions 0
+server stop
+! stderr .
+
+-- source/seed.txt --
+seed
+-- expected.txt --
+seed
+prepared
+-- handoff.tmpl --
+nodes:
+- name: produce
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: produce, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: produce}
+    workdir: {id: "@REF_ID@", sha256: "@REF_SHA256@", size: @REF_SIZE@}
+    setup: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$", "--", "setup"]
+    outputs: [out]
+- name: consume
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: consume, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: consume}
+  depends_on: [produce]
+  input: {node: produce, slot: result}

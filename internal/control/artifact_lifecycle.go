@@ -106,6 +106,9 @@ func (s *artifactService) artifactUnresolvedLocked() error {
 		return s.physicalHeld
 	}
 	for call := range s.calls {
+		if call.worker != nil && call.worker.err != nil {
+			return call.worker.err
+		}
 		if call.fileError != nil {
 			return call.fileError
 		}
@@ -163,6 +166,10 @@ func (c *Control) DrainArtifacts(ctx context.Context) error {
 	s.mu.Lock()
 	downloads := make([]*ArtifactDownload, 0, len(s.downloads))
 	for d := range s.downloads {
+		if d.remote != nil && (d.reader == nil || d.owners != 0 || d.uncertain || d.settling || d.closing || d.finished || d.remote.call != nil || d.remote.finish != nil || d.remote.published >= d.ref.Size) {
+			s.mu.Unlock()
+			return fmt.Errorf("%w: original remote descriptor handoff remains held", ErrUnavailable)
+		}
 		downloads = append(downloads, d)
 	}
 	s.mu.Unlock()

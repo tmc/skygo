@@ -79,6 +79,12 @@ func artifactRPCConfigured(t *testing.T, wrap func(http.Handler) http.Handler, w
 
 func artifactRPCOptions(t *testing.T, wrap func(http.Handler) http.Handler, workspace, retained bool) *artifactRPCFixture {
 	t.Helper()
+	return artifactRPCTargetOptions(t, wrap, workspace, retained, nil)
+}
+
+// configure changes only the not-yet-published target before original Control construction.
+func artifactRPCTargetOptions(t *testing.T, wrap func(http.Handler) http.Handler, workspace, retained bool, configure func(*backend.Target)) *artifactRPCFixture {
+	t.Helper()
 	dir := artifactFixtureDirectory(t)
 	f := &artifactRPCFixture{directory: dir, tokens: make(map[string]string), ids: make(map[string]string), authFile: filepath.Join(dir, "auth.json"), returned: make(chan string, 128), remove: os.RemoveAll}
 	// This one cleanup owns both explicit Close and namespace removal; no
@@ -220,6 +226,9 @@ func artifactRPCOptions(t *testing.T, wrap func(http.Handler) http.Handler, work
 		target.Backend, target.OutputStorage = localBackend, backend.RemoteOutput
 		config.LocalBackend = localBackend
 		config.LocalWorkspace = &control.LocalWorkspaceConfig{Target: target.Name, Binding: target.Binding, Backend: localBackend, Roots: root}
+	}
+	if configure != nil {
+		configure(&target)
 	}
 	f.binding = target.Binding
 	f.control, err = control.NewWithConfig(s, []backend.Target{target}, f.engine, config)

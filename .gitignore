@@ -1,3 +1,4 @@
 .tools/
 bin/
 skygo-data/
+!cmd/skygo-data/

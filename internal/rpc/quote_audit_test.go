@@ -27,8 +27,13 @@ func TestQuoteScopedAuditHealth(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer s.Close()
-			config := filepath.Join(dir, "auth.json")
-			output := filepath.Join(dir, "token")
+			// Auth refuses a group- or other-writable credential parent.
+			private := filepath.Join(dir, "auth")
+			if err := os.Mkdir(private, 0700); err != nil {
+				t.Fatal(err)
+			}
+			config := filepath.Join(private, "auth.json")
+			output := filepath.Join(private, "token")
 			if _, err := auth.Initialize(config, output, s.Owner()); err != nil {
 				t.Fatal(err)
 			}

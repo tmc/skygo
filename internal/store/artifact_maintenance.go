@@ -283,6 +283,9 @@ func (s *Store) NextArtifactCleanup(after string) (out ArtifactCleanup, found bo
 		for n := 0; n < len(ids); n++ {
 			id := ids[(start+n)%len(ids)]
 			d := st.Deletes[id]
+			if remoteDeleteDeferred(st, d) {
+				continue
+			}
 			if d.Kind == "workspace" {
 				work, e := artifactWorkspaceWork(st, id, d)
 				if e != nil {

@@ -54,7 +54,7 @@ func workspaceRetirementShape(r maintenanceRequest) bool {
 	return r.readerRecovery == nil && r.downloadClose == nil && r.closeOwner == nil && r.artifactDelete == nil && w != nil && w.original != nil && w.control != nil && w.backend != nil && w.owner != nil &&
 		(w.step == workspaceRetirementRoot || w.step == workspaceRetirementCandidate || w.step == workspaceRetirementHandoff) &&
 		r.sequence != 0 && r.physicalOwner == nil && !r.physicalClose && r.record == nil && r.directory == "" && r.usage == nil && r.reusable == 0 && r.reservedBytes == 0 && r.reservedFiles == 0 &&
-		t.Name == "" && t.Backend == nil && t.Kind == "" && t.Binding == "" && t.Advice == nil && t.Labels == nil && t.AcceleratorNames == nil && !t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.OutputStorage == 0 && t.OutputReservation == 0
+		t.Name == "" && t.Backend == nil && t.Kind == "" && t.Binding == "" && t.Advice == nil && t.Labels == nil && t.AcceleratorNames == nil && !t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.DataPolicy == nil && !t.SupportsRemoteData && !t.SupportsDataMounts && !t.SupportsRemoteDataRetry && t.OutputStorage == 0 && t.OutputReservation == 0
 }
 
 func runWorkspaceRetirement(ctx context.Context, r maintenanceRequest) (*workspaceRetirementResult, error) {

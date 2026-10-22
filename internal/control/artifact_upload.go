@@ -92,21 +92,25 @@ func (c *Control) WriteArtifactChunk(ctx context.Context, actor auth.Actor, call
 	if offset < 0 || len(data) < 1 || len(data) > 64<<10 || offset > ref.Size || int64(len(data)) > ref.Size-offset || uint64(offset) > u.Acknowledged || uint64(offset) < u.Acknowledged && uint64(len(data)) > u.Acknowledged-uint64(offset) {
 		return store.ArtifactUpload{}, fmt.Errorf("%w: invalid artifact chunk range", ErrInvalid)
 	}
-	// Settled same-inode writes and acknowledgement revisions do not change the
-	// prepaid identity/allowance cohort. Every new append still checks freshness.
-	if uint64(offset) == u.Acknowledged {
-		if err = c.cachedLinkGrowthCheck(); err != nil {
-			return store.ArtifactUpload{}, err
-		}
-	}
 	payload := bytes.Clone(data)
 	identity := artifact.FileID{Device: file.Device, Inode: file.Inode}
+	// Repair of the already-owned prefix precedes the growth guard, so retained
+	// allocation or an interrupted trim cannot hold the call that removes it.
+	// RecoverPart never appends, and its trim is no release credit: only a new
+	// physical sample can clear an accounting hold.
 	if err = c.artifacts.files.RecoverPart(ref, identity, int64(u.Acknowledged)); err != nil {
 		return store.ArtifactUpload{}, c.artifactFileError(call, err)
 	}
 	actor, err = c.artifactActor(ctx, actor, auth.Mutate)
 	if err != nil {
 		return store.ArtifactUpload{}, err
+	}
+	// Settled same-inode writes and acknowledgement revisions do not change the
+	// prepaid identity/allowance cohort. Every new append still checks freshness.
+	if uint64(offset) == u.Acknowledged {
+		if err = c.cachedLinkGrowthCheck(); err != nil {
+			return store.ArtifactUpload{}, err
+		}
 	}
 	receipt, err := c.artifacts.files.WritePart(ref, identity, int64(u.Acknowledged), offset, payload)
 	if err != nil {
@@ -170,6 +174,14 @@ func (c *Control) FinalizeArtifactUpload(ctx context.Context, actor auth.Actor, 
 		return artifact.Ref{}, err
 	}
 	if u.State == "writable" {
+		// The same pre-guard repair as WriteArtifactChunk, at the full ack.
+		if err = c.artifacts.files.RecoverPart(ref, artifact.FileID{Device: file.Device, Inode: file.Inode}, int64(u.Acknowledged)); err != nil {
+			return artifact.Ref{}, c.artifactFileError(call, err)
+		}
+		actor, err = c.artifactActor(ctx, actor, auth.Mutate)
+		if err != nil {
+			return artifact.Ref{}, err
+		}
 		if err = c.cachedLinkGrowthCheck(); err != nil {
 			return artifact.Ref{}, err
 		}

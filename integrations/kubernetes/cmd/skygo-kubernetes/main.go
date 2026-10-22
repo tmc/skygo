@@ -47,7 +47,7 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 				if named {
 					var targets []backend.Target
 					for _, target := range config.Targets() {
-						configured, err := kube.FromTarget(target, owner)
+						configured, err := kube.FromTarget(ctx, target, owner)
 						if err != nil {
 							return nil, err
 						}

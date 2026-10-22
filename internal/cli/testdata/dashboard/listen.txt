@@ -1,0 +1,27 @@
+# skygo dashboard refuses every listener that is not 127.0.0.1 or [::1]
+# before binding or contacting the endpoint.
+# Run by TestDashboardScripts; needs the cli.go dashboardCommand registration.
+env SKYGO_TOKEN=dashboard-token
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen 0.0.0.0:0
+stderr 'dashboard listens only on a loopback address'
+! stdout .
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen localhost:0
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen 10.0.0.1:0
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen 127.0.0.2:0
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen '[::]:0'
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen '[::ffff:127.0.0.1]:0'
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen '[fe80::1%lo0]:0'
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen :0
+stderr 'dashboard listens only on a loopback address'
+! skygo --endpoint http://127.0.0.1:1 dashboard --listen 127.0.0.1:65536
+stderr 'invalid dashboard port'
+! stderr 'login code'
+! skygo --endpoint http://127.0.0.1:1 dashboard extra
+stderr 'unknown command|accepts 0 arg'
+! stderr 'dashboard-token'

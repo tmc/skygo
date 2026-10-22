@@ -74,12 +74,13 @@ type Files struct {
 }
 
 type filesIO struct {
-	sync    func(*os.File) error
-	close   func(*os.File) error
-	writeAt func(*os.File, []byte, int64) (int, error)
-	readAt  func(*os.File, []byte, int64) (int, error)
-	link    func(int, string, string) error
-	remove  func(*os.Root, string) error
+	sync     func(*os.File) error
+	close    func(*os.File) error
+	writeAt  func(*os.File, []byte, int64) (int, error)
+	readAt   func(*os.File, []byte, int64) (int, error)
+	link     func(int, string, string) error
+	remove   func(*os.Root, string) error
+	truncate func(*os.File, int64) error
 }
 
 func fileID(m metadata) FileID { return FileID{Device: m.device, Inode: m.number} }
@@ -159,6 +160,17 @@ func (f *Files) syncFile(file *os.File) error {
 	}
 	return file.Sync()
 }
+func (f *Files) truncate(file *os.File, size int64) error {
+	if f.hooks.truncate != nil {
+		return f.hooks.truncate(file, size)
+	}
+	return file.Truncate(size)
+}
+
+// trim releases speculative allocation past size on the same writable file.
+func (f *Files) trim(file *os.File, size int64) error {
+	return trimAllocation(file, size, f.truncate)
+}
 func (f *Files) remove(name string) error {
 	if f.hooks.remove != nil {
 		return f.hooks.remove(f.root, name)
@@ -201,11 +213,22 @@ func (f *Files) checkPath(name string, info os.FileInfo) error {
 	return nil
 }
 func (f *Files) openFile(ref Ref, id FileID, name string, write bool, links uint64) (*os.File, os.FileInfo, error) {
+	return f.openOwned(id, name, write, links, ref.Size)
+}
+
+// openScratchPart opens the exact single-link part of ref writable. It is the
+// only open that admits the one scratch byte past ref.Size that an interrupted
+// trimAllocation can leave. Its caller truncates the part to a durable prefix
+// before any ordinary check, read, seal or removal; the byte is never payload.
+func (f *Files) openScratchPart(ref Ref, id FileID) (*os.File, os.FileInfo, error) {
+	return f.openOwned(id, partName(ref), true, 1, ref.Size+1)
+}
+func (f *Files) openOwned(id FileID, name string, write bool, links uint64, limit int64) (*os.File, os.FileInfo, error) {
 	before, err := f.root.Lstat(name)
 	if err != nil {
 		return nil, nil, err
 	}
-	if err = f.checkFile(before, ref, id, links); err != nil {
+	if err = f.checkOwnedFile(before, id, links, limit); err != nil {
 		return nil, nil, err
 	}
 	flag, err := nonblockingRead()
@@ -221,7 +244,7 @@ func (f *Files) openFile(ref Ref, id FileID, name string, write bool, links uint
 	}
 	info, err := file.Stat()
 	if err == nil {
-		err = f.checkFile(info, ref, id, links)
+		err = f.checkOwnedFile(info, id, links, limit)
 	}
 	if err == nil && !sameMetadata(before, info) {
 		err = ErrFileConflict
@@ -296,8 +319,10 @@ func (f *Files) CreatePart(ref Ref) (id FileID, err error) {
 	return
 }
 
-// RecoverPart truncates only the exact owned part's unacknowledged suffix and
-// syncs it. A short durable prefix or already-published link is a conflict.
+// RecoverPart truncates only the exact owned part's unacknowledged suffix,
+// including one scratch byte past ref.Size left by an interrupted allocation
+// trim, trims allocation past ack on the same descriptor and syncs it. It never
+// appends. A short durable prefix or already-published link is a conflict.
 func (f *Files) RecoverPart(ref Ref, id FileID, ack int64) error {
 	if err := ref.Validate(); err != nil {
 		return err
@@ -313,7 +338,7 @@ func (f *Files) RecoverPart(ref Ref, id FileID, ack int64) error {
 	if f.candidateOwned(ref.ID) {
 		return ErrFilesBusy
 	}
-	file, info, err := f.openFile(ref, id, partName(ref), true, 1)
+	file, info, err := f.openScratchPart(ref, id)
 	if err != nil {
 		return err
 	}
@@ -321,7 +346,10 @@ func (f *Files) RecoverPart(ref Ref, id FileID, ack int64) error {
 		return errors.Join(ErrFileConflict, f.closeFile(file))
 	}
 	if info.Size() > ack {
-		err = file.Truncate(ack)
+		err = f.truncate(file, ack)
+	}
+	if err == nil {
+		err = f.trim(file, ack)
 	}
 	if err == nil {
 		err = f.syncFile(file)
@@ -331,6 +359,7 @@ func (f *Files) RecoverPart(ref Ref, id FileID, ack int64) error {
 
 // WritePart appends exactly at ack or compares an earlier wholly acknowledged
 // range. It rejects holes/partial overlap and requires recovery of any extra suffix.
+// A new append trims allocation past its end on the same descriptor before Sync.
 // The caller may advance its CAS only after this actual operation returns nil.
 func (f *Files) WritePart(ref Ref, id FileID, ack, offset int64, p []byte) (receipt ChunkReceipt, err error) {
 	if err = ref.Validate(); err != nil {
@@ -377,6 +406,9 @@ func (f *Files) WritePart(ref Ref, id FileID, ack, offset int64, p []byte) (rece
 			e = io.ErrShortWrite
 		}
 		if e == nil {
+			e = f.trim(file, offset+int64(len(p)))
+		}
+		if e == nil {
 			e = f.syncFile(file)
 		}
 	}
@@ -421,6 +453,8 @@ func (f *Files) validateFile(file *os.File, info os.FileInfo, ref Ref, id FileID
 // SealPart fully validates the exact part, links exclusively to the object name,
 // syncs that name, removes the part and syncs again. Exact same-inode crash prefixes
 // can resume; an unrelated existing object never gets overwritten or adopted.
+// A single-link part is first restored to ref.Size and trimmed on its own
+// descriptor; a part already linked to the object is never modified.
 // checkLinkGrowth runs only immediately before a new link, after validation and
 // file Sync. Nil refuses a new link. Existing-prefix recovery never calls it.
 // It may read only the caller's dedicated bounded capacity cache: no Files,
@@ -461,7 +495,13 @@ func (f *Files) sealPart(ref Ref, id FileID, checkLinkGrowth func() error) (rece
 		err = e
 		return
 	}
-	file, info, e := f.openFile(ref, id, name, false, links)
+	var file *os.File
+	var info os.FileInfo
+	if links == 1 {
+		file, info, e = f.preparePart(ref, id)
+	} else {
+		file, info, e = f.openFile(ref, id, name, false, links)
+	}
 	if e != nil {
 		err = e
 		return
@@ -517,6 +557,37 @@ func (f *Files) sealPart(ref Ref, id FileID, checkLinkGrowth func() error) (rece
 	}
 	return SealReceipt{File: id, Manifest: manifest}, nil
 }
+
+// preparePart opens the exact single-link part writable, removes a scratch
+// byte past ref.Size and trims allocation before the ordinary strict checks.
+func (f *Files) preparePart(ref Ref, id FileID) (*os.File, os.FileInfo, error) {
+	file, info, err := f.openScratchPart(ref, id)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info.Size() < ref.Size {
+		err = ErrFileConflict
+	}
+	if err == nil && info.Size() > ref.Size {
+		err = f.truncate(file, ref.Size)
+	}
+	if err == nil {
+		err = f.trim(file, ref.Size)
+	}
+	if err == nil {
+		info, err = file.Stat()
+	}
+	if err == nil {
+		err = f.checkFile(info, ref, id, 1)
+	}
+	if err == nil {
+		err = f.checkPath(partName(ref), info)
+	}
+	if err != nil {
+		return nil, nil, errors.Join(err, f.closeFile(file))
+	}
+	return file, info, nil
+}
 func (f *Files) sealedObject(ref Ref, id FileID) (SealReceipt, error) {
 	file, info, err := f.openFile(ref, id, objectName(ref), false, 1)
 	if err != nil {
@@ -539,6 +610,8 @@ func (f *Files) sealedObject(ref Ref, id FileID) (SealReceipt, error) {
 // RemovePart and RemoveObject require a prior durable deletion intent and joined
 // operation owners. Missing is confirmed only in this original root, followed by
 // root sync. They never erase another inode or credit metadata reservations.
+// RemovePart first repairs an interrupted trim's scratch byte on the exact
+// single-link part, then removes it through the ordinary strict checks.
 func (f *Files) RemovePart(ref Ref, id FileID) error   { return f.removeOwned(ref, id, false) }
 func (f *Files) RemoveObject(ref Ref, id FileID) error { return f.removeOwned(ref, id, true) }
 func (f *Files) removeOwned(ref Ref, id FileID, object bool) error {
@@ -584,6 +657,21 @@ func (f *Files) removeOwned(ref Ref, id FileID, object bool) error {
 		other, e := f.root.Lstat(mate)
 		if e != nil || !os.SameFile(info, other) {
 			return ErrFileConflict
+		}
+	}
+	if !object && links == 1 && info.Size() > ref.Size {
+		// An interrupted trim's scratch byte gets the same private repair as
+		// RecoverPart before the ordinary strict removal below.
+		file, _, err := f.openScratchPart(ref, id)
+		if err != nil {
+			return err
+		}
+		err = f.truncate(file, ref.Size)
+		if err == nil {
+			err = f.syncFile(file)
+		}
+		if err = errors.Join(err, f.finishFile(file, ref, id, name, 1)); err != nil {
+			return err
 		}
 	}
 	file, _, err := f.openFile(ref, id, name, false, links)

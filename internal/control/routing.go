@@ -47,6 +47,7 @@ func validAcceleratorNames(names []string) bool {
 	return true
 }
 func cloneTarget(t backend.Target) backend.Target {
+	t.DataPolicy = backend.CloneDataPolicy(t.DataPolicy)
 	if t.Retention != nil {
 		copy := *t.Retention
 		t.Retention = &copy

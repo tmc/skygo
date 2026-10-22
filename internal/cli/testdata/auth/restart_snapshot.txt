@@ -1,5 +1,7 @@
 # The durable scoped-mode marker and principal retry bindings survive both
 # daemon restart and an offline database snapshot restored with current auth.
+# Token outputs and auth files in this workdir need a private parent.
+chmod 0700 .
 skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
 skygo auth principal add alice --role operator --auth-file $AUTH
 skygo auth principal add bob --role operator --auth-file $AUTH

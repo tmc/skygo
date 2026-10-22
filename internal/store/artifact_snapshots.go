@@ -161,6 +161,15 @@ func (s *Store) AbandonArtifactCreate(c ArtifactCreateAbandonment) (operation st
 		if e != nil {
 			return e
 		}
+		if u.RemoteAttemptID != "" {
+			r, ok := st.Remote[u.RemoteAttemptID]
+			o, exists := st.Objects[c.Cursor.ID]
+			owner, e := remoteOwner(st, r)
+			if !ok || e != nil || r.State != 2 || remoteOutputID(r) != c.Cursor.ID || owner != u.Owner || !exists || o.State != "reserved" || o.Origin != "remote_result" || o.Source != u.RemoteAttemptID || o.JobID != r.Job || o.Owner != u.Owner || o.Ref != u.Ref || o.File != (ArtifactFile{}) || o.Manifest != (ArtifactManifest{}) {
+				return ErrArtifactConflict
+			}
+			delete(st.Objects, c.Cursor.ID) // exact unmaterialized reservation; actual part remains charged below.
+		}
 		u.State = "deleting"
 		u.Part = c.File
 		st.Uploads[c.Cursor.ID] = u

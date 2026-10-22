@@ -40,6 +40,9 @@ type maintenanceResult struct {
 	err            error
 }
 type maintenanceState struct {
+	remoteInputAfter     string
+	remoteInputDue       time.Time
+	preparationFamily    uint8
 	expiryUploadAfter    string
 	expiryDownloadAfter  string
 	expiryFamily         uint8

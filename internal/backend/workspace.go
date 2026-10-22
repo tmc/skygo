@@ -26,6 +26,25 @@ func ValidateWorkspace(t Task) error {
 	if t.Directory != "" {
 		return errors.New("workdir requires an empty directory")
 	}
+	return validateWorkspaceFields(t)
+}
+
+// ValidateWorkspaceTemplate checks the snapshot fields of a task whose input
+// is not yet resolved. It requires a nil Workdir and an empty Directory, then
+// applies the Setup and Outputs checks of ValidateWorkspace. It grants no
+// input authority and never supplies a Ref.
+func ValidateWorkspaceTemplate(t Task) error {
+	if t.Workdir != nil {
+		return errors.New("workspace template requires no workdir")
+	}
+	if t.Directory != "" {
+		return errors.New("workspace template requires an empty directory")
+	}
+	return validateWorkspaceFields(t)
+}
+
+// validateWorkspaceFields checks Setup and Outputs.
+func validateWorkspaceFields(t Task) error {
 	if len(t.Setup) > 64 {
 		return errors.New("setup exceeds 64 arguments")
 	}
@@ -88,5 +107,6 @@ func CloneTask(t Task) Task {
 	}
 	t.Setup = slices.Clone(t.Setup)
 	t.Outputs = slices.Clone(t.Outputs)
+	t.DataMounts = slices.Clone(t.DataMounts)
 	return t
 }

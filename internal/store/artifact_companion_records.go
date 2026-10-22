@@ -28,6 +28,11 @@ func companionEligible(tx *bolt.Tx) (*artifactState, error) {
 			return nil, err
 		}
 	}
+	for _, r := range st.Remote {
+		if r.State != 4 {
+			return nil, errors.New("remote execution retirement is pending")
+		}
+	}
 	if len(st.Workspaces) != 0 || len(st.Deletes) != 0 {
 		return nil, errors.New("artifact cleanup must finish before companion backup")
 	}

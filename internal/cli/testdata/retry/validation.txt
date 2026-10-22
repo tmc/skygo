@@ -8,6 +8,9 @@ stderr 'exit'
 stderr 'delay'
 ! skygo jobs logs nonexistent --attempt -1
 stderr 'attempt'
+! skygo jobs logs nonexistent --attempt 99
+stderr '^attempt must be between 1 and 10\n$'
+total-calls 0
 calls SubmitRetryJob 0
 calls SubmitJob 0
 calls PlanTask 0

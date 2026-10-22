@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package skygo.v1;
+
+import "google/protobuf/timestamp.proto";
+import "skygo/v1/control.proto";
+
+option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
+
+// WorkflowService accepts bounded acyclic graphs of tasks. A workflow has no
+// aggregate execution state; each node reports its own child job.
+service WorkflowService {
+  // SubmitWorkflow never falls back to job submission.
+  rpc SubmitWorkflow(SubmitWorkflowRequest) returns (SubmitWorkflowResponse);
+  rpc GetWorkflow(GetWorkflowRequest) returns (GetWorkflowResponse);
+  rpc ListWorkflows(ListWorkflowsRequest) returns (ListWorkflowsResponse);
+  // CancelWorkflow records a request; it does not report stopped children.
+  rpc CancelWorkflow(CancelWorkflowRequest) returns (CancelWorkflowResponse);
+}
+
+// WorkflowGraph lists 1..64 nodes in declared order with at most 256
+// dependency edges and at most 256 KiB of canonical encoding.
+message WorkflowGraph {
+  repeated WorkflowNode nodes = 1;
+}
+
+message WorkflowNode {
+  // 1..64 ASCII letters, digits, '_' or '-', unique within the graph.
+  string name = 1;
+  Task task = 2;
+  // Distinct names of other nodes that must succeed first.
+  repeated string depends_on = 3;
+  // Absent unless the task's workdir is a producer's result.
+  WorkflowInput input = 4;
+}
+
+// WorkflowInput selects a producer's aggregate output archive as the node's
+// workdir. The producer must be listed in depends_on and must declare
+// outputs, and the consuming task must not set a workdir.
+message WorkflowInput {
+  string node = 1;
+  // Must be "result".
+  string slot = 2;
+}
+
+// WorkflowDisposition is the workflow's decision for a node, separate from
+// the state of any bound child job.
+enum WorkflowDisposition {
+  WORKFLOW_DISPOSITION_UNSPECIFIED = 0;
+  // Not yet decided; the node may already be bound to a child job.
+  WORKFLOW_DISPOSITION_PENDING = 1;
+  WORKFLOW_DISPOSITION_SKIPPED = 2;
+  WORKFLOW_DISPOSITION_CANCELED = 3;
+}
+
+message WorkflowNodeStatus {
+  string name = 1;
+  WorkflowDisposition disposition = 2;
+  // Empty until the node is bound to a child job.
+  string job_id = 3;
+  // Unspecified when job_id is empty.
+  JobState child_state = 4;
+  // The resolved input snapshot; absent until resolved.
+  ArtifactRef input = 5;
+}
+
+message Workflow {
+  string id = 1;
+  WorkflowGraph graph = 2;
+  // Lowercase hexadecimal sha256 of the canonical graph encoding.
+  string graph_sha256 = 3;
+  google.protobuf.Timestamp created_at = 4;
+  bool cancel_requested = 5;
+  // One entry per graph node, in graph order.
+  repeated WorkflowNodeStatus nodes = 6;
+}
+
+// WorkflowSummary is the list projection of a Workflow; it omits the graph
+// and node status.
+message WorkflowSummary {
+  string id = 1;
+  string graph_sha256 = 2;
+  google.protobuf.Timestamp created_at = 3;
+  bool cancel_requested = 4;
+}
+
+// RequestDomain is optional and grants no authority.
+message SubmitWorkflowRequest {
+  WorkflowGraph graph = 1;
+  // Reuse this identifier on retries. A different graph with the same ID is rejected.
+  string request_id = 2;
+  RequestDomain domain = 3;
+}
+
+message SubmitWorkflowResponse {
+  Workflow workflow = 1;
+}
+
+message GetWorkflowRequest {
+  string id = 1;
+}
+
+message GetWorkflowResponse {
+  Workflow workflow = 1;
+}
+
+// Pages follow acceptance order and are live, not a snapshot: workflows
+// accepted later may appear on later pages. Zero page_size selects 50; the
+// maximum is 200.
+message ListWorkflowsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListWorkflowsResponse {
+  repeated WorkflowSummary workflows = 1;
+  string next_page_token = 2;
+}
+
+message CancelWorkflowRequest {
+  string id = 1;
+}
+
+message CancelWorkflowResponse {
+  Workflow workflow = 1;
+}

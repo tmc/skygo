@@ -1,0 +1,9 @@
+{{define "content"}}{{template "targets" .}}{{end}}
+{{define "targets"}}
+<table>
+<thead><tr><th>Name</th><th>Kind</th><th>Capabilities</th><th>Labels</th><th>Accelerators</th></tr></thead>
+<tbody>
+{{range .}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{range .Capabilities}}<code>{{.}}</code> {{end}}</td><td>{{range .Labels}}<code>{{.}}</code> {{end}}</td><td>{{range .Accelerators}}<code>{{.}}</code> {{end}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}

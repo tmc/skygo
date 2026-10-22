@@ -1,0 +1,36 @@
+# Default routing only. The peer grants nothing and starts no local process.
+skygo --json run -f plain.yaml --request-id ordinary-1
+stdout 'JOB_STATE_QUEUED'
+skygo --json run -f retry.yaml --request-id retry-1
+stdout 'JOB_STATE_QUEUED'
+skygo --json run -f plain.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id retained-1
+stdout 'JOB_STATE_QUEUED'
+# This Ref is a wire fixture, not an actual uploaded workspace.
+skygo --json run -f workdir.yaml --request-id workspace-1
+stdout 'JOB_STATE_QUEUED'
+calls SubmitJob 1
+calls SubmitRetryJob 1
+calls SubmitRetainedJob 1
+calls SubmitWorkspaceJob 1
+calls SubmitDataJob 0
+calls BeginArtifactUpload 0
+
+-- plain.yaml --
+argv: [echo, hello]
+target: local
+
+-- retry.yaml --
+argv: [echo, hello]
+target: local
+retry:
+  max_attempts: 2
+  delay_seconds: 0
+  exit_codes: [7]
+
+-- workdir.yaml --
+argv: [echo, hello]
+target: local
+workdir:
+  id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+  sha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  size: 1024

@@ -18,7 +18,7 @@ func artifactNext(n uint64) (uint64, error) {
 
 func artifactOwnedUpload(s *artifactState, owner string, c ArtifactCursor) (artifactUploadRecord, error) {
 	u, ok := s.Uploads[c.ID]
-	if !ok || u.Owner != owner {
+	if !ok || u.Owner != owner || u.RemoteAttemptID != "" {
 		return u, ErrNotFound
 	}
 	if u.Revision != c.Revision {
@@ -73,7 +73,7 @@ func (s *Store) GetArtifactUpload(actor auth.Actor, id string) (out ArtifactUplo
 			return e
 		}
 		u, ok := st.Uploads[id]
-		if !ok || u.Owner != actor.Principal() {
+		if !ok || u.Owner != actor.Principal() || u.RemoteAttemptID != "" {
 			return ErrNotFound
 		}
 		out = artifactUploadDTO(u)

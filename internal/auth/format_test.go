@@ -18,7 +18,7 @@ func priorFixture(t *testing.T) fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(t.TempDir(), "auth.json")
+	path := filepath.Join(privateDir(t), "auth.json")
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package kube
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"os"
@@ -13,10 +14,17 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-// FromTarget constructs a named target without contacting its API server.
-// Kubeconfig must be absolute and Context explicit, unless InCluster is true.
-// The target's routing, trust and policy are fixed for its lifetime.
-func FromTarget(t TargetConfig, owner string) (backend.Target, error) {
+// FromTarget constructs a named target. Kubeconfig must be absolute and
+// Context explicit, unless InCluster is true. The target's routing, trust and
+// policy are fixed for its lifetime.
+//
+// Without a data qualification, FromTarget does not contact the API server.
+// With one, it loads the record and build receipt, validates them against the
+// actual executable and target, and before returning reads the namespace,
+// server version, qualified node pool and recorded PVCs under ctx. Any
+// mismatch, failure or uncertain response body refuses the target. Only such
+// a target reports remote data support.
+func FromTarget(ctx context.Context, t TargetConfig, owner string) (backend.Target, error) {
 	if err := validateTarget(t); err != nil {
 		return backend.Target{}, err
 	}
@@ -31,7 +39,7 @@ func FromTarget(t TargetConfig, owner string) (backend.Target, error) {
 	if err != nil {
 		return backend.Target{}, errors.New("load kubernetes target configuration")
 	}
-	return fromREST(t, owner, config)
+	return fromRESTContext(ctx, t, owner, config)
 }
 
 // FromConfig constructs the legacy target named kubernetes. It uses in-cluster
@@ -57,7 +65,18 @@ func FromConfig(kubeconfig, contextName, namespace, owner string) (backend.Targe
 	}, owner, config)
 }
 
+// fromREST constructs a target that makes no API request, as FromConfig
+// requires. It refuses a configured data qualification.
 func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target, error) {
+	if qualificationConfig(t.Data) != nil {
+		return backend.Target{}, errors.New("kubernetes data qualification requires a caller context")
+	}
+	return fromRESTContext(context.Background(), t, owner, config)
+}
+
+// fromRESTContext constructs a target from a loaded REST configuration. Only
+// a configured data qualification makes requests, under ctx.
+func fromRESTContext(ctx context.Context, t TargetConfig, owner string, config *rest.Config) (backend.Target, error) {
 	if t.Name == "local" || len(validation.IsDNS1123Label(t.Name)) != 0 {
 		return backend.Target{}, errors.New("invalid kubernetes target name")
 	}
@@ -94,15 +113,25 @@ func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target
 	}
 	// Freeze the bytes used by both the binding and the actual transport.
 	config.CAFile = ""
-	t.Labels = maps.Clone(t.Labels)
-	t.Resources = clonePolicy(t.Resources)
-	binding, err := targetBinding(t, config)
+	data, err := newDataProfile(t.Data)
 	if err != nil {
 		return backend.Target{}, err
 	}
-	client, err := kubernetes.NewForConfig(config)
+	t.Labels = maps.Clone(t.Labels)
+	t.Resources = clonePolicy(t.Resources)
+	t.Data = cloneDataConfig(t.Data)
+	client, err := newClient(config, data != nil)
 	if err != nil {
 		return backend.Target{}, errors.New("create kubernetes client")
+	}
+	q, err := qualifyTarget(ctx, t, config, data, client)
+	if err != nil {
+		return backend.Target{}, err
+	}
+	// The record bound the binding without q; the target's binding adds it.
+	binding, err := targetBinding(t, config, data, q)
+	if err != nil {
+		return backend.Target{}, err
 	}
 	names := make([]string, 0, len(t.Resources.Accelerators))
 	for name := range t.Resources.Accelerators {
@@ -110,7 +139,12 @@ func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target
 	}
 	slices.Sort(names)
 	b := &Backend{client: client, namespace: t.Namespace, owner: owner, binding: binding,
-		policy: t.Resources, canceled: make(map[string]bool)}
+		policy: t.Resources, canceled: make(map[string]bool), data: data, dataQual: q}
+	var policy *backend.DataPolicy
+	if data != nil {
+		p := backend.DefaultDataPolicy()
+		policy = &p
+	}
 	return backend.Target{
 		Name: t.Name, Kind: "kubernetes", Backend: b, Binding: binding,
 		Labels: maps.Clone(t.Labels), AcceleratorNames: names,
@@ -118,7 +152,34 @@ func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target
 		SupportsRetry: true,
 		OutputStorage: backend.RemoteOutput,
 		Retention:     &backend.Retention{RemoveExecution: b.removeExecution},
+		DataPolicy:    policy,
+		// Data support comes only from an installed qualification. Staged
+		// retry is not qualified in this phase.
+		SupportsRemoteData:      q != nil,
+		SupportsDataMounts:      q != nil && slices.ContainsFunc(q.record.Images, func(i qualificationImage) bool { return len(i.Mounts) != 0 }),
+		SupportsRemoteDataRetry: false,
 	}, nil
+}
+
+// newClient builds the clientset as kubernetes.NewForConfig does. For a data
+// target, the data transport wraps the complete HTTP transport, outside the
+// authentication wrappers, so that a request refused after an uncertain body
+// Close causes no credential refresh either. Untagged requests pass through
+// unchanged.
+func newClient(config *rest.Config, data bool) (*kubernetes.Clientset, error) {
+	if !data {
+		return kubernetes.NewForConfig(config)
+	}
+	c := *config
+	if c.UserAgent == "" {
+		c.UserAgent = rest.DefaultKubernetesUserAgent()
+	}
+	hc, err := rest.HTTPClientFor(&c)
+	if err != nil {
+		return nil, err
+	}
+	hc.Transport = &dataTransport{base: hc.Transport}
+	return kubernetes.NewForConfigAndClient(&c, hc)
 }
 
 func clonePolicy(p ResourcePolicy) ResourcePolicy {

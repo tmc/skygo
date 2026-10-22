@@ -1,0 +1,72 @@
+# Replay returns the accepted workflow before any new acceptance: after a
+# lost response, after completion, and after a restart of the same daemon
+# and state. No node runs twice.
+private-workdir
+skygo auth init --data-dir $DATA --auth-file $AUTH --token-output admin.token
+skygo auth principal add alice --role operator --auth-file $AUTH
+skygo auth token issue alice --auth-file $AUTH --output alice.token --expires-in 24h
+server start
+graph-file chain.tmpl chain.yaml
+
+# The daemon accepts the workflow, but the client loses the response.
+drop-response /skygo.v1.WorkflowService/SubmitWorkflow
+! skygo --endpoint $PROXY --token-file alice.token --json workflow run -f chain.yaml --request-id chain
+stderr '^request-id: chain\n'
+! stdout .
+skygo --token-file alice.token --json workflow run -f chain.yaml --request-id chain
+json-field id WF
+await-workflow alice.token $WF b succeeded
+cp stdout done.json
+event-count 2
+skygo --token-file alice.token --json workflow run -f chain.yaml --request-id chain
+cmp stdout done.json
+calls WorkflowService/SubmitWorkflow 3
+calls job-submissions 0
+skygo --token-file alice.token --json workflow list
+stdout '"id": *"'$WF'"'
+! json-field workflows.1.id EXTRA
+
+# A different graph cannot reuse the request ID.
+graph-file changed.tmpl changed.yaml
+! skygo --token-file alice.token workflow run -f changed.yaml --request-id chain
+stderr 'already_exists'
+event-count 2
+
+# The same daemon and state after a restart.
+server stop
+! stderr .
+server start
+skygo --token-file alice.token --json workflow get $WF
+cmp stdout done.json
+skygo --token-file alice.token --json workflow run -f chain.yaml --request-id chain
+cmp stdout done.json
+json-field nodes.1.job_id BJOB
+skygo --token-file alice.token jobs logs $BJOB
+stdout '^node b\n$'
+event-count 2
+calls job-submissions 0
+server stop
+! stderr .
+
+-- chain.tmpl --
+nodes:
+- name: a
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: a}
+- name: b
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: b, SKYGO_WORKFLOW_AFTER: a}
+  depends_on: [a]
+-- changed.tmpl --
+nodes:
+- name: a
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: a}
+- name: b
+  task:
+    argv: ["@WORKLOAD@", "-test.run=^TestWorkflowWorkload$"]
+    env: {SKYGO_WORKFLOW_WORKLOAD: succeed, SKYGO_WORKFLOW_DIR: "@DIR@", SKYGO_WORKFLOW_NODE: changed, SKYGO_WORKFLOW_AFTER: a}
+  depends_on: [a]

@@ -1,0 +1,66 @@
+# Portable refusal must precede every HTTP method; this peer runs no backend.
+! skygo run -f mounts.yaml
+stderr 'require.*--remote-data|--remote-data.*require'
+! skygo run --remote-data -f unknown.yaml
+stderr 'field read_onli not found'
+! skygo run --remote-data -f overlap.yaml
+stderr 'overlapping data mount'
+! skygo run --remote-data -f no-target.yaml
+stderr 'explicit.*target|target.*explicit'
+! skygo run --remote-data -f plain.yaml
+stderr 'workdir|mount'
+! skygo plan --remote-data --objective lowest-rate --currency USD -f mounts.yaml
+stderr 'remote.data|remote data'
+calls ALL 0
+! exists native-marker
+
+-- mounts.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- unknown.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_onli: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- overlap.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/a/child
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- no-target.yaml --
+argv: [echo, hello]
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- plain.yaml --
+argv: [echo, hello]
+target: local

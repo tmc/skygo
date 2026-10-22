@@ -68,22 +68,38 @@ func (c *Control) receiveOperation(ctx context.Context, s *loopState, result ope
 		return fmt.Errorf("%w: previous target result remains held", ErrUnavailable)
 	}
 	s.unmatched = &result
+	check := result.operation.workflow
 	var worker *targetWorker
 	for i := range s.workers {
-		if s.workers[i].target.Name == result.operation.job.Target {
-			worker = &s.workers[i]
+		w := &s.workers[i]
+		// A workflow check precedes any durable Job: only its original request
+		// pointer, pending on its own route's worker, identifies it.
+		if check != nil && w.pending != nil && w.pending.workflow == check || check == nil && w.target.Name == result.operation.job.Target {
+			worker = w
 			break
 		}
 	}
-	if worker == nil || worker.received != nil || worker.pending == nil || worker.pending.kind != result.operation.kind || !sameExecution(worker.pending.job, result.operation.job) {
+	matched := worker != nil && worker.received == nil && worker.pending != nil && worker.pending.kind == result.operation.kind && worker.pending.workflow == check
+	if matched && check != nil {
+		route := check.routes[0].target
+		matched = result.operation.kind == workflowCheckOperation && worker.target.Name == route.Name && worker.target.Binding == route.Binding
+	} else if matched {
+		matched = sameExecution(worker.pending.job, result.operation.job)
+	}
+	if !matched {
 		return fmt.Errorf("%w: target result has no matching original request", ErrUnavailable)
+	}
+	if worker.pending.data != result.operation.data || (result.operation.data == nil) != (result.data == nil) {
+		return fmt.Errorf("%w: target data result has no matching original request", ErrUnavailable)
 	}
 	worker.received = &receivedOperation{request: worker.pending, result: result}
 	s.unmatched = nil
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := c.integrate(s, result); err != nil {
+	if check != nil {
+		c.integrateWorkflowCheck(s, worker, result)
+	} else if err := c.integrate(s, result); err != nil {
 		return err
 	}
 	if worker.pending != nil {

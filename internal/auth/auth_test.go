@@ -21,13 +21,24 @@ type fixture struct{ path, initial string }
 
 func newFixture(t *testing.T) fixture {
 	t.Helper()
-	dir := t.TempDir()
+	dir := privateDir(t)
 	path := filepath.Join(dir, "auth.json")
 	token := filepath.Join(dir, "legacy.token")
 	if _, err := Initialize(path, token, installation); err != nil {
 		t.Fatal(err)
 	}
 	return fixture{path, readToken(t, token)}
+}
+
+// privateDir returns a test-owned credential parent. safeParent rejects group
+// or other write, which t.TempDir may carry from the umask.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return dir
 }
 func readToken(t *testing.T, path string) string {
 	t.Helper()
@@ -509,7 +520,7 @@ func TestTokenPropertiesLimitsAndConcurrentMutation(t *testing.T) {
 }
 
 func TestPrivateFilesSymlinksAndCleanupOwnership(t *testing.T) {
-	dir := t.TempDir()
+	dir := privateDir(t)
 	path := filepath.Join(dir, "auth")
 	output := filepath.Join(dir, "token")
 	cleanup, err := Initialize(path, output, installation)

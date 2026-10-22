@@ -1,0 +1,12 @@
+{{define "content"}}
+<h1>log in</h1>
+<p id="problem" class="problem">{{.Problem}}</p>
+{{if .Available}}
+<form id="login" method="post" action="/login">
+<label for="code">Login code from the terminal</label>
+<input id="code" name="code" type="password" autocomplete="off" required>
+<button type="submit">log in</button>
+</form>
+<noscript><p class="problem">The dashboard needs JavaScript.</p></noscript>
+{{end}}
+{{end}}

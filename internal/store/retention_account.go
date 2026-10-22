@@ -47,12 +47,22 @@ func adjust(tx *bolt.Tx, q QuotaDomain, add, remove uint64) error {
 	if e != nil {
 		return e
 	}
-	cap := limits(s.Policy)[q]
-	if s.Enabled && n > old && n > cap {
-		return &CapacityError{Domain: q, Used: old, Limit: cap}
+	if s.Enabled {
+		if e = capacityError(s.Policy, q, old, n); e != nil {
+			return e
+		}
 	}
 	u[q] = n
 	return putJSON(retentionRoot(tx), retentionUsageKey, u)
+}
+
+// capacityError refuses growth of q from before to after past its policy cap.
+// Shrinking, or staying at an existing overage, is always allowed.
+func capacityError(p RetentionPolicy, q QuotaDomain, before, after uint64) error {
+	if cap := limits(p)[q]; after > before && after > cap {
+		return &CapacityError{Domain: q, Used: before, Limit: cap}
+	}
+	return nil
 }
 func tableDomains(name []byte) (QuotaDomain, QuotaDomain) {
 	switch {
@@ -83,7 +93,7 @@ func putRetentionRecord(tx *bolt.Tx, name, key []byte, value any) error {
 		if e = json.Unmarshal(data, &after); e != nil {
 			return e
 		}
-		if before.Principal != after.Principal || before.Domain != after.Domain || before.requestID() != after.requestID() || before.JobID != after.JobID || before.TaskDigest != after.TaskDigest {
+		if before.Principal != after.Principal || before.Domain != after.Domain || before.requestID() != after.requestID() || before.JobID != after.JobID || before.TaskDigest != after.TaskDigest || before.WorkflowID != after.WorkflowID || before.GraphDigest != after.GraphDigest {
 			return errors.New("request identity hash collision")
 		}
 	}
@@ -186,9 +196,28 @@ func principalScope(tx *bolt.Tx, principal string) error {
 	return putRetentionRecord(tx, retainedScopesBucket, []byte(principal), uint64(0))
 }
 func trackJob(tx *bolt.Tx, j backend.Job, m retainedJob, req requestRecord) error {
-	if retentionTable(tx, retainedRequestsBucket).Get(requestKey(req.Principal, req.Domain, req.requestID())) != nil {
+	key := requestKey(req.Principal, req.Domain, req.requestID())
+	if v := retentionTable(tx, retainedRequestsBucket).Get(key); v != nil {
+		if workflowRequest(v) {
+			return ErrConflict
+		}
 		return errors.New("request identity key already exists")
 	}
+	if e := trackJobMetadata(tx, j, m); e != nil {
+		return e
+	}
+	if e := putRetentionRecord(tx, retainedRequestsBucket, key, req); e != nil {
+		return e
+	}
+	if req.LegacyBytes > 0 {
+		return adjust(tx, RequestBytesQuota, req.LegacyBytes, 0)
+	}
+	return nil
+}
+
+// trackJobMetadata charges and records a new job's retained metadata. A
+// workflow child has no request record; its workflow's request covers it.
+func trackJobMetadata(tx *bolt.Tx, j backend.Job, m retainedJob) error {
 	if e := principalScope(tx, m.Principal); e != nil {
 		return e
 	}
@@ -225,16 +254,7 @@ func trackJob(tx *bolt.Tx, j backend.Job, m retainedJob, req requestRecord) erro
 			return e
 		}
 	}
-	if e = putRetentionRecord(tx, retainedJobsBucket, []byte(j.ID), m); e != nil {
-		return e
-	}
-	if e = putRetentionRecord(tx, retainedRequestsBucket, requestKey(req.Principal, req.Domain, req.requestID()), req); e != nil {
-		return e
-	}
-	if req.LegacyBytes > 0 {
-		return adjust(tx, RequestBytesQuota, req.LegacyBytes, 0)
-	}
-	return nil
+	return putRetentionRecord(tx, retainedJobsBucket, []byte(j.ID), m)
 }
 func initializeRetention(tx *bolt.Tx) error {
 	if retentionRoot(tx) != nil {
@@ -396,6 +416,9 @@ func sumUsage(tx *bolt.Tx) (retentionUsage, error) {
 				if e := json.Unmarshal(v, &x); e != nil {
 					return e
 				}
+				if x.WorkflowID != "" {
+					return nil
+				}
 				n, e := legacyBindingBytes(tx, x)
 				if e != nil {
 					return e
@@ -428,6 +451,17 @@ func sumUsage(tx *bolt.Tx) (retentionUsage, error) {
 			return u, e
 		}
 	}
+	// Graph bytes are retained task bytes but are not in the core job counter.
+	graphs, metadata, e := workflowUsage(tx)
+	if e != nil {
+		return u, e
+	}
+	if e = add(TaskBytesQuota, graphs); e != nil {
+		return u, e
+	}
+	if e = add(MetadataBytesQuota, metadata); e != nil {
+		return u, e
+	}
 	st, e := loadRetention(tx)
 	if e != nil {
 		return u, e
@@ -435,7 +469,7 @@ func sumUsage(tx *bolt.Tx) (retentionUsage, error) {
 	if st.TaskCounterOffset != 0 && st.TaskCounterDeficit != 0 {
 		return u, errors.New("invalid legacy task counter adjustment")
 	}
-	expected, e := addChecked(u[TaskBytesQuota], st.TaskCounterOffset)
+	expected, e := addChecked(u[TaskBytesQuota]-graphs, st.TaskCounterOffset)
 	if e != nil {
 		return u, e
 	}

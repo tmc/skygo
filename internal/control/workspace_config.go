@@ -88,6 +88,7 @@ func (c *Control) artifactAdmissionStopped() bool {
 }
 
 // SubmitWorkspace accepts or replays a workspace task without a request domain.
+// The shared submission admission gate rejects data mounts before acceptance.
 // Enabled request retention requires an explicit domain on a new acceptance.
 func (c *Control) SubmitWorkspace(actor auth.Actor, requestID string, task backend.Task) (backend.Job, error) {
 	return c.submit(actor, nil, requestID, task, true)

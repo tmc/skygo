@@ -68,7 +68,26 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 			return nil, err
 		}
 	}
-	workspace := workspaceTask(task)
+	remoteData := false
+	if cmd.Flags().Lookup("remote-data") != nil {
+		var err error
+		remoteData, err = cmd.Flags().GetBool("remote-data")
+		if err != nil {
+			return nil, err
+		}
+	}
+	if len(task.DataMounts) != 0 && !remoteData {
+		return nil, errors.New("data mounts require --remote-data")
+	}
+	if remoteData {
+		if err := validateDataTask(task); err != nil {
+			return nil, err
+		}
+		if err := o.preflightData(ctx, task); err != nil && !(domainSet && suppliedID && selected != nil && dataReplayMismatch(err)) {
+			return nil, err
+		}
+	}
+	workspace := !remoteData && workspaceTask(task)
 	if workspace {
 		if _, err := o.requireEndpointCapabilities(ctx, v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1); err != nil {
 			return nil, err
@@ -103,7 +122,7 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 	}
 	// Retained replay and enabled legacy lookup precede current placement. Only
 	// disabled/old-server default commands retain S05's extension preflight.
-	if !workspace && selected == nil && !enabled && !retrying && len(taskCapabilities(task)) != 0 {
+	if !remoteData && !workspace && selected == nil && !enabled && !retrying && len(taskCapabilities(task)) != 0 {
 		if _, err := o.planTask(ctx, client, task); err != nil {
 			return nil, err
 		}
@@ -119,6 +138,9 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 		if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "request-domain: %s\nrequest-id: %s\ntask-file: %q\n", domain, id, file); err != nil {
 			return nil, fmt.Errorf("write request hint: %w", err)
 		}
+		if remoteData {
+			return o.submitData(ctx, client, task, id, selected)
+		}
 		if workspace {
 			return o.submitWorkspace(ctx, client, task, id, selected)
 		}
@@ -133,6 +155,9 @@ func (o *options) submitTask(cmd *cobra.Command, ctx context.Context, client sky
 	}
 	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "request-id: %s\n", id); err != nil {
 		return nil, fmt.Errorf("write request id: %w", err)
+	}
+	if remoteData {
+		return o.submitData(ctx, client, task, id, nil)
 	}
 	if workspace {
 		return o.submitWorkspace(ctx, client, task, id, nil)

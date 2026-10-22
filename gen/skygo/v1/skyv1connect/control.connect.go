@@ -75,6 +75,9 @@ const (
 	// ControlServiceSubmitWorkspaceJobProcedure is the fully-qualified name of the ControlService's
 	// SubmitWorkspaceJob RPC.
 	ControlServiceSubmitWorkspaceJobProcedure = "/skygo.v1.ControlService/SubmitWorkspaceJob"
+	// ControlServiceSubmitDataJobProcedure is the fully-qualified name of the ControlService's
+	// SubmitDataJob RPC.
+	ControlServiceSubmitDataJobProcedure = "/skygo.v1.ControlService/SubmitDataJob"
 	// ControlServiceBeginArtifactUploadProcedure is the fully-qualified name of the ControlService's
 	// BeginArtifactUpload RPC.
 	ControlServiceBeginArtifactUploadProcedure = "/skygo.v1.ControlService/BeginArtifactUpload"
@@ -132,6 +135,8 @@ type ControlServiceClient interface {
 	StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest]) (*connect.ServerStreamForClient[v1.StreamRetainedJobLogsResponse], error)
 	// Workspace submission never falls back to an older submit method.
 	SubmitWorkspaceJob(context.Context, *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error)
+	// Data submission requires explicit endpoint and selected-target support; never fall back.
+	SubmitDataJob(context.Context, *connect.Request[v1.SubmitDataJobRequest]) (*connect.Response[v1.SubmitDataJobResponse], error)
 	// Artifact transfers use bounded unary chunks, not whole-archive messages.
 	BeginArtifactUpload(context.Context, *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error)
 	GetArtifactUpload(context.Context, *connect.Request[v1.GetArtifactUploadRequest]) (*connect.Response[v1.GetArtifactUploadResponse], error)
@@ -245,6 +250,12 @@ func NewControlServiceClient(httpClient connect.HTTPClient, baseURL string, opts
 			connect.WithSchema(controlServiceMethods.ByName("SubmitWorkspaceJob")),
 			connect.WithClientOptions(opts...),
 		),
+		submitDataJob: connect.NewClient[v1.SubmitDataJobRequest, v1.SubmitDataJobResponse](
+			httpClient,
+			baseURL+ControlServiceSubmitDataJobProcedure,
+			connect.WithSchema(controlServiceMethods.ByName("SubmitDataJob")),
+			connect.WithClientOptions(opts...),
+		),
 		beginArtifactUpload: connect.NewClient[v1.BeginArtifactUploadRequest, v1.BeginArtifactUploadResponse](
 			httpClient,
 			baseURL+ControlServiceBeginArtifactUploadProcedure,
@@ -319,6 +330,7 @@ type controlServiceClient struct {
 	pruneJobs              *connect.Client[v1.PruneJobsRequest, v1.PruneJobsResponse]
 	streamRetainedJobLogs  *connect.Client[v1.StreamRetainedJobLogsRequest, v1.StreamRetainedJobLogsResponse]
 	submitWorkspaceJob     *connect.Client[v1.SubmitWorkspaceJobRequest, v1.SubmitWorkspaceJobResponse]
+	submitDataJob          *connect.Client[v1.SubmitDataJobRequest, v1.SubmitDataJobResponse]
 	beginArtifactUpload    *connect.Client[v1.BeginArtifactUploadRequest, v1.BeginArtifactUploadResponse]
 	getArtifactUpload      *connect.Client[v1.GetArtifactUploadRequest, v1.GetArtifactUploadResponse]
 	writeArtifactChunk     *connect.Client[v1.WriteArtifactChunkRequest, v1.WriteArtifactChunkResponse]
@@ -405,6 +417,11 @@ func (c *controlServiceClient) SubmitWorkspaceJob(ctx context.Context, req *conn
 	return c.submitWorkspaceJob.CallUnary(ctx, req)
 }
 
+// SubmitDataJob calls skygo.v1.ControlService.SubmitDataJob.
+func (c *controlServiceClient) SubmitDataJob(ctx context.Context, req *connect.Request[v1.SubmitDataJobRequest]) (*connect.Response[v1.SubmitDataJobResponse], error) {
+	return c.submitDataJob.CallUnary(ctx, req)
+}
+
 // BeginArtifactUpload calls skygo.v1.ControlService.BeginArtifactUpload.
 func (c *controlServiceClient) BeginArtifactUpload(ctx context.Context, req *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error) {
 	return c.beginArtifactUpload.CallUnary(ctx, req)
@@ -478,6 +495,8 @@ type ControlServiceHandler interface {
 	StreamRetainedJobLogs(context.Context, *connect.Request[v1.StreamRetainedJobLogsRequest], *connect.ServerStream[v1.StreamRetainedJobLogsResponse]) error
 	// Workspace submission never falls back to an older submit method.
 	SubmitWorkspaceJob(context.Context, *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error)
+	// Data submission requires explicit endpoint and selected-target support; never fall back.
+	SubmitDataJob(context.Context, *connect.Request[v1.SubmitDataJobRequest]) (*connect.Response[v1.SubmitDataJobResponse], error)
 	// Artifact transfers use bounded unary chunks, not whole-archive messages.
 	BeginArtifactUpload(context.Context, *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error)
 	GetArtifactUpload(context.Context, *connect.Request[v1.GetArtifactUploadRequest]) (*connect.Response[v1.GetArtifactUploadResponse], error)
@@ -587,6 +606,12 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 		connect.WithSchema(controlServiceMethods.ByName("SubmitWorkspaceJob")),
 		connect.WithHandlerOptions(opts...),
 	)
+	controlServiceSubmitDataJobHandler := connect.NewUnaryHandler(
+		ControlServiceSubmitDataJobProcedure,
+		svc.SubmitDataJob,
+		connect.WithSchema(controlServiceMethods.ByName("SubmitDataJob")),
+		connect.WithHandlerOptions(opts...),
+	)
 	controlServiceBeginArtifactUploadHandler := connect.NewUnaryHandler(
 		ControlServiceBeginArtifactUploadProcedure,
 		svc.BeginArtifactUpload,
@@ -673,6 +698,8 @@ func NewControlServiceHandler(svc ControlServiceHandler, opts ...connect.Handler
 			controlServiceStreamRetainedJobLogsHandler.ServeHTTP(w, r)
 		case ControlServiceSubmitWorkspaceJobProcedure:
 			controlServiceSubmitWorkspaceJobHandler.ServeHTTP(w, r)
+		case ControlServiceSubmitDataJobProcedure:
+			controlServiceSubmitDataJobHandler.ServeHTTP(w, r)
 		case ControlServiceBeginArtifactUploadProcedure:
 			controlServiceBeginArtifactUploadHandler.ServeHTTP(w, r)
 		case ControlServiceGetArtifactUploadProcedure:
@@ -758,6 +785,10 @@ func (UnimplementedControlServiceHandler) StreamRetainedJobLogs(context.Context,
 
 func (UnimplementedControlServiceHandler) SubmitWorkspaceJob(context.Context, *connect.Request[v1.SubmitWorkspaceJobRequest]) (*connect.Response[v1.SubmitWorkspaceJobResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.SubmitWorkspaceJob is not implemented"))
+}
+
+func (UnimplementedControlServiceHandler) SubmitDataJob(context.Context, *connect.Request[v1.SubmitDataJobRequest]) (*connect.Response[v1.SubmitDataJobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("skygo.v1.ControlService.SubmitDataJob is not implemented"))
 }
 
 func (UnimplementedControlServiceHandler) BeginArtifactUpload(context.Context, *connect.Request[v1.BeginArtifactUploadRequest]) (*connect.Response[v1.BeginArtifactUploadResponse], error) {

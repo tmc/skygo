@@ -45,7 +45,7 @@ func TestConstructors(t *testing.T) {
 	named := TargetConfig{Name: "cpu-a", Namespace: "workloads", Kubeconfig: path, Context: "test",
 		Labels:    map[string]string{"location": "lab"},
 		Resources: ResourcePolicy{NodeSelectors: map[string][]string{"skygo.test/pool": {"s04"}}}}
-	target, err := FromTarget(named, "owner")
+	target, err := FromTarget(context.Background(), named, "owner")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -83,7 +83,7 @@ func TestConstructors(t *testing.T) {
 	} {
 		c := named
 		mutate(&c)
-		if _, err := FromTarget(c, "owner"); err == nil {
+		if _, err := FromTarget(context.Background(), c, "owner"); err == nil {
 			t.Fatal("invalid direct constructor input accepted")
 		}
 	}
@@ -165,7 +165,7 @@ func TestFrozenCAFile(t *testing.T) {
 
 func TestConstructorErrorsAreRedacted(t *testing.T) {
 	canary := "private-context-or-token-canary"
-	_, err := FromTarget(TargetConfig{Name: "cpu", Namespace: "workloads", Kubeconfig: filepath.Join(t.TempDir(), canary), Context: canary}, "owner")
+	_, err := FromTarget(context.Background(), TargetConfig{Name: "cpu", Namespace: "workloads", Kubeconfig: filepath.Join(t.TempDir(), canary), Context: canary}, "owner")
 	if err == nil || strings.Contains(err.Error(), canary) {
 		t.Fatalf("loader error: %v", err)
 	}

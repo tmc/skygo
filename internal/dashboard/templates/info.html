@@ -1,0 +1,12 @@
+{{define "content"}}
+<h2>Endpoint</h2>
+<p>Advertised: {{range .Endpoint}}<code>{{.}}</code> {{else}}none{{end}}</p>
+{{if .Absent}}<p>Not advertised by this endpoint: {{range .Absent}}<code>{{.}}</code> {{end}}</p>{{end}}
+<h2>Targets</h2>
+<table>
+<thead><tr><th>Name</th><th>Kind</th><th>Capabilities</th></tr></thead>
+<tbody>
+{{range .Targets}}<tr><td>{{.Name}}</td><td>{{.Kind}}</td><td>{{range .Capabilities}}<code>{{.}}</code> {{end}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}

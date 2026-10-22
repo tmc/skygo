@@ -15,6 +15,7 @@ import (
 // an authorization credential. Close is trusted original-owner cleanup only.
 // Failed/uncertain opens and closes remain held rather than opening replacements.
 type ArtifactDownload struct {
+	remote     *remoteInputState
 	control    *Control
 	owner      string
 	lease      store.ArtifactLease
@@ -129,7 +130,7 @@ func (c *Control) ReadArtifactChunk(ctx context.Context, actor auth.Actor, call 
 	s.mu.Lock()
 	var d *ArtifactDownload
 	for candidate := range s.downloads {
-		if candidate.lease.ID == id {
+		if candidate.remote == nil && candidate.lease.ID == id {
 			d = candidate
 			break
 		}
@@ -196,6 +197,13 @@ func (d *ArtifactDownload) Close(call *ArtifactCall) error {
 // after stopping and joining all request/internal I/O owners, without reopening
 // admission or acquiring a replacement ArtifactCall.
 func (d *ArtifactDownload) closeOriginal(call *ArtifactCall) error {
+	s := d.control.artifacts
+	s.mu.Lock()
+	remoteBusy := d.remote != nil && (call != nil || d.remote.call != nil || d.remote.finish != nil)
+	s.mu.Unlock()
+	if remoteBusy {
+		return ErrArtifactBusy
+	}
 	frame, err := d.prepareOriginalClose()
 	if frame != nil {
 		defer frame.release()
@@ -213,6 +221,7 @@ func (d *ArtifactDownload) closeOriginal(call *ArtifactCall) error {
 // closing receipt. It lives on the explicit caller's stack or original worker
 // request; it neither reopens a file nor registers a replacement owner.
 type artifactDownloadClose struct {
+	remote      *remoteInputFinish
 	download    *ArtifactDownload
 	closure     store.ArtifactDownloadClosure
 	reader      *artifact.Reader
@@ -294,6 +303,9 @@ func (frame *artifactDownloadClose) invoke() error {
 }
 
 func (frame *artifactDownloadClose) finish() error {
+	if frame.remote != nil {
+		return frame.download.control.finishRemoteInput(frame)
+	}
 	d := frame.download
 	c := d.control
 	if err := c.store.FinishArtifactDownload(frame.closure, time.Now().UTC()); err != nil {
@@ -326,7 +338,7 @@ func (c *Control) CloseArtifactDownload(ctx context.Context, actor auth.Actor, c
 	s.mu.Lock()
 	var selected *ArtifactDownload
 	for d := range s.downloads {
-		if d.lease.ID == id && d.owner == actor.Principal() {
+		if d.remote == nil && d.lease.ID == id && d.owner == actor.Principal() {
 			selected = d
 			break
 		}

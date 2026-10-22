@@ -80,6 +80,35 @@ func retireRequestLane(m *retentionMutation, st *retentionState) (*retentionMuta
 		if err := json.Unmarshal(v, &r); err != nil {
 			return nil, inspected, err
 		}
+		if r.WorkflowID != "" {
+			// A live workflow holds its request; an expired witness in a
+			// closed domain is dropped. Neither has a job or result witness.
+			if !validWorkflowRequest(r) || !bytes.Equal(k, requestKey(r.Principal, r.Domain, r.RequestID)) {
+				return nil, inspected, errors.New("invalid retirement request")
+			}
+			closed := r.Domain.Lineage != st.Lineage || r.Domain.Epoch == 0 && !st.LegacyReplayOpen || r.Domain.Epoch > 0 && r.Domain.Epoch <= st.RetiredThrough
+			trial := m.fork()
+			if closed && r.Expired {
+				if err := trial.drop(retainedRequestsBucket, k); err != nil {
+					return nil, inspected, err
+				}
+			}
+			next := *st
+			next.RequestAfter = string(k)
+			if err := trial.rootPut(retentionStateKey, next); err != nil {
+				return nil, inspected, err
+			}
+			n, err := trial.changedBytes()
+			if err != nil {
+				return nil, inspected, err
+			}
+			if n > maxChangeBytes/2 {
+				break
+			}
+			m, *st = trial, next
+			k, v = c.Next()
+			continue
+		}
 		if !validRequestIdentity(r.Domain, r.RequestID, r.LegacyRequestID) || !validPrincipal([]byte(r.Principal)) || !validAttemptID(r.JobID) || !bytes.Equal(k, requestKey(r.Principal, r.Domain, r.requestID())) {
 			return nil, inspected, errors.New("invalid retirement request")
 		}
@@ -234,6 +263,9 @@ func (m *retentionMutation) retireLegacyJob(st retentionState, j backend.Job) er
 	var meta retainedJob
 	if err := m.load(retainedJobsBucket, []byte(j.ID), &meta); err != nil {
 		return err
+	}
+	if meta.WorkflowID != "" {
+		return nil // A workflow child has no request identity to retire.
 	}
 	if err := checkRetirementJob(m.tx, st, j, meta); err != nil {
 		return err

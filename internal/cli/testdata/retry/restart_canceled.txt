@@ -1,0 +1,22 @@
+# Graceful stop durably cancels owned local work; restart never repeats it.
+server start
+retry-task task.json hold 1
+skygo --json run -f task.json --request-id retry-restart
+job-id JOB
+await-file first
+server stop
+! stderr .
+server start
+skygo --json jobs get $JOB
+stdout '"state": *"JOB_STATE_CANCELED"'
+stdout '"cancel_requested": *true'
+history canceled
+! exists second
+! skygo --json run -f task.json --request-id retry-restart --wait
+stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_CANCELED"'
+stdout '"cancel_requested": *true'
+history canceled
+! exists second
+server stop
+! stderr .

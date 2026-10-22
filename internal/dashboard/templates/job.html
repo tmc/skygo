@@ -1,0 +1,35 @@
+{{define "content"}}
+<dl>
+<dt>ID</dt><dd>{{.ID}}</dd>
+<dt>Target</dt><dd>{{.Target}}</dd>
+<dt>State</dt><dd>{{.State}}</dd>
+<dt>Reason</dt><dd>{{.Reason}}</dd>
+<dt>Exit code</dt><dd>{{.ExitCode}}</dd>
+<dt>Created</dt><dd>{{.Created}}</dd>
+<dt>Updated</dt><dd>{{.Updated}}</dd>
+<dt>Cancel requested</dt><dd>{{.CancelRequested}}</dd>
+<dt>Next attempt</dt><dd>{{.NextAttempt}}</dd>
+<dt>Result</dt><dd>{{.Result}}</dd>
+<dt>Retention</dt><dd>{{.Retention}}</dd>
+{{if .AcceptUntil}}<dt>Accepts retained requests until</dt><dd>{{.AcceptUntil}}</dd>
+{{end}}</dl>
+<p><a href="{{.Logs}}">logs</a> · <a href="{{.Text}}">logs as text</a></p>
+{{if .Attempts}}
+<h2>Attempts</h2>
+<table>
+<thead><tr><th>#</th><th>ID</th><th>State</th><th>Reason</th><th>Exit</th><th>Result</th><th>Created</th><th>Starting</th><th>Finished</th><th></th></tr></thead>
+<tbody>
+{{range .Attempts}}<tr><td>{{.Ordinal}}</td><td>{{.ID}}</td><td>{{.State}}</td><td>{{.Reason}}</td><td>{{.ExitCode}}</td><td>{{.Result}}</td><td>{{.Created}}</td><td>{{.Starting}}</td><td>{{.Finished}}</td><td><a href="{{.Logs}}">logs</a></td></tr>
+{{end}}</tbody>
+</table>
+{{end}}
+<h2>Task</h2>
+<dl>
+<dt>Argv</dt><dd>{{range .Argv}}<code>{{.}}</code> {{end}}</dd>
+<dt>Image</dt><dd>{{.Image}}</dd>
+<dt>Resources</dt><dd>{{.Resources}}</dd>
+<dt>Workdir</dt><dd>{{.Workdir}}</dd>
+<dt>Setup</dt><dd>{{range .Setup}}<code>{{.}}</code> {{end}}</dd>
+<dt>Environment names</dt><dd>{{range .EnvKeys}}<code>{{.}}</code> {{end}}</dd>
+</dl>
+{{end}}

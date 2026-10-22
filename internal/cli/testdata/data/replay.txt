@@ -1,0 +1,51 @@
+# This models wire replay only; actual durable replay has separate server tests.
+skygo --json run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id stable
+cp stdout first.json
+data-peer drift
+skygo --json run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id stable
+cp stdout replay.json
+cmp first.json replay.json
+data-wire 0 stable aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1
+data-wire 1 stable aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1
+# Neither an implicit domain nor an automatically generated ID permits a probe.
+! skygo run --remote-data -f mounts.yaml --request-id stable
+stderr 'target'
+! skygo run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1
+stderr 'target'
+calls SubmitDataJob 2
+! skygo run --remote-data -f changed.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id stable
+stderr 'conflict|already_exists'
+! skygo run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id new-id
+stderr 'current target unavailable|failed_precondition'
+data-wire 3 new-id aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1
+calls SubmitDataJob 4
+calls PlanTask 0
+calls BeginArtifactUpload 0
+calls SubmitWorkspaceJob 0
+calls SubmitJob 0
+calls SubmitRetainedJob 0
+calls SubmitRetryJob 0
+
+-- mounts.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- changed.yaml --
+argv: [echo, changed]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true

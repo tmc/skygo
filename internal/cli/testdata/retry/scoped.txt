@@ -21,7 +21,9 @@ cp stderr foreign.err
 cmp stderr foreign.err
 ! skygo --token-file bob.token jobs logs $JOB --attempt 1
 cmp stderr foreign.err
-! skygo --token-file bob.token jobs logs $JOB --attempt 99
+# Ordinal 10 is valid syntax but absent from this two-attempt history.
+# Malformed ordinals are refused locally; see validation.txt.
+! skygo --token-file bob.token jobs logs $JOB --attempt 10
 cmp stderr foreign.err
 skygo --token-file alice.token jobs logs $JOB --attempt 1
 stdout '^attempt one\n$'

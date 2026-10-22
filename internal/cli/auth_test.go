@@ -48,7 +48,12 @@ func TestAuthScripts(t *testing.T) {
 
 func runAuthScript(t *testing.T, exe, file string) {
 	t.Helper()
+	// Go's numbered TempDir children use 0777 before the process umask.
+	// The auth file requires a private parent even with umask 0002.
 	dir := t.TempDir()
+	if err := os.Chmod(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	data, authFile := filepath.Join(dir, "state"), filepath.Join(dir, "auth.json")
 	var env []string
 	if cover := coverDir(t); cover != "" {

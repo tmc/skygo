@@ -44,7 +44,7 @@ func TestBindingVectors(t *testing.T) {
 		})
 	}
 	c := TargetConfig{Namespace: "skygo-a", Labels: map[string]string{"location": "lab"}, Resources: ResourcePolicy{Accelerators: map[string]AcceleratorPolicy{"nvidia": {ResourceName: "nvidia.com/gpu"}}}}
-	got, err := targetBinding(c, &rest.Config{Host: "https://127.0.0.1:6443"})
+	got, err := targetBinding(c, &rest.Config{Host: "https://127.0.0.1:6443"}, nil, nil)
 	if err != nil || got != "sha256:d8159a158839dfd18454c9df612443194f57a93950b30aa0ed234c52917acc93" {
 		t.Fatalf("constructed system-root vector: %s, %v", got, err)
 	}
@@ -57,7 +57,7 @@ func TestBindingChanges(t *testing.T) {
 		Accelerators:  map[string]AcceleratorPolicy{"A100": {ResourceName: "nvidia.com/gpu", RequiredNodeSelector: map[string]string{"model": "A100"}}},
 	}}
 	cfg := &rest.Config{Host: "https://cluster.example", TLSClientConfig: rest.TLSClientConfig{CAData: []byte("fixture CA")}}
-	want, err := targetBinding(base, cfg)
+	want, err := targetBinding(base, cfg, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestBindingChanges(t *testing.T) {
 			c.Resources = clonePolicy(base.Resources)
 			r := rest.CopyConfig(cfg)
 			test.change(&c, r)
-			got, err := targetBinding(c, r)
+			got, err := targetBinding(c, r, nil, nil)
 			if err != nil || (got == want) != test.equal {
 				t.Fatalf("binding equality %v, want %v: %v", got == want, test.equal, err)
 			}

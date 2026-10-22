@@ -1,0 +1,66 @@
+# Discovery facts are a protocol-only fixture, never native qualification.
+data-peer missing-endpoint
+! skygo run --remote-data -f mounts.yaml --request-id refused
+stderr 'remote-data-transfer-v1'
+data-peer missing-target
+! skygo run --remote-data -f mounts.yaml --request-id refused
+stderr 'target'
+data-peer mounts-off
+! skygo run --remote-data -f mounts.yaml --request-id refused
+stderr 'data-mounts-v1'
+data-peer missing-policy
+! skygo run --remote-data -f mounts.yaml --request-id refused
+stderr 'policy'
+data-peer invalid-policy
+! skygo run --remote-data -f mounts.yaml --request-id refused
+stderr 'policy'
+data-peer duplicate-target
+! skygo run --remote-data -f mounts.yaml --request-id refused
+stderr 'duplicate'
+data-peer retry-off
+! skygo run --remote-data -f retry.yaml --request-id refused
+stderr 'remote-data-retry-v1'
+# Explicit replay hints never turn auth or transport failures into probes.
+data-peer unauthenticated
+! skygo run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id refused
+stderr 'unauthenticated|revoked'
+data-peer unavailable
+! skygo run --remote-data -f mounts.yaml --request-domain aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa:1 --request-id refused
+stderr 'unavailable'
+calls GetServerInfo 9
+calls SubmitDataJob 0
+calls BeginArtifactUpload 0
+calls SubmitWorkspaceJob 0
+calls SubmitJob 0
+calls SubmitRetainedJob 0
+calls SubmitRetryJob 0
+calls PlanTask 0
+calls QuoteTask 0
+
+-- mounts.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+
+-- retry.yaml --
+argv: [echo, hello]
+target: data
+directory: /task
+data_mounts:
+  - reference: dataset-z
+    destination: /mnt/skygo/z
+    read_only: false
+  - reference: dataset-a
+    destination: /mnt/skygo/a
+    read_only: true
+retry:
+  max_attempts: 2
+  delay_seconds: 0
+  exit_codes: [7]
