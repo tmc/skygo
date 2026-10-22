@@ -27,15 +27,19 @@ const (
 )
 
 // A config names one SSH server, the agent installed behind it, and the
-// files that authenticate both. Every field is required.
+// files that authenticate both. The client authenticates with exactly one
+// of keyFile or signer. signerKey is required with signer and forbidden
+// without it; every other field is required.
 type config struct {
-	sshAddress     string // SSH server as canonical host:port
-	user           string // SSH user
-	keyFile        string // unencrypted private key, mode 0400 or 0600
-	knownHostsFile string // known_hosts file dedicated to sshAddress
-	agentAddress   string // agent as seen from the SSH server: 127.0.0.1:port or [::1]:port
-	agentName      string // DNS name in the agent's TLS certificate
-	agentCAFile    string // PEM certificates that sign the agent's certificate
+	sshAddress     string     // SSH server as canonical host:port
+	user           string     // SSH user
+	keyFile        string     // unencrypted private key, mode 0400 or 0600
+	signer         ssh.Signer // caller-held signer, such as from agentSigner
+	signerKey      string     // pinned SHA256 fingerprint of signer's public key
+	knownHostsFile string     // known_hosts file dedicated to sshAddress
+	agentAddress   string     // agent as seen from the SSH server: 127.0.0.1:port or [::1]:port
+	agentName      string     // DNS name in the agent's TLS certificate
+	agentCAFile    string     // PEM certificates that sign the agent's certificate
 }
 
 // endpoint returns the base URL of the agent.
@@ -58,7 +62,21 @@ func (c config) validate() error {
 	if !validDNSName(c.agentName) {
 		return errors.New("agent name must be a lowercase DNS name")
 	}
-	for _, name := range []string{c.keyFile, c.knownHostsFile, c.agentCAFile} {
+	if (c.keyFile == "") == (c.signer == nil) {
+		return errors.New("exactly one of key file and signer must be set")
+	}
+	names := []string{c.knownHostsFile, c.agentCAFile}
+	switch {
+	case c.signer != nil:
+		if err := checkPinned(c.signer, c.signerKey); err != nil {
+			return err
+		}
+	case c.signerKey != "":
+		return errors.New("signer fingerprint set without a signer")
+	default:
+		names = append(names, c.keyFile)
+	}
+	for _, name := range names {
 		if !filepath.IsAbs(name) || filepath.Clean(name) != name {
 			return fmt.Errorf("file name %q is not a clean absolute path", name)
 		}
@@ -337,9 +355,13 @@ func newTransport(c config) (*transport, error) {
 	if err := c.validate(); err != nil {
 		return nil, fmt.Errorf("agentssh: %w", err)
 	}
-	signer, err := loadSigner(c.keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("agentssh: %w", err)
+	signer := c.signer
+	if signer == nil {
+		s, err := loadSigner(c.keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("agentssh: %w", err)
+		}
+		signer = s
 	}
 	data, err := readFile(c.knownHostsFile, maxKnownHostsFile, false)
 	if err != nil {
