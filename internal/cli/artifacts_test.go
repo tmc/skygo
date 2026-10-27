@@ -21,6 +21,7 @@ import (
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
 	"github.com/tmc/skygo/internal/artifact"
+	"github.com/tmc/skygo/skycompat/tasklower"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -39,7 +40,7 @@ func TestWorkspaceTaskYAML(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := New(nil)
 			cmd.SetIn(strings.NewReader("argv: [run]\n" + tc.fields))
-			task, err := readTask(cmd, "-")
+			task, err := readTask(cmd, "-", tasklower.Options{})
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("got %v; want %q", err, tc.want)

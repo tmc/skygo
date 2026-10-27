@@ -8,9 +8,14 @@ module builds `skygo` without Kubernetes dependencies. The separate
 
 This independent implementation covers selected SkyPilot concerns: task
 validation, target selection, submission, status, logs, cancellation, finite
-retries, and bounded directory snapshots. It has its own task format. The optional
-[`skycompat`](integrations/skycompat/README.md) module parses a selected upstream
-YAML subset and provides health/validation compatibility. `skycompat import
+retries, and bounded directory snapshots. It has its own task format. Packages
+`skycompat/taskyaml` and `skycompat/tasklower` parse a selected upstream YAML
+subset into typed values and lower it to that format, refusing what it cannot
+represent. The optional [`skycompat`](integrations/skycompat/README.md) module
+provides health/validation compatibility. `skygo run task.yaml` and
+`skygo plan task.yaml` accept native task files or supported SkyPilot YAML
+directly; unsupported execution requirements are refused before submission.
+`skycompat import
 --shell /bin/sh` lowers a supported task to a skygo task file that `skygo run -f`
 executes. The subset is narrow: none of SkyPilot 0.14.0's ten bundled examples
 import as written; each stops at its first unsupported field, such as

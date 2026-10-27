@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
 	"github.com/tmc/skygo/internal/artifact"
 	"github.com/tmc/skygo/internal/backend"
+	"github.com/tmc/skygo/skycompat/tasklower"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"gopkg.in/yaml.v3"
@@ -157,17 +159,21 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 	var file, id, domain string
 	var wait, remoteData bool
 	var quote quoteFlags
+	var lower tasklower.Options
 	name, short := "plan", "Validate a task and select an eligible target"
 	if run {
 		name, short = "run", "Submit a task"
 	}
-	c := &cobra.Command{Use: name + " -f task.yaml", Short: short, Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+	c := &cobra.Command{Use: name + " [task.yaml | -f task.yaml]", Short: short, Args: taskArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		if !run {
 			if err := quote.validate(cmd); err != nil {
 				return err
 			}
 		}
-		task, err := readTask(cmd, file)
+		if len(args) == 1 {
+			file = args[0]
+		}
+		task, err := readTask(cmd, file, lower)
 		if err != nil {
 			return err
 		}
@@ -232,6 +238,8 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		return nil
 	}}
 	c.Flags().StringVarP(&file, "file", "f", "", "Task YAML path, or - for stdin")
+	c.Flags().StringVar(&lower.Shell, "shell", "", "Clean absolute shell that runs SkyPilot run text as SHELL -c TEXT (default "+defaultShell+")")
+	c.Flags().StringVar(&lower.Target, "target", "", "Target for a SkyPilot task; skygo task files declare their own target")
 	c.Flags().BoolVar(&remoteData, "remote-data", false, "Use the explicit target's qualified remote data route")
 	if !run {
 		quote.flags(c)
@@ -242,6 +250,18 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		c.Flags().BoolVar(&wait, "wait", false, "Wait for terminal status; unsuccessful jobs exit 2")
 	}
 	return c
+}
+
+// taskArgs accepts at most one task path, given either as an argument or
+// with --file.
+func taskArgs(cmd *cobra.Command, args []string) error {
+	if len(args) > 1 {
+		return errors.New("task accepts one path")
+	}
+	if len(args) == 1 && cmd.Flags().Changed("file") {
+		return errors.New("task path given both as an argument and with --file")
+	}
+	return nil
 }
 
 func (o *options) wait(ctx context.Context, c skyv1connect.ControlServiceClient, j *skyv1.Job) (*skyv1.Job, error) {
@@ -356,9 +376,11 @@ type taskFile struct {
 	DataMounts       []backend.DataMount  `yaml:"data_mounts"`
 }
 
-func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
+// readTask reads a skygo task file or SkyPilot task YAML from path.
+// Lower supplies the shell and target for SkyPilot tasks only.
+func readTask(cmd *cobra.Command, path string, lower tasklower.Options) (*skyv1.Task, error) {
 	if path == "" {
-		return nil, errors.New("task requires --file")
+		return nil, errors.New("task requires --file or a path argument")
 	}
 	r := cmd.InOrStdin()
 	if path != "-" {
@@ -376,7 +398,17 @@ func readTask(cmd *cobra.Command, path string) (*skyv1.Task, error) {
 	if len(b) > 1<<20 {
 		return nil, errors.New("task exceeds 1 MiB")
 	}
-	d := yaml.NewDecoder(strings.NewReader(string(b)))
+	sky, err := skypilotTask(b)
+	if err != nil {
+		return nil, err
+	}
+	if sky {
+		return lowerTask(cmd.ErrOrStderr(), b, lower)
+	}
+	if lower.Shell != "" || lower.Target != "" {
+		return nil, errors.New("--shell and --target apply only to SkyPilot task YAML")
+	}
+	d := yaml.NewDecoder(bytes.NewReader(b))
 	d.KnownFields(true)
 	var f taskFile
 	if err := d.Decode(&f); err != nil {

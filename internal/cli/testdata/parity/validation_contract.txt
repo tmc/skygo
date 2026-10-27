@@ -1,6 +1,6 @@
 # Upstream 922a9f046c4a2714edf2b76fec3d1862dcd56ae3:
 # sky/task.py:715 validates task schemas; command.py:834-873 diagnoses YAML and
-# path errors. Go makes --file explicit, rejects unknown/duplicate fields and
+# path errors. Go accepts a path or --file, rejects unknown/duplicate fields and
 # multiple documents, and never falls back to treating an invalid file as shell.
 # The endpoint is unreachable: parsing/usage failures must happen before RPCs.
 env REAL_ENDPOINT=$SKYGO_ENDPOINT

@@ -1,0 +1,37 @@
+# SkyPilot task YAML is parsed and lowered by skycompat, then dispatched by
+# the ordinary plan and run RPCs. The test checks each dispatched task.
+skygo plan task.yaml
+stdout '^local$'
+stderr '^task yaml: dropped name: not executed$'
+
+skygo plan -f task.yaml --shell /bin/bash --target local
+stdout '^local$'
+
+stdin task.yaml
+skygo plan -f -
+stdout '^local$'
+
+stdin task.yaml
+skygo plan -
+stdout '^local$'
+
+skygo run task.yaml --request-id sky-1
+stdout '^sky-1\tlocal\tsucceeded$'
+
+stdin task.yaml
+skygo run -f - --request-id sky-2
+stdout '^sky-2\tlocal\tsucceeded$'
+
+skygo --json run task.yaml --shell /bin/bash --target local --request-id sky-3
+stdout '"id": *"sky-3"'
+stdout '"/bin/bash"'
+
+-- task.yaml --
+name: hello
+envs:
+  GREETING: hi
+resources:
+  cpus: 0.5
+  memory: 512MB
+run: |
+  echo "$GREETING"

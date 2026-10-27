@@ -1,0 +1,74 @@
+# Every refusal happens before any RPC; the test checks the server saw none.
+
+# Ambiguous paths.
+! skygo plan task.yaml extra.yaml
+stderr 'task accepts one path'
+! skygo run task.yaml -f task.yaml
+stderr 'task path given both as an argument and with --file'
+! skygo plan
+stderr 'task requires --file or a path argument'
+
+# Mixed and malformed documents.
+! skygo plan mixed.yaml
+stderr 'task mixes skygo argv and SkyPilot run'
+! skygo run native-resources.yaml
+stderr 'field resources not found'
+! skygo plan skypilot-native.yaml
+stderr '^task yaml: unsupported at 2:1$'
+! skygo plan duplicate.yaml
+stderr '^task yaml: invalid run at 2:1$'
+! skygo plan malformed.yaml
+stderr '^decode task: '
+stdin documents.yaml
+! skygo run -
+stderr '^task yaml: unsupported'
+
+# Fields the lowerer cannot represent stay typed refusals.
+! skygo plan autostop.yaml
+stderr '^task yaml: unsupported resources.autostop at 3:13$'
+! skygo run infra.yaml
+stderr '^task yaml: unsupported resources.infra'
+! skygo run nodes.yaml
+stderr '^task yaml: unsupported num_nodes'
+! skygo plan workdir.yaml
+stderr '^task yaml: unsupported workdir at 2:10: requires a workdir reference$'
+! skygo plan task.yaml --shell sh
+stderr 'shell must be a clean absolute path'
+
+-- task.yaml --
+run: echo
+-- extra.yaml --
+run: echo
+-- mixed.yaml --
+argv: [echo]
+run: echo
+-- native-resources.yaml --
+argv: [echo]
+resources:
+  cpus: 1
+-- skypilot-native.yaml --
+run: echo
+cpu_millis: 5
+-- duplicate.yaml --
+run: echo
+run: echo
+-- malformed.yaml --
+argv: [echo
+-- documents.yaml --
+run: echo
+---
+run: echo
+-- autostop.yaml --
+run: echo
+resources:
+  autostop: 10
+-- infra.yaml --
+run: echo
+resources:
+  infra: k8s
+-- nodes.yaml --
+run: echo
+num_nodes: 2
+-- workdir.yaml --
+run: echo
+workdir: .

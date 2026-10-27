@@ -1,0 +1,19 @@
+# Native skygo task files keep their own decoder, argv and target.
+skygo plan native.yaml
+stdout '^local$'
+! stderr .
+
+skygo run -f native.yaml --request-id native-1
+stdout '^native-1\tlocal\tsucceeded$'
+
+# SkyPilot options never override a native task.
+! skygo plan native.yaml --target other
+stderr 'apply only to SkyPilot task YAML'
+! skygo run native.yaml --shell /bin/bash --request-id native-2
+stderr 'apply only to SkyPilot task YAML'
+
+-- native.yaml --
+argv: [echo, run]
+env: {MODE: native}
+cpu_millis: 250
+target: local

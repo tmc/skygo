@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	skyv1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/skycompat/tasklower"
 	"rsc.io/script"
 	"rsc.io/script/scripttest"
 )
@@ -115,7 +116,7 @@ func TestStrictTask(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			c := New(nil)
 			c.SetIn(strings.NewReader(tc.input))
-			_, err := readTask(c, "-")
+			_, err := readTask(c, "-", tasklower.Options{})
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %s", err, tc.want)
 			}
@@ -220,12 +221,32 @@ func coverDir(t *testing.T) string {
 	return dir
 }
 
+// scriptStdin carries the file named by the stdin command to the next skygo command.
+const scriptStdin = "SKYGO_SCRIPT_STDIN"
+
 func executableScriptEngine(exe string, prefix, env []string) *script.Engine {
 	e := script.NewEngine()
 	e.Cmds = scripttest.DefaultCmds()
 	e.Conds = scripttest.DefaultConds()
+	e.Cmds["stdin"] = script.Command(script.CmdUsage{Summary: "set the next skygo command's standard input", Args: "file"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
+		if len(args) != 1 {
+			return nil, script.ErrUsage
+		}
+		return nil, s.Setenv(scriptStdin, s.Path(args[0]))
+	})
 	e.Cmds["skygo"] = script.Command(script.CmdUsage{Summary: "run the CLI executable"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
 		cmd := exec.CommandContext(s.Context(), exe, append(append([]string(nil), prefix...), args...)...)
+		if name, _ := s.LookupEnv(scriptStdin); name != "" {
+			if err := s.Setenv(scriptStdin, ""); err != nil {
+				return nil, err
+			}
+			f, err := os.Open(name)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+			cmd.Stdin = f
+		}
 		cmd.Dir = s.Getwd()
 		cmd.Env = append(s.Environ(), env...)
 		var out, diag bytes.Buffer

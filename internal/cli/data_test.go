@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/skycompat/tasklower"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -56,7 +57,7 @@ func TestDataTaskYAML(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
 			cmd.SetIn(strings.NewReader(tc.input))
-			task, err := readTask(cmd, "-")
+			task, err := readTask(cmd, "-", tasklower.Options{})
 			if tc.want != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.want) {
 					t.Fatalf("error=%v; want %s", err, tc.want)
