@@ -141,3 +141,6 @@ docker build -f integrations/kubernetes/Dockerfile -t skygo:local .
 The root Dockerfile builds the local-only executable. See the
 [deployment guide](../../docs/kubernetes.md) for singleton storage, credentials,
 workload boundaries, and upgrade procedures.
+
+DRA support is planned separately; see the [DRA integration design](docs/dra.md)
+for device policy, claim ownership, module requirements and validation gates.
