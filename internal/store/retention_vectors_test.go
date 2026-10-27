@@ -71,16 +71,22 @@ func TestMaximumEncodedRetentionRecords(t *testing.T) {
 	t.Logf("native operation=%d cap=%d", len(raw), cleanupOperationLimit)
 }
 func TestS05BinaryRefusesSchema5Unchanged(t *testing.T) {
-	exe := os.Getenv("SKYGO_S05_BINARY")
-	if exe == "" {
-		t.Skip("requires canonical accepted signed S05 binary")
+	exe, want := os.Getenv("SKYGO_S05_BINARY"), os.Getenv("SKYGO_S05_BINARY_SHA256")
+	if exe == "" && want == "" && os.Getenv("SKYGO_REQUIRE_FIXTURES") == "" {
+		t.Skip("requires SKYGO_S05_BINARY and SKYGO_S05_BINARY_SHA256 (set SKYGO_REQUIRE_FIXTURES=1 to fail instead)")
+	}
+	if exe == "" || want == "" {
+		t.Fatal("provide both SKYGO_S05_BINARY and SKYGO_S05_BINARY_SHA256")
+	}
+	if !filepath.IsAbs(exe) {
+		t.Fatal("SKYGO_S05_BINARY must be an absolute path")
 	}
 	binary, e := os.ReadFile(exe)
 	if e != nil {
 		t.Fatal(e)
 	}
 	sum := sha256.Sum256(binary)
-	if os.Getenv("SKYGO_S05_SHA256") != hex.EncodeToString(sum[:]) {
+	if want != hex.EncodeToString(sum[:]) {
 		t.Fatal("prior binary hash mismatch")
 	}
 	dir := t.TempDir()

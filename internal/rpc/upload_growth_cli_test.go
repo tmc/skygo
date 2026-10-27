@@ -23,12 +23,17 @@ import (
 	"github.com/tmc/skygo/internal/artifact"
 )
 
-// This mandatory release oracle requires the same source-qualified executable as
-// CLI scripts. Hash identity is checked here; source provenance is a separate
-// parent receipt. No executable is built or substituted inside the test.
+// This release oracle requires the same source-qualified executable as CLI
+// scripts. It skips only when both variables are unset and
+// SKYGO_REQUIRE_FIXTURES is not set. Hash identity is checked here; source
+// provenance is a separate parent receipt. No executable is built or
+// substituted inside the test.
 func artifactHTTPCLIExecutable(t *testing.T) string {
 	t.Helper()
 	path, want := os.Getenv("SKYGO_ARTIFACT_BINARY"), os.Getenv("SKYGO_ARTIFACT_BINARY_SHA256")
+	if path == "" && want == "" && os.Getenv("SKYGO_REQUIRE_FIXTURES") == "" {
+		t.Skip("requires SKYGO_ARTIFACT_BINARY and SKYGO_ARTIFACT_BINARY_SHA256 (set SKYGO_REQUIRE_FIXTURES=1 to fail instead)")
+	}
 	if !filepath.IsAbs(path) || want == "" {
 		t.Fatal("mandatory real-CLI HTTP oracle requires SKYGO_ARTIFACT_BINARY and SKYGO_ARTIFACT_BINARY_SHA256")
 	}

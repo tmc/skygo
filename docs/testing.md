@@ -9,8 +9,9 @@ make check
 make build
 ```
 
-These targets test all three modules with `GOWORK=off`; root `go test ./...` alone
-does not visit the nested integration modules. `make check` also needs Buf
+These targets test the root module and all four integration modules with
+`GOWORK=off`; root `go test ./...` alone does not visit the nested integration
+modules. `make check` also needs Buf
 (install the pinned tools with `make tools`).
 
 The suite includes real local subprocesses and generated Connect clients over

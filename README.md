@@ -123,16 +123,22 @@ make check
 make build
 ```
 
-These targets cover the root, `kubernetes` and `skycompat` modules with
-`GOWORK=off`; run `GOWORK=off go test ./...` in `integrations/ssh` and
-`integrations/ec2` separately.
+These targets cover the root, `ssh`, `ec2`, `kubernetes` and `skycompat`
+modules with `GOWORK=off`.
 
-`make test` does not pass on a clean checkout. Release-oracle tests in
-`internal/cli` and `internal/rpc` fail, rather than skip, unless given prebuilt
-executables by absolute path with their SHA-256 digests:
+Release-oracle tests in `internal/cli`, `internal/rpc` and `internal/store` need
+prebuilt executables by absolute path with their SHA-256 digests:
 `SKYGO_ARTIFACT_BINARY` and `SKYGO_ARTIFACT_BINARY_SHA256` name a `skygo` built
 from this checkout, and `SKYGO_S05_BINARY` and `SKYGO_S05_BINARY_SHA256` name a
-`skygo` built from predecessor commit `db1c8bbf`.
+`skygo` built from predecessor commit `db1c8bbf`. `make test` skips these tests
+when both variables of a pair are unset; a partial or mismatched pair fails.
+`make test-fixtures` sets `SKYGO_REQUIRE_FIXTURES=1`, which makes a missing pair
+fail too:
+
+```sh
+SKYGO_ARTIFACT_BINARY=... SKYGO_ARTIFACT_BINARY_SHA256=... \
+SKYGO_S05_BINARY=... SKYGO_S05_BINARY_SHA256=... make test-fixtures
+```
 
 `make check` needs Buf; `make tools` installs pinned tools. Protobuf sources live
 in `proto/`; Buf generates messages and Connect clients/handlers in `gen/`.

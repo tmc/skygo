@@ -114,6 +114,9 @@ func retentionScriptBinary(t *testing.T) string {
 
 func retentionPinnedBinary(t *testing.T, path, want string) string {
 	t.Helper()
+	if path == "" && want == "" && os.Getenv("SKYGO_REQUIRE_FIXTURES") == "" {
+		t.Skip("requires a pinned executable path and SHA256 (set SKYGO_REQUIRE_FIXTURES=1 to fail instead)")
+	}
 	if path == "" || len(want) != 64 {
 		t.Fatal("provide both the executable path and exact SHA256")
 	}
