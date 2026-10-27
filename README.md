@@ -10,7 +10,12 @@ This independent implementation covers selected SkyPilot concerns: task
 validation, target selection, submission, status, logs, cancellation, finite
 retries, and bounded directory snapshots. It has its own task format. The optional
 [`skycompat`](integrations/skycompat/README.md) module parses a selected upstream
-YAML subset and provides health/validation compatibility; imported tasks are inert.
+YAML subset and provides health/validation compatibility. `skycompat import
+--shell /bin/sh` lowers a supported task to a skygo task file that `skygo run -f`
+executes. The subset is narrow: none of SkyPilot 0.14.0's ten bundled examples
+import as written; each stops at its first unsupported field, such as
+`autostop`, `accelerators`, `infra`, `job_recovery`, `network_tier`, `service`,
+`pool` or a multi-document job group.
 
 ## Run locally
 
@@ -41,9 +46,9 @@ default. Select one credential source: `--token-file`, deprecated `--token`, or
 ## Commands
 
 Use `skygo --help` and each command's `--help` for flags. The main commands are
-`server`, `targets list`, `info`, `plan`, `run`, `jobs`, `artifacts`, `state`,
-and `auth`. `--json` selects JSON output. Job logs and cancellation use
-`jobs logs JOB_ID` and `jobs cancel JOB_ID --yes`.
+`server`, `targets list`, `info`, `plan`, `run`, `jobs`, `workflow`, `artifacts`,
+`state`, `auth` and `dashboard`. `--json` selects JSON output. Job logs and
+cancellation use `jobs logs JOB_ID` and `jobs cancel JOB_ID --yes`.
 
 Keep a submitted task, request ID, and any printed request domain together for
 recovery. A timeout does not establish whether submission succeeded. Retrying
@@ -76,10 +81,29 @@ PVC-backed server.
 
 ## Boundaries
 
+Not yet supported:
+
+- Cloud provisioning. The [`ec2`](integrations/ec2/README.md) module has no
+  command or target and has not been run against AWS.
+- SSH targets. The [`ssh`](integrations/ssh/README.md) module is a transport to
+  a pre-installed agent, with no command.
+- Multi-node jobs. The worker-group API is defined but not served.
+- Model serving. Only portable serving types exist.
+- Pools, autostop and autodown.
+- `exec`, `stop`, `start` and `down` commands.
+- GPUs on the local target, which refuses accelerator and resource requests.
+  Kubernetes accelerator requests are tested only against fakes.
+- TLS. The server listens on plain HTTP.
+
+SIGINT or SIGTERM stops the server and cancels its running local jobs. After an
+abrupt death such as SIGKILL, a running local job becomes unknown and may keep
+running untracked; an old PID does not authorize relaunch or termination, so
+restart does neither. A workflow step left unknown this way blocks its
+dependents, and that workflow never finishes.
+
 Local execution trusts workloads as the server's OS user and inherits its
-environment. It is not a sandbox. After abrupt server death, unfinished local
-work can become unknown; an old PID does not authorize relaunch or termination.
-Kubernetes ownership checks do not provide exactly-once execution.
+environment. It is not a sandbox. Kubernetes ownership checks do not provide
+exactly-once execution.
 
 `state backup` copies only the database; `state restore` refuses artifact-enabled
 snapshots. The separate stopped companion commands copy and restore an eligible
@@ -99,7 +123,17 @@ make check
 make build
 ```
 
-These targets cover the root and both integration modules with `GOWORK=off`.
+These targets cover the root, `kubernetes` and `skycompat` modules with
+`GOWORK=off`; run `GOWORK=off go test ./...` in `integrations/ssh` and
+`integrations/ec2` separately.
+
+`make test` does not pass on a clean checkout. Release-oracle tests in
+`internal/cli` and `internal/rpc` fail, rather than skip, unless given prebuilt
+executables by absolute path with their SHA-256 digests:
+`SKYGO_ARTIFACT_BINARY` and `SKYGO_ARTIFACT_BINARY_SHA256` name a `skygo` built
+from this checkout, and `SKYGO_S05_BINARY` and `SKYGO_S05_BINARY_SHA256` name a
+`skygo` built from predecessor commit `db1c8bbf`.
+
 `make check` needs Buf; `make tools` installs pinned tools. Protobuf sources live
 in `proto/`; Buf generates messages and Connect clients/handlers in `gen/`.
 The integration modules use local replacements for the unpublished root module.

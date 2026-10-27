@@ -74,3 +74,7 @@ release qualification. Python is development oracle tooling, not a product
 dependency. Real scoped HTTP and unmodified pinned SDK health/validation tests
 passed separately from the parser/codec corpus; workload and native backend
 compatibility remain outside this HTTP profile.
+
+The pinned SDK is SkyPilot master at the reference commit (API 67), not a
+release. SkyPilot 0.14.0 clients send API version 62 and receive
+`version_mismatch`.
