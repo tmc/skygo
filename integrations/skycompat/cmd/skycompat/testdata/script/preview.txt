@@ -1,5 +1,6 @@
 # Preview: the task file on stdout and one note per recognized field on
-# stderr, checked against the immutable corpus in testdata/import.
+# stderr, checked against the immutable corpus in skycompat/testdata/import
+# of the root module.
 
 skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --target local --allow-drop name $IMPORT/local/task.yaml
 cmp stdout $IMPORT/local/task.json

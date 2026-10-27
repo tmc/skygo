@@ -55,9 +55,10 @@ field is absent, as for a task without `run`.
 | `envs` | `env`, after the parser's Python string coercion and `--env` | invalid name or value |
 | `resources.cpus: N`, `N+` | `cpu_millis = N × 1000`; `+` lowers to the same exact request | not whole millicpus |
 | `resources.memory: N[unit][+]` | `memory_bytes`; no unit means GiB; KB/KI through PB/PI are powers of 1024, any case | not whole bytes or over int64 |
-| `resources.accelerators` | `accelerator`, `accelerator_count` | count not a whole number in 1..2147483647 |
+| `resources.accelerators` | `accelerator`, `accelerator_count` | count not a whole number in 1..2147483647; more than one choice |
 | `resources.image_id: docker:REF` | `image = REF` | any other form |
-| `resources.disk_size: 256` | default: the upstream unspecified value, not a disk request | any other value (parser) |
+| `resources.disk_size: 256` | default: the upstream unspecified value, not a disk request | any other value |
+| `resources.infra`, `autostop`, `job_recovery` | default when null | any value, including `false` or `{}` |
 | `resources.use_spot: false` | default | `true` |
 | `resources.cloud/region/zone/instance_type` | default when null | any value: select a skygo target |
 | `num_nodes: 1` | default | greater than 1 |

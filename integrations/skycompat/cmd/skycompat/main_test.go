@@ -113,7 +113,7 @@ func TestReadRef(t *testing.T) {
 // execution, dynamic loading, gob or pickle decoding, the network, or
 // skygo's internal packages.
 func TestImportGate(t *testing.T) {
-	cmd := exec.Command("go", "list", "-deps", "./tasklower", "./cmd/skycompat")
+	cmd := exec.Command("go", "list", "-deps", "github.com/tmc/skygo/skycompat/tasklower", "./cmd/skycompat")
 	cmd.Dir = filepath.Join("..", "..")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -131,7 +131,7 @@ func TestImportGate(t *testing.T) {
 			t.Errorf("production dependency %s", p)
 		}
 	}
-	cmd = exec.Command("go", "list", "-f", "{{join .Imports \"\\n\"}}", "./tasklower")
+	cmd = exec.Command("go", "list", "-f", "{{join .Imports \"\\n\"}}", "github.com/tmc/skygo/skycompat/tasklower")
 	cmd.Dir = filepath.Join("..", "..")
 	out, err = cmd.CombinedOutput()
 	if err != nil {
@@ -146,9 +146,13 @@ func TestImportGate(t *testing.T) {
 
 // TestNoEnvironment fails if production source reads the process environment.
 func TestNoEnvironment(t *testing.T) {
-	files, err := filepath.Glob(filepath.Join("..", "..", "tasklower", "*.go"))
-	if err != nil {
-		t.Fatal(err)
+	var files []string
+	for _, pkg := range []string{"tasklower", "taskyaml"} {
+		f, err := filepath.Glob(filepath.Join("..", "..", "..", "..", "skycompat", pkg, "*.go"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, f...)
 	}
 	files = append(files, "main.go", "doc.go")
 	checked := 0

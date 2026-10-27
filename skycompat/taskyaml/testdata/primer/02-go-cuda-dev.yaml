@@ -1,0 +1,40 @@
+# 02-go-cuda-dev.yaml: a linux/amd64 NVIDIA box for Go + CUDA work
+# (cudaharness, lib/nvidia, purego, the CUDA side of infer).
+#
+# Run it from the repo you want on the box; workdir "." is rsynced to
+# ~/sky_workdir, honoring .skyignore (or .gitignore if there is none).
+#
+#   cd ~/go/src/github.com/tmc/cudaharness
+#   sky launch -c gocuda ~/go/src/github.com/tmc/skypilot-primer/examples/02-go-cuda-dev.yaml
+#   sky exec gocuda 'go test -run=NONE -bench=. ./...'
+#   ssh gocuda                       # or VS Code / Zed Remote-SSH to "gocuda"
+#   sky stop gocuda; sky start gocuda   # keep disk, stop paying for GPU
+name: gocuda
+
+resources:
+  accelerators: {L4:1, A10G:1, L40S:1}   # a set: optimizer takes the cheapest available
+  image_id: docker:nvidia/cuda:13.4.3-devel-ubuntu24.04  # nvcc, NVRTC, headers
+  disk_size: 128
+  autostop:
+    idle_minutes: 30
+    wait_for: jobs_and_ssh                  # an open SSH session counts as busy
+
+envs:
+  GO_VERSION: "1.27.2"
+
+workdir: .
+
+setup: |
+  set -e
+  if ! command -v go >/dev/null || ! go version | grep -q "go$GO_VERSION"; then
+    curl -fsSL "https://go.dev/dl/go$GO_VERSION.linux-amd64.tar.gz" | sudo tar -C /usr/local -xz
+  fi
+  echo 'export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH' >> ~/.bashrc
+  sudo apt-get update -qq && sudo apt-get install -y -qq git build-essential >/dev/null
+
+run: |
+  export PATH=/usr/local/go/bin:$PATH
+  nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
+  nvcc --version | tail -1
+  go version
+  go env GOARCH GOOS

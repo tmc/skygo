@@ -4,11 +4,12 @@ This module's selected parser/codec profile targets upstream SkyPilot source
 `922a9f046c4a2714edf2b76fec3d1862dcd56ae3`, API 67. The profile implements a
 bounded subset; API67 is not a claim of complete upstream behavior.
 
-`testdata/yaml/manifest.json` and `testdata/wire/manifest.json` identify every
+The root module's `skycompat/testdata/yaml/manifest.json` and this module's
+`testdata/wire/manifest.json` identify every
 input by SHA-256 and record source path, relevant lines, whole-file SHA-256,
 license, expected selected-profile result and qualification layer. Fixtures are
 small original source-derived examples unless marked captured oracle output.
-The exact upstream root license is retained in [testdata/LICENSE](../testdata/LICENSE), including its existing attribution appendix. The pinned upstream root has no NOTICE file. This accompanies source-derived and captured fixture data; the module license for new Go code remains separate. No upstream implementation code or secrets are embedded in fixtures. `SOURCE_ONLY` means a source-grounded expectation, not an
+The exact upstream root license is retained in [testdata/LICENSE](../testdata/LICENSE) and beside the root fixtures in `skycompat/testdata/LICENSE`, including its existing attribution appendix. The pinned upstream root has no NOTICE file. This accompanies source-derived and captured fixture data; the module license for new Go code remains separate. No upstream implementation code or secrets are embedded in fixtures. `SOURCE_ONLY` means a source-grounded expectation, not an
 executed upstream result.
 
 Parser tests consume the YAML manifest. `entrypoint=task` means one task document;
@@ -120,7 +121,7 @@ full API67, or a published standalone module.
 ## B task import qualification
 
 `tasklower` and `skycompat import` lower one parsed task to a skygo task file;
-see [import.md](import.md). `testdata/import/manifest.json` pins every import
+see [import.md](import.md). The root module's `skycompat/testdata/import/manifest.json` pins every import
 fixture, golden task file and note list by SHA-256, together with the upstream
 source lines each lowering rule follows. These fixtures are original
 source-derived examples, not upstream code or executed upstream results.

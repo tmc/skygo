@@ -30,13 +30,46 @@ type Task struct {
 }
 
 // Resources preserves constraints without selecting or validating a provider.
-// DiskSize is only accepted for the upstream unspecified default 256; it does
-// not request 256 GiB. All fields still require semantic lowering.
+// DiskSize holds any upstream disk size; 256 is the upstream unspecified
+// default and does not request 256 GiB. All fields still require semantic
+// lowering; Infra, Autostop and JobRecovery are preserved, not interpreted.
 type Resources struct {
-	CPUs, Memory, DiskSize                     *Quantity
-	Accelerators                               map[string]Quantity
-	Cloud, Region, Zone, ImageID, InstanceType *string
-	UseSpot                                    *bool
+	CPUs, Memory, DiskSize *Quantity
+	// Accelerators lists accelerator choices in source order. More than one
+	// entry is a choice among alternatives, in preference order exactly when
+	// AcceleratorsOrdered is set by list syntax.
+	Accelerators                                      []Accelerator
+	AcceleratorsOrdered                               bool
+	Cloud, Region, Zone, ImageID, InstanceType, Infra *string
+	UseSpot                                           *bool
+	Autostop                                          *Autostop
+	JobRecovery                                       *JobRecovery
+}
+
+// Accelerator is one accelerator choice: a model name and a positive count.
+type Accelerator struct {
+	Name  string
+	Count Quantity
+}
+
+// Autostop preserves resources.autostop. The boolean form sets only Enabled;
+// every other form enables autostop. IdleMinutes holds an integer or a
+// duration such as 10m converted to minutes. Nil fields were absent.
+type Autostop struct {
+	Enabled     bool
+	IdleMinutes *int64
+	Down        *bool
+	// WaitFor is jobs_and_ssh, jobs or none, in any letter case.
+	WaitFor *string
+}
+
+// JobRecovery preserves resources.job_recovery. The string form sets only
+// Strategy. Nil fields were absent or null; a single exit code is a
+// one-element RecoverOnExitCodes.
+type JobRecovery struct {
+	Strategy            *string
+	MaxRestartsOnErrors *int64
+	RecoverOnExitCodes  []int
 }
 
 // Quantity preserves decimal text, source memory unit and an at-least suffix.

@@ -37,7 +37,7 @@ func TestScripts(t *testing.T) {
 	}
 	h := &harness{t: t, skygo: buildSkygo(t), stdin: map[*script.State]string{}, fakes: map[*script.State]*fake{}, servers: map[*script.State]*exec.Cmd{}}
 	sentinel := listenSentinel(t)
-	importDir, err := filepath.Abs(filepath.Join("..", "..", "testdata", "import"))
+	importDir, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "skycompat", "testdata", "import"))
 	if err != nil {
 		t.Fatal(err)
 	}

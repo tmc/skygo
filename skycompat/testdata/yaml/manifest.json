@@ -1140,8 +1140,8 @@
       "file": "disk-effect.yaml",
       "sha256": "f5b8f6b5d48fc4e40f814c5d7a413d323ed040e073e64ee0fe42a1b9e617a2a4",
       "entrypoint": "task",
-      "expect": "reject",
-      "runtime_status": "NOT_APPLICABLE",
+      "expect": "accept",
+      "runtime_status": "DEFERRED",
       "features": [
         "sdk-default"
       ],
@@ -1161,9 +1161,10 @@
       ],
       "provenance": "original compact fixture derived from pinned source semantics",
       "oracle_status": "SOURCE_ONLY",
-      "notes": "Nondefault disk effect cannot be ignored as transport metadata or mapped to existing core runtime.",
-      "error_path": "resources.disk_size",
-      "error_code": "unsupported"
+      "notes": "Nondefault disk size is preserved as a typed constraint; lowering refuses it because it cannot be ignored as transport metadata or mapped to existing core runtime.",
+      "values": {
+        "disk_size": "512"
+      }
     },
     {
       "name": "sdk-provenance",

@@ -5,6 +5,12 @@ implements selected wire codecs and an authenticated health/validation HTTP faca
 The reference is SkyPilot commit
 `922a9f046c4a2714edf2b76fec3d1862dcd56ae3`, API 67.
 
+The parser and importer are the root module packages
+`github.com/tmc/skygo/skycompat/taskyaml` and
+`github.com/tmc/skygo/skycompat/tasklower`; this module consumes them.
+The public `integrations/skycompat/taskyaml` and `tasklower` entry points
+remain small delegating facades over those packages, with shared types.
+
 `taskyaml.Parse` reads a single task. `taskyaml.ParseDAG` reads the SDK's name
 header followed by one task. Both are pure syntax parsers: scripts, paths,
 provider names and resource constraints are preserved, not executed, resolved,
@@ -12,14 +18,18 @@ validated against providers or submitted. Unknown semantics are refused.
 No shell permission or backend capability follows from successful parsing.
 
 The parser accepts selected name, run/setup, environment, workdir, resource,
-node count and string mount reference forms. Rich service, workflow, storage,
-recovery and provider configuration remain unsupported. Environment nulls need
-explicit overrides. Memory numbers mean upstream GiB; source units and `+`
-constraints are preserved. The legacy `disk_size: 256` value is preserved as an
-upstream unspecified default, never a disk allocation guarantee.
+node count and string mount reference forms, including upstream accelerator
+choice sets and lists, `disk_size`, `infra`, `autostop` and `job_recovery` as
+typed values. Rich service, workflow, storage and provider configuration remain
+unsupported. Environment nulls need explicit overrides. Memory numbers mean
+upstream GiB; source units and `+` constraints are preserved. The legacy
+`disk_size: 256` value is preserved as an upstream unspecified default, never a
+disk allocation guarantee.
 
 Input is bounded to 1 MiB, 16 KiB per scalar, depth 32 and 8192 nodes. Aliases,
 anchors, merge keys, custom tags, duplicate keys and unexpected documents fail.
+The standard `!!set` tag is accepted only for accelerator choices with null
+values; a set with values is refused instead of discarding them.
 Errors contain known field paths and positions, excluding user values.
 
 Run independently:

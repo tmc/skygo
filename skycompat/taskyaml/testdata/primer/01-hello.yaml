@@ -1,0 +1,16 @@
+# 01-hello.yaml: the smallest useful task. CPU only, cheapest anywhere.
+#
+#   sky launch -c hello examples/01-hello.yaml
+#   sky exec hello 'uname -a'      # reuse the cluster: syncs workdir, runs
+#   ssh hello                      # SkyPilot added it to ~/.ssh/config
+#   sky down hello
+name: hello
+
+resources:
+  cpus: 2+
+  autostop: 10m        # stop after 10 idle minutes; "autostop: {idle_minutes: 10, down: true}" deletes instead
+
+run: |
+  echo "node $SKYPILOT_NODE_RANK of $SKYPILOT_NUM_NODES"
+  echo "$SKYPILOT_CLUSTER_INFO"
+  nproc; free -g

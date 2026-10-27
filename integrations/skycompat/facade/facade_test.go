@@ -223,7 +223,7 @@ func TestCanonicalHealthAndValidate(t *testing.T) {
 			t.Fatalf("validate unauthenticated: %d", status)
 		}
 	}
-	for _, task := range []string{"run: echo one\nrun: echo two\n", "run: &x echo inert\nsetup: *x\n", "run: echo inert\nsetup: touch marker\n", "run: echo inert\nworkdir: /server/path\n", "run: echo inert\nnum_nodes: 2\n", "run: echo inert\nresources: {cpus: 2}\n", "run: echo inert\nfile_mounts: {/out: /secret}\n", "run: echo inert\nenvs: {TOKEN: null}\n", "run: echo inert\nunknown_secret: payload\n"} {
+	for _, task := range []string{"run: echo one\nrun: echo two\n", "run: &x echo inert\nsetup: *x\n", "run: echo inert\nsetup: touch marker\n", "run: echo inert\nworkdir: /server/path\n", "run: echo inert\nnum_nodes: 2\n", "run: echo inert\nresources: {cpus: 2}\n", "run: echo inert\nfile_mounts: {/out: /secret}\n", "run: echo inert\nenvs: {TOKEN: null}\n", "run: echo inert\nunknown_secret: payload\n", "run: echo inert\nresources: {disk_size: 512}\n", "run: echo inert\nresources: {autostop: false}\n", "run: echo inert\nresources: {infra: k8s}\n", "run: echo inert\nresources: {job_recovery: {}}\n"} {
 		status, b, _ := f.request(t, "POST", "/validate", f.alice, validateBody(t, task), nil)
 		if status != 400 || !bytes.Contains(b, []byte(`"type":"ValueError"`)) || bytes.Contains(b, []byte("unknown_secret")) || bytes.Contains(b, []byte("touch marker")) {
 			t.Fatalf("negative validation: %d %s", status, b)

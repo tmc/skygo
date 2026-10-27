@@ -1,0 +1,10 @@
+Unmodified copies of three task files from the github.com/tmc/skypilot-primer
+examples directory, copied byte-for-byte on 2026-10-27. That repository had no
+commits yet, so the files are identified by content:
+
+01-hello.yaml        11cec7478465ae9f2b23a77477ebccac537f33049a7b2f229e1bfbf174a515dc
+02-go-cuda-dev.yaml  2f60b6192ae0b11681d8a82ec0bc4725b9ba2a7ae9f0def5d6f0f83edb99b764
+09-dgx-gpu.yaml      b5848e3fcccad77ef11a1995851ebf24bbb66a72508abec2394e4b0808759094
+
+TestPrimer pins these SHA-256 values. Do not edit the files; replace them only
+with new verbatim copies and update the pinned hashes.

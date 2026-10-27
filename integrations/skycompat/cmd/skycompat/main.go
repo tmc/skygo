@@ -12,8 +12,8 @@ import (
 	"strings"
 
 	skyv1 "github.com/tmc/skygo/gen/skygo/v1"
-	"github.com/tmc/skygo/integrations/skycompat/tasklower"
-	"github.com/tmc/skygo/integrations/skycompat/taskyaml"
+	"github.com/tmc/skygo/skycompat/tasklower"
+	"github.com/tmc/skygo/skycompat/taskyaml"
 )
 
 const usage = "usage: skycompat import --shell PATH [flags] TASK.yaml|-\n"

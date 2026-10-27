@@ -15,8 +15,8 @@ import (
 	"connectrpc.com/connect"
 	skyv1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
-	"github.com/tmc/skygo/integrations/skycompat/taskyaml"
 	"github.com/tmc/skygo/integrations/skycompat/wire"
+	"github.com/tmc/skygo/skycompat/taskyaml"
 )
 
 const (
@@ -199,7 +199,8 @@ func supported(d *taskyaml.Document) bool {
 	}
 	if r.CPUs != nil || r.Memory != nil || len(r.Accelerators) != 0 ||
 		r.Cloud != nil || r.Region != nil || r.Zone != nil ||
-		r.ImageID != nil || r.InstanceType != nil || (r.UseSpot != nil && *r.UseSpot) {
+		r.ImageID != nil || r.InstanceType != nil || (r.UseSpot != nil && *r.UseSpot) ||
+		r.Infra != nil || r.Autostop != nil || r.JobRecovery != nil {
 		return false
 	}
 	return r.DiskSize == nil || (r.DiskSize.Value == "256" && r.DiskSize.Unit == "" && !r.DiskSize.AtLeast)
