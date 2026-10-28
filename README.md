@@ -5,6 +5,8 @@ keeps durable job records; the CLI uses its generated Connect API. The root
 module builds `skygo` without Kubernetes dependencies. The separate
 [`integrations/kubernetes`](integrations/kubernetes/README.md) module builds
 `skygo-kubernetes`, with native Jobs and directly owned Pods for finite retries.
+The optional [`ssh`](integrations/ssh/README.md) module builds `skygo-ssh`,
+which bootstraps remote execution on Linux arm64 hosts.
 
 This independent implementation covers selected SkyPilot concerns: task
 validation, target selection, submission, status, logs, cancellation, finite
@@ -82,6 +84,13 @@ Both binaries provide the same client commands. See the
 configuration, and the [deployment guide](docs/kubernetes.md) for the singleton
 PVC-backed server.
 
+## SSH
+
+`skygo-ssh` builds and transfers its agent, starts it on the remote host, and
+runs the existing CLI commands through SSH with a pinned TLS connection to the
+agent. See the [integration README](integrations/ssh/README.md) for host-key
+enrollment, client-key selection, and bootstrap requirements.
+
 ## Local resources
 
 CPU and memory requests use host inventory and admission accounting. NVIDIA GPU
@@ -96,8 +105,6 @@ Not yet supported:
 
 - Cloud provisioning. The [`ec2`](integrations/ec2/README.md) module has no
   command or target and has not been run against AWS.
-- SSH targets. The [`ssh`](integrations/ssh/README.md) module provides a
-  transport to an operator-installed agent; it has no bootstrap command.
 - Multi-node jobs. The worker-group API is defined but not served.
 - Model serving. Only portable serving types exist.
 - Pools, autostop and autodown.
@@ -105,6 +112,7 @@ Not yet supported:
 - Enforced CPU or memory limits, container images, and node selectors on the
   local target.
 - TLS for the standalone `skygo server` command, which listens on plain HTTP.
+  The SSH agent serves TLS through SSH.
 
 Plain local jobs (no workdir, no retry policy) run under a detached supervisor,
 the `skygo` binary re-executed, which owns the workload, its log and its final

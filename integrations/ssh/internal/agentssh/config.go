@@ -352,26 +352,11 @@ func refuseRedirect(*http.Request, []*http.Request) error {
 }
 
 func newTransport(c config) (*transport, error) {
-	if err := c.validate(); err != nil {
-		return nil, fmt.Errorf("agentssh: %w", err)
-	}
-	signer := c.signer
-	if signer == nil {
-		s, err := loadSigner(c.keyFile)
-		if err != nil {
-			return nil, fmt.Errorf("agentssh: %w", err)
-		}
-		signer = s
-	}
-	data, err := readFile(c.knownHostsFile, maxKnownHostsFile, false)
+	signer, hosts, err := loadSSH(c)
 	if err != nil {
-		return nil, fmt.Errorf("agentssh: %w", err)
+		return nil, err
 	}
-	hosts, err := parseKnownHosts(data, c.sshAddress)
-	if err != nil {
-		return nil, fmt.Errorf("agentssh: %s: %w", c.knownHostsFile, err)
-	}
-	data, err = readFile(c.agentCAFile, maxCAFile, false)
+	data, err := readFile(c.agentCAFile, maxCAFile, false)
 	if err != nil {
 		return nil, fmt.Errorf("agentssh: %w", err)
 	}
@@ -393,4 +378,29 @@ func newTransport(c config) (*transport, error) {
 		budget:      requestBudget,
 		closeBudget: requestBudget,
 	}, nil
+}
+
+// loadSSH validates c and returns its client signer and the host keys its
+// known_hosts file enrolls for the SSH server.
+func loadSSH(c config) (ssh.Signer, *hostKeys, error) {
+	if err := c.validate(); err != nil {
+		return nil, nil, fmt.Errorf("agentssh: %w", err)
+	}
+	signer := c.signer
+	if signer == nil {
+		s, err := loadSigner(c.keyFile)
+		if err != nil {
+			return nil, nil, fmt.Errorf("agentssh: %w", err)
+		}
+		signer = s
+	}
+	data, err := readFile(c.knownHostsFile, maxKnownHostsFile, false)
+	if err != nil {
+		return nil, nil, fmt.Errorf("agentssh: %w", err)
+	}
+	hosts, err := parseKnownHosts(data, c.sshAddress)
+	if err != nil {
+		return nil, nil, fmt.Errorf("agentssh: %s: %w", c.knownHostsFile, err)
+	}
+	return signer, hosts, nil
 }
