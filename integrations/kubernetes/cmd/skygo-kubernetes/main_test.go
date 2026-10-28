@@ -77,7 +77,7 @@ func TestHelp(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"skygo-kubernetes server", "--namespace", "--kubeconfig", "--context", "--targets"} {
+	for _, want := range []string{"skygo-kubernetes server", "--namespace", "--kubeconfig", "--context", "--targets", "--execution-state"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("help missing %q", want)
 		}

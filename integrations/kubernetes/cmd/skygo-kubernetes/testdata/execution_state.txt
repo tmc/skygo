@@ -1,0 +1,62 @@
+# Source-only; NOT_RUN. Flag checks of the server command for
+# --execution-state. Every refused case fails before the server callback runs
+# and before any configuration file is read: the targets and profiles files
+# named here do not exist, and the state directory is never created.
+
+# Help lists the flag.
+skygo-kubernetes server --help
+stdout '--execution-state'
+! stdout 'server run called'
+
+# The flag requires --targets, even when empty.
+! skygo-kubernetes server --namespace tasks --execution-state $WORK/state
+stderr '--execution-state requires --targets'
+! stdout 'server run called'
+
+! skygo-kubernetes server --namespace tasks --execution-state ''
+stderr '--execution-state requires --targets'
+! stdout 'server run called'
+
+! skygo-kubernetes server --execution-state $WORK/state
+stderr '--execution-state requires --targets'
+! stdout 'server run called'
+
+# The flag conflicts with --environment-profiles, either one empty.
+! skygo-kubernetes server --targets $WORK/absent.yaml --execution-state $WORK/state --environment-profiles $WORK/absent.yaml --auth-file auth.json
+stderr '--execution-state conflicts with --environment-profiles'
+! stderr 'absent'
+! stdout 'server run called'
+
+! skygo-kubernetes server --targets $WORK/absent.yaml --execution-state '' --environment-profiles $WORK/absent.yaml
+stderr '--execution-state conflicts with --environment-profiles'
+! stderr 'absent'
+! stdout 'server run called'
+
+! skygo-kubernetes server --targets $WORK/absent.yaml --execution-state $WORK/state --environment-profiles '' --auth-file auth.json
+stderr '--execution-state conflicts with --environment-profiles'
+! stderr 'absent'
+! stdout 'server run called'
+
+# Existing named-target conflicts still apply with the flag.
+! skygo-kubernetes server --targets $WORK/absent.yaml --execution-state $WORK/state --namespace tasks
+stderr '--targets conflicts with --kubeconfig, --context or --namespace'
+! stderr 'absent'
+! stdout 'server run called'
+
+! skygo-kubernetes server --targets $WORK/absent.yaml --kubeconfig $WORK/absent.yaml
+stderr '--targets conflicts with --kubeconfig, --context or --namespace'
+! stderr 'absent'
+! stdout 'server run called'
+
+! skygo-kubernetes server --targets $WORK/absent.yaml --context chosen
+stderr '--targets conflicts with --kubeconfig, --context or --namespace'
+! stderr 'absent'
+! stdout 'server run called'
+
+! skygo-kubernetes server --namespace tasks --environment-profiles $WORK/absent.yaml
+stderr '--environment-profiles requires --targets'
+! stderr 'absent'
+! stdout 'server run called'
+
+! exists $WORK/state
+! exists $WORK/absent.yaml

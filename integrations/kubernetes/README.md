@@ -72,6 +72,38 @@ Job backend and its existing adoption behavior. See the
 [retry contract](../../docs/contracts.md#finite-retries) and the native
 checks in the [verification plan](../../docs/testing.md#finite-retry-checks).
 
+Named targets can keep durable execution receipts for ordinary Jobs and retry
+Pods:
+
+```sh
+install -d -m 0700 /var/lib/skygo/kube-execution
+./bin/skygo-kubernetes server --data-dir ./state-kube --disable-local \
+  --targets ./targets.yaml --execution-state /var/lib/skygo/kube-execution
+```
+
+The operator prepares the directory: an existing absolute path without
+symlinks, owned by the server user, mode `0700`, on the same local disk for
+its lifetime. The server never creates, guesses or migrates it and never
+falls back to the working directory. An unusable directory, including an
+explicitly empty value, fails when the server builds its targets.
+`--execution-state` requires `--targets` and conflicts with
+`--environment-profiles`; targets with a `data` block are refused. Without
+the flag, targets behave as before, without receipts.
+
+Each target records, before its single create request, a random nonce in a
+private receipt and pins the returned UID; a restarted server recovers only
+the object carrying that receipt and never resends a create. Targets sharing
+the directory use separate scopes per owner, namespace and binding. Attempts
+created without a receipt, including those of a server run without the flag,
+are refused rather than adopted: drain or cancel them before enabling the
+flag. Durability relies on ordered `fsync` of each receipt file and its
+directory and on `flock`; it does not make writes to different files atomic
+together. Retired receipts are tombstones that are never reclaimed, and a
+store full of them refuses new attempts until an operator acts. See
+[durable execution receipts](docs/dra.md#durable-execution-receipts). This
+mode does not enable DRA, environment or remote data support, or ordinary
+Job cleanup, and has not been qualified against a native cluster.
+
 A named target may also have a `data` block, which fixes its helper image,
 approved task images, worker origin and PVC or Secret references. A data block
 alone advertises no remote data support: every data task is refused until the

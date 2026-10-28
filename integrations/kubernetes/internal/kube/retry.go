@@ -47,12 +47,16 @@ func checkRetry(t backend.Task) error {
 	return nil
 }
 
+// validInstance reports whether s is an acceptable object UID: 1 to 128
+// visible ASCII bytes, without spaces. A UID is an opaque string
+// (k8s.io/apimachinery/pkg/types.UID); the UUIDs the API server generates
+// are accepted, but no UUID form is required.
 func validInstance(s string) bool {
 	if len(s) == 0 || len(s) > 128 {
 		return false
 	}
 	for _, c := range []byte(s) {
-		if c < 0x20 || c > 0x7e {
+		if c <= 0x20 || c > 0x7e {
 			return false
 		}
 	}
@@ -90,6 +94,10 @@ func (b *Backend) startRetry(ctx context.Context, id string, t backend.Task) err
 		return err
 	}
 	defer b.releaseRetry(id)
+	pod := b.retryPod(id, name, hash, t)
+	if b.receipts != nil {
+		return b.startReceipted(ctx, id, hash, pod)
+	}
 	b.mu.Lock()
 	if b.retries == nil {
 		b.retries = make(map[string]*retryReceipt)
@@ -104,14 +112,6 @@ func (b *Backend) startRetry(ctx context.Context, id string, t backend.Task) err
 	}
 	b.retries[id] = &retryReceipt{hash: hash}
 	b.mu.Unlock()
-	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
-		Name: name, Namespace: b.namespace,
-		Labels:      map[string]string{ownerLabel: b.owner, idLabel: id},
-		Annotations: map[string]string{taskAnnotation: hash, bindingAnnotation: b.binding},
-	}, Spec: b.podSpec(t)}
-	if t.TimeoutSeconds > 0 {
-		pod.Spec.ActiveDeadlineSeconds = &t.TimeoutSeconds
-	}
 	var created bool
 	result := &corev1.Pod{}
 	err = client.Post().Namespace(b.namespace).Resource("pods").
@@ -136,6 +136,18 @@ func (b *Backend) startRetry(ctx context.Context, id string, t backend.Task) err
 	return nil
 }
 
+func (b *Backend) retryPod(id, name, hash string, t backend.Task) *corev1.Pod {
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: name, Namespace: b.namespace,
+		Labels:      map[string]string{ownerLabel: b.owner, idLabel: id},
+		Annotations: map[string]string{taskAnnotation: hash, bindingAnnotation: b.binding},
+	}, Spec: b.podSpec(t)}
+	if t.TimeoutSeconds > 0 {
+		pod.Spec.ActiveDeadlineSeconds = &t.TimeoutSeconds
+	}
+	return pod
+}
+
 // retryIdentity authorizes a native read using the first receipt or a durable
 // pin. An ambiguous create reservation never acquires an identity by observation.
 func (b *Backend) retryIdentity(ref backend.Reference) (string, string, error) {
@@ -154,6 +166,17 @@ func (b *Backend) retryIdentity(ref backend.Reference) (string, string, error) {
 	hash, err := taskHash(ref.Task)
 	if err != nil {
 		return "", "", err
+	}
+	if b.receipts != nil {
+		// Only a pinned durable receipt authorizes a native read.
+		r, _, err := b.receiptFor(ref, "Pod")
+		if err != nil {
+			return "", "", err
+		}
+		if r.Phase != phasePinned {
+			return "", "", fmt.Errorf("%w: retry pod instance is unresolved", backend.ErrIdentityMismatch)
+		}
+		return r.UID, hash, nil
 	}
 	uid := ref.Instance
 	b.mu.Lock()
@@ -184,10 +207,30 @@ func (b *Backend) ownedRetry(p *corev1.Pod, id, hash, uid string) error {
 	return nil
 }
 
+// getRetry reads the attempt's Pod and returns it with the authorized UID.
+// With receipts, the returned Pod is the strictly decoded body of this very
+// read, matched against the pinned receipt as a recovery read is: nonce,
+// spec digest, complete canonical spec, task, binding, owner, no owner
+// references and the pinned UID. Every caller's read, including each
+// recheck, is therefore matched by itself.
 func (b *Backend) getRetry(ctx context.Context, ref backend.Reference) (*corev1.Pod, string, error) {
 	uid, hash, err := b.retryIdentity(ref)
 	if err != nil {
 		return nil, "", err
+	}
+	if b.receipts != nil {
+		obj, r, err := b.receiptedParent(ctx, ref, "Pod")
+		if err != nil {
+			return nil, uid, err
+		}
+		if r.Phase != phasePinned || r.UID != uid {
+			return nil, uid, fmt.Errorf("%w: retry pod instance differs from its receipt", backend.ErrIdentityMismatch)
+		}
+		p := obj.(*corev1.Pod)
+		if err := b.ownedRetry(p, ref.ID, hash, uid); err != nil {
+			return nil, uid, err
+		}
+		return p, uid, nil
 	}
 	name, _ := jobName(ref.ID)
 	p, err := b.client.CoreV1().Pods(b.namespace).Get(ctx, name, metav1.GetOptions{})
@@ -239,6 +282,16 @@ func sameTermination(a, b *corev1.Pod) bool {
 }
 
 func (b *Backend) observeRetry(ctx context.Context, ref backend.Reference) (backend.Status, error) {
+	if b.receipts != nil {
+		var pending createUncertain
+		err := b.resolveRetry(ctx, ref)
+		if errors.As(err, &pending) {
+			return backend.Status{State: backend.Starting, Reason: string(pending)}, nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return backend.Status{}, err
+		}
+	}
 	if err := b.claimRetryReference(ref); err != nil {
 		return backend.Status{}, err
 	}
@@ -273,9 +326,10 @@ func (b *Backend) observeRetry(ctx context.Context, ref backend.Reference) (back
 		if !stoppedRetry(again, ref.Task) || !sameTermination(p, again) {
 			return backend.Status{State: backend.Unknown, Instance: uid, Reason: "kubernetes retry termination changed"}, nil
 		}
-		b.mu.Lock()
-		canceled := b.retries[ref.ID] != nil && b.retries[ref.ID].cancel
-		b.mu.Unlock()
+		canceled, err := b.retryCanceled(ref.ID)
+		if err != nil {
+			return backend.Status{}, err
+		}
 		if canceled {
 			status.State, status.Reason = backend.Canceled, "canceled by operator"
 		} else {
@@ -288,6 +342,11 @@ func (b *Backend) observeRetry(ctx context.Context, ref backend.Reference) (back
 }
 
 func (b *Backend) cancelRetry(ctx context.Context, ref backend.Reference) error {
+	if b.receipts != nil {
+		if err := b.resolveRetry(ctx, ref); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
 	if err := b.claimRetryReference(ref); err != nil {
 		return err
 	}
@@ -307,59 +366,99 @@ func (b *Backend) cancelRetry(ctx context.Context, ref backend.Reference) error 
 	if err != nil {
 		return err
 	}
-	b.mu.Lock()
-	if b.retries == nil {
-		b.retries = make(map[string]*retryReceipt)
-	}
-	r := b.retries[ref.ID]
-	if r == nil {
-		if len(b.retries) >= maxRetryReceipts {
-			b.mu.Unlock()
-			return errors.New("kubernetes retry receipt limit reached")
+	if b.receipts != nil {
+		// Cancellation intent is durable before the request is sent.
+		if err := b.recordCancel(ref.ID, uid, stepIntent); err != nil {
+			return err
 		}
-		r = &retryReceipt{uid: uid, hash: hash}
-		b.retries[ref.ID] = r
+	} else if err := b.markRetryCanceled(ref.ID, uid, hash); err != nil {
+		return err
 	}
-	if r.uid != uid || r.hash != hash {
-		b.mu.Unlock()
-		return fmt.Errorf("%w: retry receipt differs", backend.ErrIdentityMismatch)
-	}
-	r.cancel = true
-	b.mu.Unlock()
 	nativeUID := types.UID(uid)
 	err = b.client.CoreV1().Pods(b.namespace).Delete(ctx, p.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &nativeUID}})
 	if apierrors.IsNotFound(err) {
 		return nil
 	}
+	if err == nil && b.receipts != nil {
+		err = b.recordCancel(ref.ID, uid, stepDelivered)
+	}
 	return err
+}
+
+func (b *Backend) markRetryCanceled(id, uid, hash string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.retries == nil {
+		b.retries = make(map[string]*retryReceipt)
+	}
+	r := b.retries[id]
+	if r == nil {
+		if len(b.retries) >= maxRetryReceipts {
+			return errors.New("kubernetes retry receipt limit reached")
+		}
+		r = &retryReceipt{uid: uid, hash: hash}
+		b.retries[id] = r
+	}
+	if r.uid != uid || r.hash != hash {
+		return fmt.Errorf("%w: retry receipt differs", backend.ErrIdentityMismatch)
+	}
+	r.cancel = true
+	return nil
 }
 
 func (b *Backend) logsRetry(ctx context.Context, ref backend.Reference, offset int64, limit int) (backend.LogChunk, error) {
 	if offset < 0 || limit <= 0 || limit > backend.MaxChunkBytes {
 		return backend.LogChunk{}, fmt.Errorf("invalid log offset or limit: %w", fs.ErrInvalid)
 	}
+	// With receipts, the log body's custody is reserved before the first
+	// request; see logCustody.
+	var custody *logCustody
+	if b.receipts != nil {
+		var err error
+		if custody, err = b.admitReceiptedLogs(ref.ID); err != nil {
+			return backend.LogChunk{}, err
+		}
+		defer custody.settle()
+		if err := b.resolveRetry(ctx, ref); err != nil && !apierrors.IsNotFound(err) {
+			return backend.LogChunk{}, err
+		}
+	}
 	if err := b.claimRetryReference(ref); err != nil {
 		return backend.LogChunk{}, err
 	}
 	defer b.releaseRetry(ref.ID)
-	p, _, err := b.getRetry(ctx, ref)
+	p, uid, err := b.getRetry(ctx, ref)
 	if apierrors.IsNotFound(err) {
 		return backend.LogChunk{}, fmt.Errorf("retry pod logs are no longer retained: %w", fs.ErrNotExist)
 	}
 	if err != nil {
 		return backend.LogChunk{}, err
 	}
-	stream, err := b.client.CoreV1().Pods(b.namespace).GetLogs(p.Name, &corev1.PodLogOptions{Container: "task"}).Stream(ctx)
-	if err != nil {
-		return backend.LogChunk{}, err
-	}
-	defer stream.Close()
-	data, err := io.ReadAll(io.LimitReader(stream, backend.MaxLogBytes+1))
-	if err != nil {
-		return backend.LogChunk{}, err
+	var data []byte
+	if b.receipts != nil {
+		// A refusal recorded since the read sends no log request. The
+		// original body is closed, positively, before the final check below.
+		if err := b.receiptCurrent(ref, "Pod", uid); err != nil {
+			return backend.LogChunk{}, err
+		}
+		if data, err = b.receiptedLogs(ctx, custody, p.Name); err != nil {
+			return backend.LogChunk{}, err
+		}
+	} else {
+		stream, err := b.client.CoreV1().Pods(b.namespace).GetLogs(p.Name, &corev1.PodLogOptions{Container: "task"}).Stream(ctx)
+		if err != nil {
+			return backend.LogChunk{}, err
+		}
+		defer stream.Close()
+		if data, err = io.ReadAll(io.LimitReader(stream, backend.MaxLogBytes+1)); err != nil {
+			return backend.LogChunk{}, err
+		}
 	}
 	// Pod logs have no UID precondition. Check again before releasing bytes;
 	// trusted namespace writers remain necessary for the metadata/read boundary.
+	// With receipts this first rechecks the receipt, without a request, so a
+	// refusal recorded while the body or its Close was held releases nothing;
+	// its read is matched and the receipt rechecked again after it.
 	if _, _, err := b.getRetry(ctx, ref); err != nil {
 		return backend.LogChunk{}, err
 	}

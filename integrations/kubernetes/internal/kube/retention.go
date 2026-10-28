@@ -64,6 +64,15 @@ func (b *Backend) removeExecution(ctx context.Context, ref backend.Reference) er
 	if !validInstance(ref.Instance) {
 		return fmt.Errorf("%w: cleanup requires a pinned pod instance", backend.ErrIdentityMismatch)
 	}
+	if b.receipts != nil {
+		// Cleanup excludes every native operation of the scope, in any
+		// Backend or process, and never waits for one.
+		release, err := b.receipts.exclusive()
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	uid, hash, err := b.retryIdentity(ref)
 	if err != nil {
 		return err
@@ -72,9 +81,10 @@ func (b *Backend) removeExecution(ctx context.Context, ref backend.Reference) er
 		return err
 	}
 	defer b.releaseRetry(ref.ID)
-	b.mu.Lock()
-	canceled := b.retries[ref.ID] != nil && b.retries[ref.ID].cancel
-	b.mu.Unlock()
+	canceled, err := b.retryCanceled(ref.ID)
+	if err != nil {
+		return err
+	}
 	if canceled {
 		return fmt.Errorf("canceled execution cleanup unavailable: %w", fs.ErrNotExist)
 	}
@@ -98,6 +108,18 @@ func (b *Backend) removeExecution(ctx context.Context, ref backend.Reference) er
 	if !stoppedRetry(again, ref.Task) || !sameTermination(p, again) {
 		return fmt.Errorf("pod stopped receipt changed: %w", fs.ErrNotExist)
 	}
+	if b.receipts != nil {
+		// Cleanup intent is durable before the deletion is sent.
+		if _, err := b.receipts.update(ref.ID, func(x *executionReceipt) error {
+			if x.Phase != phasePinned || x.UID != uid || x.TaskSHA256 != hash {
+				return fmt.Errorf("%w: cleanup receipt differs", backend.ErrIdentityMismatch)
+			}
+			x.Cleanup = stepIntent
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
 	expected := types.UID(uid)
 	err = b.client.CoreV1().Pods(b.namespace).Delete(ctx, p.Name, metav1.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &expected}})
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -113,7 +135,18 @@ func (b *Backend) removeExecution(ctx context.Context, ref backend.Reference) er
 	return errors.New("kubernetes execution deletion remains pending")
 }
 
+// retireRetry releases the attempt's receipt. A durable receipt becomes a
+// retired tombstone only after the same proof the volatile receipt requires;
+// the tombstone authorizes nothing and is never reclaimed.
 func (b *Backend) retireRetry(id, uid, hash string) error {
+	if b.receipts != nil {
+		return b.receipts.retire(id, func(x *executionReceipt) error {
+			if x.Phase != phasePinned || x.UID != uid || x.TaskSHA256 != hash || x.Cancel != "" || len(x.Objects) != 0 {
+				return fmt.Errorf("%w: cleanup receipt differs", backend.ErrIdentityMismatch)
+			}
+			return nil
+		})
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if r := b.retries[id]; r != nil {

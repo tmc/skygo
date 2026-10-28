@@ -29,7 +29,8 @@ const (
 )
 
 // Backend executes native Kubernetes Jobs in a single namespace.
-// Construct one with FromTarget or FromConfig; the zero value is not usable.
+// Construct one with FromTarget, FromTargetWithState or FromConfig; the zero
+// value is not usable.
 type Backend struct {
 	client           kubernetes.Interface
 	namespace, owner string
@@ -43,6 +44,7 @@ type Backend struct {
 	dataQual         *dataQualification      // nil until a native qualification exists
 	dataStarts       map[string]bool         // attempt IDs whose StartData was called
 	dataFrames       map[string][]*dataFrame // data operation custody; see dataFrame
+	receipts         *receiptStore           // nil unless constructed by FromTargetWithState
 }
 
 // Check validates capability requirements without making network requests.
@@ -99,9 +101,18 @@ func (b *Backend) owned(j *batchv1.Job, id string) error {
 
 // Start creates a Job or adopts an existing Job with the same owner and task.
 // Enabled retry instead creates one directly owned Pod and never adopts it.
+// A Backend with execution receipts never adopts: it sends at most one create
+// per attempt and refuses any attempt that already has a receipt.
 func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if dataTask(t) {
 		return errors.New("kubernetes data task requires StartData")
+	}
+	if b.receipts != nil {
+		release, err := b.receipts.operate(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
 	}
 	if t.Retry != nil {
 		return b.startRetry(ctx, id, t)
@@ -121,6 +132,28 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 		return err
 	}
 	hash := fmt.Sprintf("%x", sha256.Sum256(raw))
+	j := b.jobObject(id, name, hash, t)
+	if b.receipts != nil {
+		return b.startReceipted(ctx, id, hash, j)
+	}
+	_, err = b.client.BatchV1().Jobs(b.namespace).Create(ctx, j, metav1.CreateOptions{})
+	if apierrors.IsAlreadyExists(err) {
+		existing, getErr := b.client.BatchV1().Jobs(b.namespace).Get(ctx, name, metav1.GetOptions{})
+		if getErr != nil {
+			return getErr
+		}
+		if err = b.owned(existing, id); err != nil {
+			return err
+		}
+		if existing.Annotations[taskAnnotation] != hash {
+			return fmt.Errorf("%w: kubernetes task differs", backend.ErrIdentityMismatch)
+		}
+		return nil
+	}
+	return err
+}
+
+func (b *Backend) jobObject(id, name, hash string, t backend.Task) *batchv1.Job {
 	zero := int32(0)
 	one := int32(1)
 	jobLabels := map[string]string{ownerLabel: b.owner, idLabel: id}
@@ -140,21 +173,7 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if t.TimeoutSeconds > 0 {
 		j.Spec.ActiveDeadlineSeconds = &t.TimeoutSeconds
 	}
-	_, err = b.client.BatchV1().Jobs(b.namespace).Create(ctx, j, metav1.CreateOptions{})
-	if apierrors.IsAlreadyExists(err) {
-		existing, getErr := b.client.BatchV1().Jobs(b.namespace).Get(ctx, name, metav1.GetOptions{})
-		if getErr != nil {
-			return getErr
-		}
-		if err = b.owned(existing, id); err != nil {
-			return err
-		}
-		if existing.Annotations[taskAnnotation] != hash {
-			return fmt.Errorf("%w: kubernetes task differs", backend.ErrIdentityMismatch)
-		}
-		return nil
-	}
-	return err
+	return j
 }
 
 func (b *Backend) get(ctx context.Context, ref backend.Reference) (*batchv1.Job, error) {
@@ -215,8 +234,18 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 		o, err := b.ObserveData(ctx, ref)
 		return o.Status, err
 	}
+	if b.receipts != nil {
+		release, err := b.receipts.operate(ctx)
+		if err != nil {
+			return backend.Status{}, err
+		}
+		defer release()
+	}
 	if ref.Task.Retry != nil {
 		return b.observeRetry(ctx, ref)
+	}
+	if b.receipts != nil {
+		return b.observeJobReceipted(ctx, ref)
 	}
 	id := ref.ID
 	j, err := b.get(ctx, ref)
@@ -232,6 +261,11 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 	if err != nil {
 		return backend.Status{}, err
 	}
+	return b.jobStatus(ctx, j, id)
+}
+
+// jobStatus reports the state of the validated Job j.
+func (b *Backend) jobStatus(ctx context.Context, j *batchv1.Job, id string) (backend.Status, error) {
 	for _, c := range j.Status.Conditions {
 		if c.Status != corev1.ConditionTrue {
 			continue
@@ -267,8 +301,18 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	if dataTask(ref.Task) {
 		return b.cancelData(ctx, ref)
 	}
+	if b.receipts != nil {
+		release, err := b.receipts.operate(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
+	}
 	if ref.Task.Retry != nil {
 		return b.cancelRetry(ctx, ref)
+	}
+	if b.receipts != nil {
+		return b.cancelJobReceipted(ctx, ref)
 	}
 	id := ref.ID
 	j, err := b.get(ctx, ref)
@@ -304,6 +348,16 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if dataTask(ref.Task) {
 		return b.logsData(ctx, ref, offset, limit)
 	}
+	if b.receipts != nil {
+		// The permit is released after the log body is closed and the
+		// receipt checked last, and covers the nested Observe. A body that
+		// did not close cleanly keeps it; see logCustody.
+		release, err := b.receipts.operate(ctx)
+		if err != nil {
+			return backend.LogChunk{}, err
+		}
+		defer release()
+	}
 	if ref.Task.Retry != nil {
 		return b.logsRetry(ctx, ref, offset, limit)
 	}
@@ -311,7 +365,21 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if offset < 0 || limit <= 0 || limit > backend.MaxChunkBytes {
 		return backend.LogChunk{}, fmt.Errorf("invalid log offset or limit: %w", fs.ErrInvalid)
 	}
-	j, err := b.get(ctx, ref)
+	// With receipts, uid is the pinned Job UID and custody that of the
+	// log body, reserved before the first request.
+	var j *batchv1.Job
+	var uid string
+	var custody *logCustody
+	var err error
+	if b.receipts != nil {
+		if custody, err = b.admitReceiptedLogs(id); err != nil {
+			return backend.LogChunk{}, err
+		}
+		defer custody.settle()
+		j, uid, err = b.receiptedJob(ctx, ref)
+	} else {
+		j, err = b.get(ctx, ref)
+	}
 	if apierrors.IsNotFound(err) {
 		return backend.LogChunk{}, fmt.Errorf("job logs are no longer retained: %w", fs.ErrNotExist)
 	}
@@ -338,14 +406,31 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 		}
 		return backend.LogChunk{}, nil
 	}
-	stream, err := b.client.CoreV1().Pods(b.namespace).GetLogs(pods[0].Name, &corev1.PodLogOptions{Container: "task"}).Stream(ctx)
-	if err != nil {
-		return backend.LogChunk{}, err
-	}
-	defer stream.Close()
-	data, err := io.ReadAll(io.LimitReader(stream, backend.MaxLogBytes+1))
-	if err != nil {
-		return backend.LogChunk{}, err
+	var data []byte
+	if b.receipts != nil {
+		// The receipt is checked again before the log request and, after
+		// the original body positively closed, before the bytes are
+		// released: a refusal recorded meanwhile, also while the body or
+		// its Close was held, releases nothing. A request already sent is
+		// not recalled.
+		if err := b.receiptCurrent(ref, "Job", uid); err != nil {
+			return backend.LogChunk{}, err
+		}
+		if data, err = b.receiptedLogs(ctx, custody, pods[0].Name); err != nil {
+			return backend.LogChunk{}, err
+		}
+		if err := b.receiptCurrent(ref, "Job", uid); err != nil {
+			return backend.LogChunk{}, err
+		}
+	} else {
+		stream, err := b.client.CoreV1().Pods(b.namespace).GetLogs(pods[0].Name, &corev1.PodLogOptions{Container: "task"}).Stream(ctx)
+		if err != nil {
+			return backend.LogChunk{}, err
+		}
+		defer stream.Close()
+		if data, err = io.ReadAll(io.LimitReader(stream, backend.MaxLogBytes+1)); err != nil {
+			return backend.LogChunk{}, err
+		}
 	}
 	truncated := len(data) > backend.MaxLogBytes
 	if truncated {

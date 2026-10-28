@@ -20,7 +20,7 @@ import (
 )
 
 type targetFlags struct {
-	file, kubeconfig, context, namespace, environments string
+	file, kubeconfig, context, namespace, environments, state string
 }
 
 func command(run func(context.Context, server.Config) error) *cobra.Command {
@@ -29,6 +29,15 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 	root := cli.New(func(ctx context.Context, o cli.ServerOptions) error {
 		var config kube.Config
 		named := serverCommand.Flags().Changed("targets")
+		// An explicit state directory, even an empty one, selects receipts;
+		// it never falls back to targets without them.
+		state := serverCommand.Flags().Changed("execution-state")
+		if state && !named {
+			return errors.New("--execution-state requires --targets")
+		}
+		if state && serverCommand.Flags().Changed("environment-profiles") {
+			return errors.New("--execution-state conflicts with --environment-profiles")
+		}
 		if named {
 			for _, name := range []string{"kubeconfig", "context", "namespace"} {
 				if serverCommand.Flags().Changed(name) {
@@ -68,7 +77,17 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 				if named {
 					var targets []backend.Target
 					for _, target := range config.Targets() {
-						configured, err := kube.FromTarget(ctx, target, owner)
+						// The receipt constructor validates the state
+						// directory and refuses data targets before any
+						// request; it keeps one scope per owner, namespace
+						// and binding.
+						var configured backend.Target
+						var err error
+						if state {
+							configured, err = kube.FromTargetWithState(ctx, target, owner, flags.state)
+						} else {
+							configured, err = kube.FromTarget(ctx, target, owner)
+						}
 						if err != nil {
 							return nil, err
 						}
@@ -94,6 +113,7 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			cmd.Flags().StringVar(&flags.context, "context", "", "Kubernetes context")
 			cmd.Flags().StringVar(&flags.namespace, "namespace", "", "Kubernetes namespace (required without --targets)")
 			cmd.Flags().StringVar(&flags.environments, "environment-profiles", "", "Private environment profiles file for one of --targets (requires --auth-file)")
+			cmd.Flags().StringVar(&flags.state, "execution-state", "", "Existing private 0700 directory for durable execution receipts of --targets")
 		}
 	}
 	return root
