@@ -660,6 +660,9 @@ func (c *Control) integrate(s *loopState, r operationResult) error {
 		return nil
 	}
 	if r.operation.kind == startOperation {
+		if deferred, err := c.deferResourceStart(j, r); deferred {
+			return err
+		}
 		if r.notStarted {
 			_, err = c.store.ObserveAttempt(j.ID, j.CurrentAttemptID(), backend.Status{State: backend.Unknown, Reason: "local output binding unavailable; execution not started"}, time.Now().UTC())
 			return err

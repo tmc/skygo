@@ -38,6 +38,16 @@ type options struct {
 	endpoint, token, tokenFile string
 	json                       bool
 	timeout                    time.Duration
+	http                       *http.Client // used by every generated client
+	clientOptions              ClientOptions
+}
+
+// ClientOptions describes placement known by a selected transport. Empty
+// fields supply no infrastructure binding. The transport must verify Target
+// at Infra before constructing the command; a plain HTTP client supplies none.
+type ClientOptions struct {
+	Infra  string
+	Target string
 }
 
 type jobError struct{ job *skyv1.Job }
@@ -61,7 +71,18 @@ func ExitCode(err error) int {
 // New builds the sole command tree. The caller supplies server startup and a
 // signal-aware context to ExecuteContext, and prints returned errors once.
 func New(server func(context.Context, ServerOptions) error) *cobra.Command {
-	o := &options{endpoint: "http://127.0.0.1:8080", timeout: 30 * time.Second}
+	return NewWithClient(server, http.DefaultClient, ClientOptions{})
+}
+
+// NewWithClient is New with the HTTP client that every Control, Workflow
+// and artifact RPC uses. A nil client means http.DefaultClient. The
+// dashboard keeps its own client. Config records the selected transport's
+// optional infrastructure binding; it does not grant server authority.
+func NewWithClient(server func(context.Context, ServerOptions) error, client *http.Client, config ClientOptions) *cobra.Command {
+	if client == nil {
+		client = http.DefaultClient
+	}
+	o := &options{endpoint: "http://127.0.0.1:8080", timeout: 30 * time.Second, http: client, clientOptions: config}
 	if v := os.Getenv("SKYGO_ENDPOINT"); v != "" {
 		o.endpoint = v
 	}
@@ -121,7 +142,14 @@ func New(server func(context.Context, ServerOptions) error) *cobra.Command {
 }
 
 func (o *options) client() skyv1connect.ControlServiceClient {
-	return skyv1connect.NewControlServiceClient(http.DefaultClient, o.endpoint)
+	return skyv1connect.NewControlServiceClient(o.httpClient(), o.endpoint)
+}
+
+func (o *options) httpClient() *http.Client {
+	if o.http != nil {
+		return o.http
+	}
+	return http.DefaultClient
 }
 func request[T any](o *options, m *T) *connect.Request[T] {
 	r := connect.NewRequest(m)
@@ -160,6 +188,9 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 	var wait, remoteData bool
 	var quote quoteFlags
 	var lower tasklower.Options
+	if b := o.clientOptions; b.Infra != "" || b.Target != "" {
+		lower.InfraBinding = &tasklower.InfraBinding{Infra: b.Infra, Target: b.Target}
+	}
 	name, short := "plan", "Validate a task and select an eligible target"
 	if run {
 		name, short = "run", "Submit a task"
@@ -377,7 +408,7 @@ type taskFile struct {
 }
 
 // readTask reads a skygo task file or SkyPilot task YAML from path.
-// Lower supplies the shell and target for SkyPilot tasks only.
+// Lower supplies semantics for SkyPilot tasks only.
 func readTask(cmd *cobra.Command, path string, lower tasklower.Options) (*skyv1.Task, error) {
 	if path == "" {
 		return nil, errors.New("task requires --file or a path argument")

@@ -8,9 +8,10 @@ import (
 
 // Lowering options, notes and status values are shared with the core package.
 type (
-	Options = core.Options
-	Status  = core.Status
-	Note    = core.Note
+	Options      = core.Options
+	InfraBinding = core.InfraBinding
+	Status       = core.Status
+	Note         = core.Note
 )
 
 // Field treatment is reported with the core status values.

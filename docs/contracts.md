@@ -256,7 +256,9 @@ client credential files; snapshots do not contain them. See
 [authentication recovery](authentication.md#recovery).
 Restoring job metadata alone does not restore their output. Active job intent
 is preserved: queued jobs may start when the restored server runs, local work
-from another server lifetime becomes unknown, and Kubernetes work is checked
+from another server lifetime becomes unknown unless its durable supervisor
+record (`local-durable` in the data directory, not part of the snapshot)
+verifies it, and Kubernetes work is checked
 against its stored ownership and task identity. Unknown does not authorize retry.
 Stored backoff deadlines and attempt history survive backup/restore; restore
 does not restart a deadline or allocate an attempt.

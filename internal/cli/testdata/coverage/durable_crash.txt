@@ -1,0 +1,26 @@
+# A plain Local job survives SIGKILL of the server. Its durable supervisor
+# keeps owning the workload; the restarted server reattaches to the original
+# execution, observes its completion and serves its intact logs. The workload
+# runs once: ready is created only by its first start.
+server start
+taskfile release.json release
+skygo --json run -f release.json --request-id crash
+job-id JOB
+await-file ready
+await-state $JOB running
+server crash
+rm ready
+
+server start
+await-state $JOB running
+! exists ready
+mkdir release
+await-file released
+skygo --json run -f release.json --request-id crash --wait
+stdout '"id": *"'$JOB'"'
+stdout '"state": *"JOB_STATE_SUCCEEDED"'
+skygo jobs logs $JOB
+stdout '^first\nsecond\n$'
+! exists ready
+server stop
+! stderr .

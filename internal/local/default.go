@@ -303,6 +303,9 @@ func (b *Backend) waitDefault(e *execution, seconds int64) {
 			(groupErr == nil || workspaceAbsenceErr == nil) &&
 			result.readerCloseErr == nil && e.stdioWriterErr == nil && e.stdioWriter == nil &&
 			result.rawCloseErr == nil && outputClosed
+		if e.shutdownClosed {
+			b.releaseResources(e.resources)
+		}
 		e.shutdownErr = errors.Join(e.shutdownErr, pinErr, groupErr, owned.handleErr,
 			handleCloseErr, workspaceAbsenceErr, owned.waitErr, processErr,
 			result.readErr, result.retainErr, result.rawCloseErr,

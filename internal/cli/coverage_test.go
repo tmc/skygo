@@ -145,6 +145,7 @@ func runCoverageScript(t *testing.T, exe, file string) {
 	e.Cmds["taskfile"] = coverageTaskfile()
 	e.Cmds["await-file"] = awaitFile()
 	e.Cmds["job-id"] = jobID()
+	e.Cmds["await-state"] = retryAwaitState(exe, env)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	t.Cleanup(cancel)

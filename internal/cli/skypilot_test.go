@@ -30,6 +30,7 @@ type skypilotService struct {
 	requests int
 	calls    []string
 	tasks    []*skyv1.Task
+	target   string
 }
 
 func (s *skypilotService) record(call string, task *skyv1.Task) {
@@ -41,12 +42,19 @@ func (s *skypilotService) record(call string, task *skyv1.Task) {
 
 func (s *skypilotService) PlanTask(_ context.Context, r *connect.Request[skyv1.PlanTaskRequest]) (*connect.Response[skyv1.PlanTaskResponse], error) {
 	s.record("plan", r.Msg.Task)
-	return connect.NewResponse(&skyv1.PlanTaskResponse{Target: "local"}), nil
+	return connect.NewResponse(&skyv1.PlanTaskResponse{Target: s.targetName()}), nil
 }
 
 func (s *skypilotService) SubmitJob(_ context.Context, r *connect.Request[skyv1.SubmitJobRequest]) (*connect.Response[skyv1.SubmitJobResponse], error) {
 	s.record("submit", r.Msg.Task)
-	return connect.NewResponse(&skyv1.SubmitJobResponse{Job: &skyv1.Job{Id: r.Msg.RequestId, Target: "local", Task: r.Msg.Task, State: skyv1.JobState_JOB_STATE_SUCCEEDED}}), nil
+	return connect.NewResponse(&skyv1.SubmitJobResponse{Job: &skyv1.Job{Id: r.Msg.RequestId, Target: s.targetName(), Task: r.Msg.Task, State: skyv1.JobState_JOB_STATE_SUCCEEDED}}), nil
+}
+
+func (s *skypilotService) targetName() string {
+	if s.target != "" {
+		return s.target
+	}
+	return "local"
 }
 
 func (s *skypilotService) snapshot() (int, []string, []*skyv1.Task) {
@@ -312,6 +320,79 @@ func TestSkypilotScripts(t *testing.T) {
 			if !proto.Equal(tasks[i], tc.tasks[i]) {
 				t.Errorf("%s: %s %d task %v, want %v", tc.name, calls[i], i, tasks[i], tc.tasks[i])
 			}
+		}
+	}
+}
+
+// TestTaskInfraBinding drives the transport's operator-owned placement through
+// both CLI commands. Native tasks never enter the SkyPilot lowerer.
+func TestTaskInfraBinding(t *testing.T) {
+	bound := ClientOptions{Infra: "ssh/dgx", Target: "dgx"}
+	want09 := &skyv1.Task{
+		Argv:   []string{"/bin/sh", "-c", "uname -m\nnvidia-smi --query-gpu=name,driver_version --format=csv\necho \"rank $SKYPILOT_NODE_RANK of $SKYPILOT_NUM_NODES, $SKYPILOT_NUM_GPUS_PER_NODE GPU\"\n"},
+		Target: "dgx", Accelerator: "GB10", AcceleratorCount: 1,
+	}
+	for _, tc := range []struct {
+		name    string
+		binding ClientOptions
+		file    string
+		stdin   string
+		flags   []string
+		want    *skyv1.Task // nil means a typed refusal before any RPC
+		path    string      // refusal path; defaults to resources.infra
+	}{
+		{name: "unchanged primer09", binding: bound, file: "testdata/skypilot/primer09.yaml", want: want09},
+		{name: "matching explicit target", binding: bound, file: "testdata/skypilot/primer09.yaml", flags: []string{"--target", "dgx"}, want: want09},
+		{name: "native SSH task", binding: bound, stdin: "argv: [printf, native]\nenv: {MODE: native}\ntarget: dgx\n", want: &skyv1.Task{Argv: []string{"printf", "native"}, Env: map[string]string{"MODE": "native"}, Target: "dgx"}},
+		{name: "no infra does not select bound target", binding: bound, stdin: "run: echo hello\n", want: &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo hello"}}},
+		{name: "explicit environment preserved", binding: bound, stdin: "envs: {MODE: bound}\nresources:\n  infra: ssh/dgx\n  accelerators: GB10:1\nrun: echo \"$MODE\"\n", want: &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo \"$MODE\""}, Env: map[string]string{"MODE": "bound"}, Target: "dgx", Accelerator: "GB10", AcceleratorCount: 1}},
+		{name: "missing binding", file: "testdata/skypilot/primer09.yaml"},
+		{name: "target flag grants no binding", file: "testdata/skypilot/primer09.yaml", flags: []string{"--target", "dgx"}},
+		{name: "wrong pool", binding: ClientOptions{Infra: "ssh/other", Target: "dgx"}, file: "testdata/skypilot/primer09.yaml"},
+		{name: "conflicting target", binding: bound, file: "testdata/skypilot/primer09.yaml", flags: []string{"--target", "other"}},
+		{name: "binding does not authorize autostop", binding: bound, file: "testdata/skypilot/primer01.yaml", path: "resources.autostop"},
+	} {
+		for _, command := range []string{"plan", "run"} {
+			t.Run(tc.name+"/"+command, func(t *testing.T) {
+				s := &skypilotService{target: "dgx"}
+				srv := serveSkypilot(t, s)
+				c := NewWithClient(nil, srv.Client(), tc.binding)
+				c.SetOut(new(bytes.Buffer))
+				c.SetErr(new(bytes.Buffer))
+				c.SetIn(strings.NewReader(tc.stdin))
+				file := tc.file
+				if file == "" {
+					file = "-"
+				}
+				args := []string{"--endpoint", srv.URL, command, file}
+				c.SetArgs(append(args, tc.flags...))
+				err := c.ExecuteContext(context.Background())
+				requests, calls, tasks := s.snapshot()
+				if tc.want == nil {
+					var e *taskyaml.Error
+					path := tc.path
+					if path == "" {
+						path = "resources.infra"
+					}
+					if !errors.As(err, &e) || e.Code != taskyaml.Unsupported || e.Path != path {
+						t.Fatalf("got %v; want typed %s refusal", err, path)
+					}
+					if requests != 0 {
+						t.Fatalf("%d RPCs after refusal", requests)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantCall := "plan"
+				if command == "run" {
+					wantCall = "submit"
+				}
+				if len(calls) != 1 || calls[0] != wantCall || len(tasks) != 1 || !proto.Equal(tasks[0], tc.want) {
+					t.Fatalf("calls = %v, tasks = %v; want %s with %v", calls, tasks, wantCall, tc.want)
+				}
+			})
 		}
 	}
 }

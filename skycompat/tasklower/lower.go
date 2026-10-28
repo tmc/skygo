@@ -29,6 +29,10 @@ type Options struct {
 	Shell string
 	// Target optionally names the skygo target.
 	Target string
+	// InfraBinding optionally supplies an operator-authorized mapping from
+	// resources.infra to a fixed target. It is used only when the task
+	// requests that exact infrastructure; it never selects an endpoint.
+	InfraBinding *InfraBinding
 	// Workdir replaces the task's workdir path. It is required exactly when
 	// the task has a workdir. The path itself is never read.
 	Workdir *skyv1.ArtifactRef
@@ -41,6 +45,15 @@ type Options struct {
 	// AllowDrop permits dropping the nonexecuting fields "name" and
 	// "_user_specified_yaml". Lower refuses them otherwise.
 	AllowDrop []string
+}
+
+// InfraBinding maps one upstream infrastructure selector to a skygo target.
+// The caller must obtain it from operator configuration or an authenticated
+// transport, never from the task being lowered. Both fields must be nonempty.
+// The zero value is not usable. A binding does not establish target capability.
+type InfraBinding struct {
+	Infra  string
+	Target string
 }
 
 // Status reports how Lower treated one source field.
@@ -375,9 +388,19 @@ func (l *lowering) field(p string) error {
 		}
 		l.task.Image = image
 		return l.note(p, Lowered, "image")
-	case "resources.infra", "resources.autostop", "resources.job_recovery":
-		// skygo tasks have no infrastructure selector, cluster autostop or
-		// managed job recovery; any value, even false or {}, is refused.
+	case "resources.infra":
+		if r.Infra == nil {
+			return l.note(p, Default, "null")
+		}
+		b := l.opts.InfraBinding
+		if b == nil || *r.Infra != b.Infra || l.task.Target != "" && l.task.Target != b.Target {
+			return l.refuse(taskyaml.Unsupported, p, "")
+		}
+		l.task.Target = b.Target
+		return l.note(p, Lowered, "target from explicit infra binding")
+	case "resources.autostop", "resources.job_recovery":
+		// skygo tasks have no cluster autostop or managed job recovery; any
+		// value, even false or {}, is refused.
 		if l.set(p) {
 			return l.refuse(taskyaml.Unsupported, p, "")
 		}
@@ -455,6 +478,13 @@ func (o *Options) check() error {
 	}
 	if !utf8.ValidString(o.Target) || strings.ContainsRune(o.Target, 0) {
 		return errors.New("tasklower: invalid target")
+	}
+	if b := o.InfraBinding; b != nil {
+		for _, s := range []string{b.Infra, b.Target} {
+			if s == "" || strings.TrimSpace(s) != s || !utf8.ValidString(s) || strings.ContainsAny(s, "\x00\r\n") {
+				return errors.New("tasklower: invalid infra binding")
+			}
+		}
 	}
 	if o.TimeoutSeconds < 0 || o.TimeoutSeconds > 7*24*3600 {
 		return errors.New("tasklower: timeout outside 0..604800 seconds")

@@ -58,7 +58,8 @@ field is absent, as for a task without `run`.
 | `resources.accelerators` | `accelerator`, `accelerator_count` | count not a whole number in 1..2147483647; more than one choice |
 | `resources.image_id: docker:REF` | `image = REF` | any other form |
 | `resources.disk_size: 256` | default: the upstream unspecified value, not a disk request | any other value |
-| `resources.infra`, `autostop`, `job_recovery` | default when null | any value, including `false` or `{}` |
+| `resources.infra` | `target` only through an exact operator-authorized `Options.InfraBinding` | missing or mismatched binding, or an explicit target conflict |
+| `resources.autostop`, `job_recovery` | default when null | any value, including `false` or `{}` |
 | `resources.use_spot: false` | default | `true` |
 | `resources.cloud/region/zone/instance_type` | default when null | any value: select a skygo target |
 | `num_nodes: 1` | default | greater than 1 |
@@ -110,3 +111,10 @@ reference values, a resource refusal at plan time with no job, a workspace
 refusal before submission and a byte-exact local run of an imported task.
 The workspace upload-run-download workflow on Linux, Kubernetes execution
 and comparison with upstream `sky jobs launch` are separate acceptance runs.
+
+`Options.InfraBinding` is for an operator-configured or authenticated transport
+that already knows the infrastructure selector and its fixed target. The task
+cannot supply this binding or select a server endpoint. A matching selector
+sets the target only for that field; an explicit different target is refused.
+An unused binding does not change a task's target. This mapping establishes no
+GPU capability, storage semantics or provider access.

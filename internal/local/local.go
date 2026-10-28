@@ -37,6 +37,9 @@ type Backend struct {
 	retention           *retentionState
 	workspaces          *workspaceState
 	workspaceCleanupOps workspaceCleanupOps
+	resources           resourceState
+	// durable is set once by EnableDurable, before any Start.
+	durable *durableState
 }
 
 type execution struct {
@@ -49,6 +52,8 @@ type execution struct {
 	retained  *retainedOutput
 	workspace *workspaceExecution
 	phase     *workspacePhase
+	// resources is released under Backend.mu only after positive closure.
+	resources *resourceReservation
 	// workspaceClosed records positive original Local producer/cleanup-handle
 	// closure before detachment, under Backend.mu; no namespace/Store credit.
 	workspaceClosed bool
@@ -113,8 +118,18 @@ func New(directory string) (*Backend, error) {
 	return &Backend{directory: directory, jobs: make(map[string]*execution), retryOps: systemRetryProcessOps(), retryAvailable: retrySupported(), defaultOps: systemDefaultProcessOps()}, nil
 }
 
-// Check rejects requirements that local processes cannot enforce.
+// Check rejects requirements that local processes cannot enforce and
+// resource requests this host could never satisfy. It probes the host,
+// including the GPU inventory tool when accelerators are requested, but
+// ignores reservations held by running executions.
 func (b *Backend) Check(t backend.Task) error {
+	if err := b.checkTask(t); err != nil {
+		return err
+	}
+	return b.checkResources(t)
+}
+
+func (b *Backend) checkTask(t backend.Task) error {
 	if err := backend.ValidateWorkspace(t); err != nil {
 		return err
 	}
@@ -131,14 +146,17 @@ func (b *Backend) Check(t backend.Task) error {
 	if len(t.Argv) == 0 || t.Argv[0] == "" {
 		return errors.New("argv must contain a program")
 	}
-	if t.Image != "" || t.CPUMillis != 0 || t.MemoryBytes != 0 || t.Accelerator != "" || t.AcceleratorCount != 0 {
-		return errors.New("local execution does not support images or resource requests")
+	if t.Image != "" {
+		return fmt.Errorf("%w: images", ErrUnsupported)
+	}
+	if err := validateResources(t); err != nil {
+		return err
 	}
 	if t.CPULimitMillis != 0 || t.MemoryLimitBytes != 0 {
-		return errors.New("local execution does not support resource limits")
+		return fmt.Errorf("%w: resource limits", ErrUnsupported)
 	}
 	if len(t.NodeSelector) != 0 {
-		return errors.New("local execution does not support node selectors")
+		return fmt.Errorf("%w: node selectors", ErrUnsupported)
 	}
 	if t.Directory != "" && !filepath.IsAbs(t.Directory) {
 		return errors.New("directory must be absolute")
@@ -159,12 +177,14 @@ func (b *Backend) Check(t backend.Task) error {
 	return nil
 }
 
-// Start starts a job once. Its context only controls startup.
+// Start starts a job once. Its context only controls startup. Start probes
+// the host and reserves requested resources for the execution; it reports
+// backend.ErrResourcesUnavailable when they are held by other executions.
 func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if !validID.MatchString(id) {
 		return errors.New("invalid job ID")
 	}
-	if err := b.Check(t); err != nil {
+	if err := b.checkTask(t); err != nil {
 		return err
 	}
 	if t.Workdir != nil {
@@ -172,6 +192,16 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	}
 	if err := ctx.Err(); err != nil {
 		return err
+	}
+	inv, err := b.probeHost(ctx, t)
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	durable := b.durableEligible(t)
+	b.mu.Unlock()
+	if durable {
+		return b.startDurable(ctx, id, t, inv)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -187,6 +217,16 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if _, ok := b.jobs[id]; ok {
 		return errors.New("job already started")
 	}
+	held, err := b.reserveResources(id, t, inv)
+	if err != nil {
+		return err
+	}
+	installed := false
+	defer func() {
+		if !installed {
+			b.releaseResources(held) // no process was started under it
+		}
+	}()
 	if err := b.admitOutput(ctx, id, t); err != nil {
 		return err
 	}
@@ -210,14 +250,19 @@ func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	for k, v := range t.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
+	cmd.Env = visibleDevices(cmd.Env, held)
 	cmd.Stdout = out
 	cmd.Stderr = out
 	cmd.WaitDelay = 250 * time.Millisecond
 	configure(cmd)
+	preflight := cmd.Err != nil
 	if t.Retry != nil && t.Retry.MaxAttempts > 1 {
-		return b.startRetry(cmd, out, id, t.TimeoutSeconds)
+		err = b.startRetry(cmd, out, id, t.TimeoutSeconds)
+	} else {
+		err = b.startDefault(cmd, out, id, t.TimeoutSeconds)
 	}
-	return b.startDefault(cmd, out, id, t.TimeoutSeconds)
+	installed = b.installResources(id, held, preflight)
+	return err
 }
 
 func (b *Backend) stop(e *execution, state backend.State, reason string) error {
@@ -240,7 +285,8 @@ func (b *Backend) stop(e *execution, state backend.State, reason string) error {
 	return nil
 }
 
-// Observe reports only executions owned by this backend instance.
+// Observe reports executions owned by this backend instance and, when durable
+// execution is enabled, durable executions started by any earlier instance.
 func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.Status, error) {
 	id := ref.ID
 	if err := ctx.Err(); err != nil {
@@ -250,11 +296,15 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 		return backend.Status{}, errors.New("invalid job ID")
 	}
 	b.mu.Lock()
-	defer b.mu.Unlock()
 	e := b.jobs[id]
 	if e == nil {
+		b.mu.Unlock()
+		if s, ok, err := b.observeDurable(ref); ok {
+			return s, err
+		}
 		return backend.Status{State: backend.Unknown, Reason: "execution is not owned by this server"}, nil
 	}
+	defer b.mu.Unlock()
 	if err := checkInstance(e, ref.Instance); err != nil {
 		return backend.Status{}, err
 	}
@@ -277,7 +327,9 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 	return s, nil
 }
 
-// Cancel requests termination of the owned process group.
+// Cancel requests termination of the owned process group. For a durable
+// execution it records the request and waits for the supervisor's terminal
+// status, bounded by ctx.
 func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	id := ref.ID
 	if err := ctx.Err(); err != nil {
@@ -296,6 +348,9 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	}
 	b.mu.Unlock()
 	if e == nil {
+		if ok, err := b.cancelDurable(ctx, ref); ok {
+			return err
+		}
 		return errors.New("execution is not owned by this server")
 	}
 	return b.stop(e, backend.Canceled, "canceled by operator")
@@ -306,6 +361,8 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 // An uncertain original log-reader Close remains held and is not retried.
 // Workspace roots retain original ownership until explicit cleanup; Ready or a
 // durable completion acknowledgement alone cannot make their drain successful.
+// Durable executions are detached, not canceled: their supervisors keep
+// running and a later backend observes them.
 func (b *Backend) Close() error {
 	b.mu.Lock()
 	b.closed = true

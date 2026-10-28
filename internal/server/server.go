@@ -2,11 +2,13 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tmc/skygo/internal/artifact"
@@ -21,6 +23,15 @@ import (
 // Config selects durable storage, HTTP exposure, and execution targets.
 type Config struct {
 	DisableLocal bool
+
+	// DurableLocal runs plain local jobs (no workspace, no retry policy)
+	// under detached supervisors that outlive the server; a restarted server
+	// reattaches to them. LocalSupervisor is the absolute path of a binary
+	// whose main dispatches local.SupervisorCommand. Durable execution is
+	// not used when output retention is enabled: retained output keeps the
+	// server-owned execution path and its existing restart semantics.
+	DurableLocal    bool
+	LocalSupervisor string
 
 	// Artifacts is an optional actual marker-verified service installed while
 	// stopped. The caller owns Files and its borrowed root. HTTP completion
@@ -39,14 +50,25 @@ type Config struct {
 	ArtifactDir                                   string
 	DataDir, Listen, Token, AuthFile, TargetFacts string
 
+	// LocalTargetName names the built-in local target; empty means "local".
+	// It must be a lowercase DNS name of at most 63 bytes. Jobs record the
+	// name, so changing it for an existing DataDir leaves earlier jobs naming
+	// the previous target. The local binding does not depend on the name.
+	LocalTargetName string
+
+	// TLSConfig, if not nil, serves HTTPS on the owned listener with a clone
+	// of the configuration, which must supply a certificate. Nil serves HTTP.
+	TLSConfig *tls.Config
+
 	// Targets constructs additional targets using the persistent installation ID.
 	// It is called once, after the store opens and before the server listens.
 	// A nil function adds no targets. Targets must not require a Close call.
 	Targets func(owner string) ([]backend.Target, error)
 }
 
-// Run serves until cancellation, rejects new work before draining, and closes
-// local processes. Kubernetes workloads remain independent of server lifetime.
+// Run serves until cancellation and rejects new work before draining. It stops
+// server-owned local processes; configured durable local jobs detach instead.
+// Kubernetes workloads remain independent of server lifetime.
 func Run(ctx context.Context, cfg Config) error {
 	frame := &serverRun{}
 	if err := frame.start(ctx, cfg); err != nil {
@@ -83,6 +105,13 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	}
 	if cfg.DisableLocal && cfg.Targets == nil {
 		return errors.New("no execution targets configured")
+	}
+	localName, err := localTargetName(cfg)
+	if err != nil {
+		return err
+	}
+	if t := cfg.TLSConfig; t != nil && len(t.Certificates) == 0 && t.GetCertificate == nil && t.GetConfigForClient == nil {
+		return errors.New("tls configuration has no certificate")
 	}
 	host, _, err := net.SplitHostPort(cfg.Listen)
 	if err != nil {
@@ -169,7 +198,7 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 				return fmt.Errorf("configure local retention: %w", err)
 			}
 			localOutput = control.LocalOutputConfig{
-				Target: "local", Binding: localBinding, BindOutput: localBackend.BindOutput,
+				Target: localName, Binding: localBinding, BindOutput: localBackend.BindOutput,
 				OutputUsage: func(ctx context.Context) (uint64, uint64, error) {
 					usage, err := localBackend.OutputUsage(ctx)
 					return usage.AllocatedBytes, usage.Files, err
@@ -180,9 +209,18 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 			if err != nil {
 				return err
 			}
+			if cfg.DurableLocal {
+				err = localBackend.EnableDurable(local.DurableConfig{State: filepath.Join(cfg.DataDir, "local-durable"), Executable: cfg.LocalSupervisor})
+				if err != nil {
+					return fmt.Errorf("configure durable local execution: %w", err)
+				}
+			}
 		}
 		f.localBackend = localBackend
-		target := backend.Target{Name: "local", Kind: "local", Backend: localBackend, Binding: localBinding, SupportsRetry: localBackend.SupportsRetry()}
+		target := backend.Target{Name: localName, Kind: "local", Backend: localBackend, Binding: localBinding, SupportsRetry: localBackend.SupportsRetry()}
+		if names, err := localBackend.AcceleratorNames(ctx); err == nil {
+			target.AcceleratorNames = names
+		}
 		if retentionEnabled {
 			target.OutputStorage = backend.LocalOutput
 			target.OutputReservation = localBackend.OutputReservation()
@@ -203,7 +241,7 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	}
 	config := control.Config{RecoverStoppedArtifactReaders: cfg.RecoverStoppedArtifactReaders, LocalBackend: f.localBackend, ServerLifetime: f.lifetime, LocalOutput: localOutput, Artifacts: f.files}
 	if f.root != nil && f.localBackend != nil {
-		config.LocalWorkspace = &control.LocalWorkspaceConfig{Target: "local", Binding: localBinding, Backend: f.localBackend, Roots: f.root}
+		config.LocalWorkspace = &control.LocalWorkspaceConfig{Target: localName, Binding: localBinding, Backend: f.localBackend, Roots: f.root}
 	}
 	c, err := control.NewWithConfig(s, targets, engine, config)
 	if err != nil {
@@ -276,8 +314,35 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	f.runDone, f.serveDone = make(chan struct{}), make(chan struct{})
 	go func() { defer close(f.runDone); f.runErr = c.Run(runCtx) }()
 	ready.Store(true)
-	go func() { defer close(f.serveDone); f.serveErr = f.http.Serve(f.listener) }()
+	// The TLS listener closes the same original owner, so its Close outcome
+	// stays recorded for shutdown.
+	var serving net.Listener = f.listener
+	if cfg.TLSConfig != nil {
+		serving = tls.NewListener(f.listener, cfg.TLSConfig.Clone())
+	}
+	go func() { defer close(f.serveDone); f.serveErr = f.http.Serve(serving) }()
 	return nil
+}
+
+// localTargetName returns the name of the built-in local target.
+func localTargetName(cfg Config) (string, error) {
+	name := cfg.LocalTargetName
+	if name == "" {
+		return "local", nil
+	}
+	if cfg.DisableLocal {
+		return "", errors.New("local target name conflicts with disabled local target")
+	}
+	if len(name) > 63 {
+		return "", errors.New("local target name must be a lowercase DNS name of at most 63 bytes")
+	}
+	for _, label := range strings.Split(name, ".") {
+		if label == "" || label[0] == '-' || label[len(label)-1] == '-' ||
+			strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
+			return "", errors.New("local target name must be a lowercase DNS name of at most 63 bytes")
+		}
+	}
+	return name, nil
 }
 
 func retainedOutputs(s *store.Store) ([]backend.OutputReference, error) {

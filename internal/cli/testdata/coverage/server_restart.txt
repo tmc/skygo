@@ -1,6 +1,7 @@
 # Durable retry across an outage and a restart of the server executable.
 # Request IDs bind one accepted task and survive restart. Graceful shutdown
-# cancels and joins owned Local work before committing its terminal state.
+# detaches plain Local work: its durable supervisor keeps running and the
+# restarted server reattaches to the same execution without re-running it.
 # Request IDs are a Go extension; upstream has no client-chosen submission identity.
 taskfile success.json success
 taskfile hold.json hold
@@ -44,14 +45,17 @@ stdout '"state": *"JOB_STATE_SUCCEEDED"'
 ! skygo run -f hold.json --request-id outage
 stderr 'already_exists'
 
-# Graceful shutdown canceled and joined the owned Local workload before
-# committing its terminal state. Restart replays it without another execution.
+# The held workload outlived the graceful stop. The restarted server observes
+# the original execution; no second execution created ready again.
+await-state $HOLD running
+skygo jobs logs $HOLD
+stdout '^holding\n$'
+! exists ready
+skygo --json jobs cancel $HOLD --yes
 ! skygo --json run -f hold.json --request-id hold --wait
 stdout '"id": *"'$HOLD'"'
 stdout '"state": *"JOB_STATE_CANCELED"'
 stdout '"reason": *"canceled by operator"'
-skygo jobs logs $HOLD
-stdout '^holding\n$'
 ! exists ready
 skygo jobs list
 stdout '^ID +TARGET +STATE\n'$OUTAGE' +local +succeeded\n'$HOLD' +local +canceled\n$'

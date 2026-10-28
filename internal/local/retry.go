@@ -290,6 +290,9 @@ func (b *Backend) waitRetry(e *execution, seconds int64) {
 		pinErr == nil && killErr == nil && absentErr == nil &&
 		e.retry.reaping && handleCloseErr == nil && e.readerCloseErr == nil &&
 		e.stdioWriterErr == nil && e.stdioWriter == nil && closeErr == nil && outputClosed
+	if e.shutdownClosed {
+		b.releaseResources(e.resources)
+	}
 	// waitErr is status/timeout precedence. Include the actual cached Wait
 	// cause exactly once, independently of that local result or cancellation.
 	e.shutdownErr = errors.Join(e.shutdownErr, pinErr, abortErr,

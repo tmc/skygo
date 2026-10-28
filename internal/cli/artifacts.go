@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strconv"
 
@@ -223,7 +222,7 @@ func (o *options) submitWorkspace(ctx context.Context, client skyv1connect.Contr
 // Only the new bounded artifact transport uses this receive limit. Existing
 // task, job and discovery clients retain their established wire behavior.
 func (o *options) artifactClient() skyv1connect.ControlServiceClient {
-	return skyv1connect.NewControlServiceClient(http.DefaultClient, o.endpoint, connect.WithReadMaxBytes(128<<10))
+	return skyv1connect.NewControlServiceClient(o.httpClient(), o.endpoint, connect.WithReadMaxBytes(128<<10))
 }
 
 // Ref JSON uses a numeric size so the exact object can also be pasted into a

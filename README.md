@@ -17,10 +17,8 @@ provides health/validation compatibility. `skygo run task.yaml` and
 directly; unsupported execution requirements are refused before submission.
 `skycompat import
 --shell /bin/sh` lowers a supported task to a skygo task file that `skygo run -f`
-executes. The subset is narrow: none of SkyPilot 0.14.0's ten bundled examples
-import as written; each stops at its first unsupported field, such as
-`autostop`, `accelerators`, `infra`, `job_recovery`, `network_tier`, `service`,
-`pool` or a multi-document job group.
+executes. The parser preserves `resources.autostop` and
+`resources.job_recovery`; lowering refuses either field when non-null.
 
 ## Run locally
 
@@ -84,27 +82,53 @@ Both binaries provide the same client commands. See the
 configuration, and the [deployment guide](docs/kubernetes.md) for the singleton
 PVC-backed server.
 
+## Local resources
+
+CPU and memory requests use host inventory and admission accounting. NVIDIA GPU
+requests use `nvidia-smi` inventory and reserve matching device UUIDs within the
+backend. Each local job receives `CUDA_VISIBLE_DEVICES` and
+`NVIDIA_VISIBLE_DEVICES` for its selected devices. GPU visibility relies on
+cooperating workload programs and provides no device isolation.
+
 ## Boundaries
 
 Not yet supported:
 
 - Cloud provisioning. The [`ec2`](integrations/ec2/README.md) module has no
   command or target and has not been run against AWS.
-- SSH targets. The [`ssh`](integrations/ssh/README.md) module is a transport to
-  a pre-installed agent, with no command.
+- SSH targets. The [`ssh`](integrations/ssh/README.md) module provides a
+  transport to an operator-installed agent; it has no bootstrap command.
 - Multi-node jobs. The worker-group API is defined but not served.
 - Model serving. Only portable serving types exist.
 - Pools, autostop and autodown.
 - `exec`, `stop`, `start` and `down` commands.
-- GPUs on the local target, which refuses accelerator and resource requests.
-  Kubernetes accelerator requests are tested only against fakes.
-- TLS. The server listens on plain HTTP.
+- Enforced CPU or memory limits, container images, and node selectors on the
+  local target.
+- TLS for the standalone `skygo server` command, which listens on plain HTTP.
 
-SIGINT or SIGTERM stops the server and cancels its running local jobs. After an
-abrupt death such as SIGKILL, a running local job becomes unknown and may keep
-running untracked; an old PID does not authorize relaunch or termination, so
-restart does neither. A workflow step left unknown this way blocks its
-dependents, and that workflow never finishes.
+Plain local jobs (no workdir, no retry policy) run under a detached supervisor,
+the `skygo` binary re-executed, which owns the workload, its log and its final
+status. Stopping or killing the server leaves the job running; a restarted
+server with the same data directory reattaches after checking the supervisor's
+PID, kernel start time and boot identity, and reports the real result and logs.
+Success also requires the original leader's exit, drained output, and observed
+absence of its cooperative process group. Uncertain group closure stays unknown
+and keeps its resource reservation. It never runs the job twice.
+A job whose supervisor vanished without a final
+status becomes unknown and is not re-run. The server's service manager must not
+kill the server's whole process tree, or the supervisors die with it.
+
+Local jobs with a workdir or retry policy, and all local jobs when output
+retention is enabled, are still owned by the server: SIGINT or SIGTERM cancels
+them, and after SIGKILL they become unknown and may keep running untracked. An
+old PID does not authorize relaunch or termination, so restart does neither.
+A workflow step left unknown blocks its dependents, and that workflow never
+finishes.
+
+For plain jobs without output retention, a resource-capacity refusal proven to
+precede execution leaves the same job queued for later admission. Other startup
+errors never authorize another launch. Retained, workspace and retry attempts
+do not yet have this deferral transition.
 
 Local execution trusts workloads as the server's OS user and inherits its
 environment. It is not a sandbox. Kubernetes ownership checks do not provide

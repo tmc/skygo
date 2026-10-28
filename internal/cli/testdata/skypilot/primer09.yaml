@@ -1,0 +1,26 @@
+# 09-dgx-gpu.yaml: run on your own machine through an SSH Node Pool.
+#
+# One-time setup (needs passwordless sudo on the host; SkyPilot installs k3s,
+# the NVIDIA GPU Operator, dcgm-exporter and Prometheus there):
+#
+#   cat ~/.sky/ssh_node_pools.yaml     # dgx: {hosts: [dgx]}
+#   sky ssh up --infra dgx
+#   sky gpus list --infra ssh/dgx      # GB10  1 of 1 free
+#
+# Then:
+#
+#   sky launch -c spark examples/09-dgx-gpu.yaml
+#   sky down spark
+#
+# The host is a DGX Spark: aarch64, one GB10, unified memory. Images must be
+# arm64 (or multi-arch).
+name: spark
+
+resources:
+  infra: ssh/dgx
+  accelerators: GB10:1
+
+run: |
+  uname -m
+  nvidia-smi --query-gpu=name,driver_version --format=csv
+  echo "rank $SKYPILOT_NODE_RANK of $SKYPILOT_NUM_NODES, $SKYPILOT_NUM_GPUS_PER_NODE GPU"

@@ -9,7 +9,15 @@ import (
 	"github.com/tmc/skygo/internal/backend"
 )
 
+// ownedLocalJob reports whether j runs under this server's local backend
+// and stops with it. Durable local executions detach instead.
 func (c *Control) ownedLocalJob(j backend.Job) bool {
+	return c.configuredLocalJob(j) && !c.localBackend.Detaches(j.CurrentAttemptID())
+}
+
+// configuredLocalJob checks the actual configured local route, independently of
+// whether a started execution remains owned by this API server or detaches.
+func (c *Control) configuredLocalJob(j backend.Job) bool {
 	if c.localBackend == nil {
 		return false
 	}

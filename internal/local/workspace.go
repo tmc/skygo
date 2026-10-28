@@ -297,6 +297,9 @@ func (b *Backend) startWorkspace(ctx context.Context, id string, t backend.Task)
 	if _, err := rand.Read(token[:]); err != nil {
 		return err
 	}
+	// Probe outside b.mu; a failed probe settles like a canceled startup.
+	inv, probeErr := b.probeHost(ctx, t)
+	var held *resourceReservation
 	b.mu.Lock()
 	if b.closed || b.workspaces == nil {
 		b.mu.Unlock()
@@ -308,7 +311,14 @@ func (b *Backend) startWorkspace(ctx context.Context, id string, t backend.Task)
 		return backend.ErrIdentityMismatch
 	}
 	w.startAttempted = true
-	if err := ctx.Err(); err != nil {
+	err = ctx.Err()
+	if err == nil && probeErr != nil {
+		err = probeErr
+	}
+	if err == nil && b.jobs[id] == nil {
+		held, err = b.reserveResources(id, t, inv)
+	}
+	if err != nil {
 		// Only the original unused owner can settle this no-call frontier. A
 		// detached nil callback or a failed Start is not a closure receipt.
 		state := b.workspaces
@@ -333,7 +343,7 @@ func (b *Backend) startWorkspace(ctx context.Context, id string, t backend.Task)
 		b.mu.Unlock()
 		return errors.New("job already started")
 	}
-	e := &execution{status: backend.Status{State: backend.Running, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), workspace: w}
+	e := &execution{status: backend.Status{State: backend.Running, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), workspace: w, resources: held}
 	w.parent = e
 	w.observation = WorkspaceObservation{Phase: "materializing", Status: e.status}
 	w.physical.Instance = e.status.Instance
@@ -537,6 +547,9 @@ func (b *Backend) finishWorkspace(w *workspaceExecution, outcome WorkspaceOutcom
 		o.Status.Termination = backend.UnknownTermination
 	}
 	w.observation = o
+	if closed {
+		b.releaseResources(e.resources) // the Writer receipt covers setup and task
+	}
 	// No phase or timer callback may use the accepted task after this point.
 	w.binding.Task = backend.Task{}
 	if e.output != nil {

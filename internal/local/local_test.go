@@ -306,7 +306,7 @@ func TestRestart(t *testing.T) {
 
 func TestValidation(t *testing.T) {
 	b := newBackend(t)
-	for i, task := range []backend.Task{{}, {Argv: []string{"x"}, Image: "x"}, {Argv: []string{"x"}, CPUMillis: 1}, {Argv: []string{"x"}, MemoryBytes: 1}, {Argv: []string{"x"}, Accelerator: "gpu"}, {Argv: []string{"x"}, TimeoutSeconds: -1}, {Argv: []string{"x"}, Env: map[string]string{"a=b": "c"}}} {
+	for i, task := range []backend.Task{{}, {Argv: []string{"x"}, Image: "x"}, {Argv: []string{"x"}, CPUMillis: -1}, {Argv: []string{"x"}, MemoryBytes: -1}, {Argv: []string{"x"}, Accelerator: "gpu"}, {Argv: []string{"x"}, CPULimitMillis: 1}, {Argv: []string{"x"}, TimeoutSeconds: -1}, {Argv: []string{"x"}, Env: map[string]string{"a=b": "c"}}} {
 		t.Run(strconv.Itoa(i), func(t *testing.T) {
 			if b.Check(task) == nil {
 				t.Fatal("invalid task accepted")

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -42,7 +41,7 @@ type graphInput struct {
 }
 
 func (o *options) workflowClient() skyv1connect.WorkflowServiceClient {
-	return skyv1connect.NewWorkflowServiceClient(http.DefaultClient, o.endpoint)
+	return skyv1connect.NewWorkflowServiceClient(o.httpClient(), o.endpoint)
 }
 
 func (o *options) workflowCommand() *cobra.Command {

@@ -23,6 +23,7 @@ func (b *Backend) runWorkspacePhase(w *workspaceExecution, argv []string, taskPh
 	for name, value := range w.binding.Task.Env {
 		cmd.Env = append(cmd.Env, name+"="+value)
 	}
+	cmd.Env = visibleDevices(cmd.Env, w.parent.resources)
 	configure(cmd)
 	input, err := os.Open(os.DevNull)
 	if err != nil {

@@ -15,9 +15,24 @@ stdout '^ID +TARGET +STATE\n$'
 ! skygo plan -f missing-target.yaml
 stderr 'failed_precondition: no eligible target'
 ! stdout .
-! skygo plan -f resources.yaml
+# CPU and memory requests are admitted against host inventory. This is
+# non-executing planning, not CPU or memory limit enforcement.
+skygo plan -f resources.yaml
+stdout '^local\n$'
+! stderr .
+skygo --json plan -f resources.yaml
+stdout '"target": *"local"'
+! stdout '"id"'
+! stderr .
+
+# Images and enforced limits remain unsupported by local execution.
+! skygo plan -f limits.yaml
 stderr 'failed_precondition: no eligible target'
-! skygo run -f resources.yaml --request-id rejected
+! stdout .
+! skygo plan -f image.yaml
+stderr 'failed_precondition: no eligible target'
+! stdout .
+! skygo run -f image.yaml --request-id rejected
 stderr 'retry with --request-id rejected'
 ! stdout .
 skygo --json jobs list
@@ -30,3 +45,13 @@ target: unavailable
 -- resources.yaml --
 argv: [unused]
 cpu_millis: 1000
+memory_bytes: 1024
+-- limits.yaml --
+argv: [unused]
+cpu_millis: 1000
+memory_bytes: 1024
+cpu_limit_millis: 1000
+memory_limit_bytes: 1024
+-- image.yaml --
+argv: [unused]
+image: example.invalid/workload:latest
