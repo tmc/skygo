@@ -343,7 +343,9 @@ func (b *Backend) startWorkspace(ctx context.Context, id string, t backend.Task)
 		b.mu.Unlock()
 		return errors.New("job already started")
 	}
-	e := &execution{status: backend.Status{State: backend.Running, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), workspace: w, resources: held}
+	// The stable Instance is Starting until materialization publishes its real
+	// output domain; only that sequencer advances the same parent to Running.
+	e := &execution{status: backend.Status{State: backend.Starting, Instance: hex.EncodeToString(token[:])}, done: make(chan struct{}), workspace: w, resources: held}
 	w.parent = e
 	w.observation = WorkspaceObservation{Phase: "materializing", Status: e.status}
 	w.physical.Instance = e.status.Instance

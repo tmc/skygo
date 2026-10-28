@@ -248,7 +248,7 @@ func (c *Control) integrateWorkspace(s *loopState, w *targetWorker, r operationR
 	}
 	if !r.workspace.Ready || r.workspace.Held || r.workspace.Writer == nil {
 		if !r.workspace.Ready && !r.workspace.Held {
-			return nil
+			return c.workspaceProgress(j, *r.workspace)
 		}
 		return c.holdWorkspace(j, "workspace writer ownership remains held")
 	}
@@ -259,6 +259,30 @@ func (c *Control) integrateWorkspace(s *loopState, w *targetWorker, r operationR
 	c.retention.pending[j.CurrentAttemptID()] = struct{}{}
 	c.retention.mu.Unlock()
 	return nil
+}
+
+// workspaceProgress persists only the original owner's same-Instance
+// Starting->Running milestone. It grants no Start, writer or completion; any
+// other nonready observation holds the attempt unchanged.
+func (c *Control) workspaceProgress(j backend.Job, o local.WorkspaceObservation) error {
+	instance := currentStatus(j).Instance
+	status := o.Status
+	// The projected Store status carries only State and Instance, so a nonterminal
+	// exit code or termination shape must be rejected here rather than dropped.
+	if o.Writer != nil || o.Candidate != nil || o.Outcome != 0 || status.Instance == "" || status.Instance != instance ||
+		status.State != backend.Starting && status.State != backend.Running ||
+		status.ExitCode != nil || status.Termination != backend.UnknownTermination {
+		return c.holdWorkspace(j, "workspace progress observation invalid; execution held")
+	}
+	switch {
+	case status.State == j.Status.State:
+		return nil
+	case status.State == backend.Running && j.Status.State == backend.Starting:
+		_, err := c.store.ObserveAttempt(j.ID, j.CurrentAttemptID(), backend.Status{State: backend.Running, Instance: instance}, time.Now().UTC())
+		return err
+	default:
+		return c.holdWorkspace(j, "workspace progress observation invalid; execution held")
+	}
 }
 
 func (c *Control) advanceWorkspaces(ctx context.Context, s *loopState) error {

@@ -34,6 +34,13 @@ func (b *Backend) materializeWorkspace(w *workspaceExecution) error {
 		out.retained.log = info
 		b.attachRetention(w.parent, w.binding.AttemptID)
 	}
+	// Running means the owned workspace has its real output domain, not that
+	// the main argv started. Failed Stat or attachment leaves it Starting.
+	if statErr == nil && info.Mode().IsRegular() && w.parent.status.State == backend.Starting &&
+		(b.retention == nil || out.retained != nil && w.parent.retained == out.retained && out.retained.log == info) {
+		w.parent.status.State = backend.Running
+		w.observation.Status.State = backend.Running
+	}
 	b.mu.Unlock()
 	if statErr != nil {
 		return statErr

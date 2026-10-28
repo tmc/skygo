@@ -309,7 +309,13 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 		return backend.Status{}, err
 	}
 	if e.workspace != nil && !e.workspace.committed {
-		return backend.Status{State: backend.Running, Instance: e.status.Instance}, nil
+		// Terminal outcome stays in WorkspaceObservation until trusted commit.
+		// Before then report only the original parent's Starting/Running phase.
+		state := backend.Running
+		if e.status.State == backend.Starting {
+			state = backend.Starting
+		}
+		return backend.Status{State: state, Instance: e.status.Instance}, nil
 	}
 	select {
 	case <-e.done:
