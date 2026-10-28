@@ -1,0 +1,152 @@
+# Environment client scripts against a fixture server. Counts of create and
+# exec calls are checked by TestEnvironmentScripts.
+
+# Invalid input is refused before any request.
+! skygo env plan -f unknown.yaml
+stderr 'field color not found'
+! stdout .
+! skygo env create -f null.yaml --request-id req-0 --request-domain $DOMAIN
+stderr 'must not contain null'
+! stderr 'request-id:'
+! skygo env create -f port.yaml
+stderr 'port must be 0 or 8080'
+! stderr 'request-id:'
+! skygo env create -f plain.yaml --request-id 'bad id' --request-domain $DOMAIN
+stderr 'request ID requires'
+# A request ID is a retry and needs its original domain.
+! skygo env create -f plain.yaml --request-id req-1
+stderr 'given together'
+! stderr 'request-id:'
+
+# Plan creates nothing. Without artifacts the fact does not apply, and it is
+# never shown as verified.
+skygo env plan -f plain.yaml
+stdout '^spec-sha256: [0-9a-f]{64}$'
+stdout '^support: supported$'
+stdout '^artifacts: not-applicable$'
+! stderr .
+
+# Artifact mounts need the target's artifacts capability.
+! skygo env plan -f mounted.yaml
+stderr 'target "kube" does not advertise environment-artifacts-v1'
+skygo env plan -f mounted-art.yaml
+stdout '^artifacts: unknown$'
+
+# A plan whose fact contradicts the spec is refused.
+! skygo env plan -f liar.yaml
+stderr 'inconsistent artifacts fact'
+
+# Create prints its request domain and ID first. The same pair and spec
+# replays the same environment; the same pair with another spec is refused
+# and not retried.
+skygo env create -f plain.yaml --request-id req-1 --request-domain $DOMAIN
+stderr '^request-domain: '$DOMAIN'$'
+stderr '^request-id: req-1$'
+stdout '^0{31}1 +analysis +kube +present +creating +0 +0$'
+skygo env create -f plain.yaml --request-id req-1 --request-domain $DOMAIN
+stdout '^0{31}1 +analysis'
+! skygo env create -f other.yaml --request-id req-1 --request-domain $DOMAIN
+stderr 'retry with --request-domain '$DOMAIN' --request-id req-1'
+stderr 'already_exists'
+
+# A new request samples the current domain once and picks a fresh ID.
+skygo env create -f other.yaml
+stderr '^request-domain: '$DOMAIN'$'
+stderr '^request-id: [0-9a-f]{32}$'
+stdout '^0{31}2 +other'
+
+skygo env get 00000000000000000000000000000001
+stdout 'analysis +kube +present +creating'
+skygo --json env get 00000000000000000000000000000001
+stdout '"phase": *"ENVIRONMENT_PHASE_CREATING"'
+
+# An undeclared enum value from the server is refused, not printed.
+! skygo env get 22222222222222222222222222222222
+stderr 'unknown fields or enum values'
+! stdout .
+
+# Deletion needs confirmation.
+! skygo env delete 00000000000000000000000000000001
+stderr 'deletion requires --yes'
+
+# Exec runs one command; without --stdin it sends no stdin.
+skygo env exec 00000000000000000000000000000001 -- echo hi
+stdout '^echo hi$'
+! stderr .
+# A command whose exit status was not relayed is reported unknown and is not
+# resent. A nonzero status fails. JSON output keeps both outcomes.
+! skygo env exec 00000000000000000000000000000001 -- lost
+stderr 'command outcome unknown; it was not resent'
+! skygo --json env exec 00000000000000000000000000000001 -- lost
+stdout '^\{\}$'
+stderr 'command outcome unknown; it was not resent'
+! skygo env exec 00000000000000000000000000000001 -- fail
+stdout '^fail$'
+stderr 'command exited with status 3'
+! skygo --json env exec 00000000000000000000000000000001 -- fail
+stdout '"exit_code": *3'
+stderr 'command exited with status 3'
+! skygo env exec 00000000000000000000000000000001 echo
+stderr 'exec requires ID -- ARGV'
+
+-- plain.yaml --
+name: analysis
+target: kube
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+-- other.yaml --
+name: other
+target: kube
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+-- unknown.yaml --
+name: analysis
+target: kube
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+color: blue
+-- null.yaml --
+name: analysis
+target: kube
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+storage_alias: null
+-- port.yaml --
+name: analysis
+target: kube
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+port: 22
+-- mounted.yaml --
+name: analysis
+target: kube
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+artifacts:
+  - id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    size: 1
+    mount_path: /skygo/artifacts/input
+-- mounted-art.yaml --
+name: analysis
+target: kube-art
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824
+artifacts:
+  - id: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    sha256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    size: 1
+    mount_path: /skygo/artifacts/input
+-- liar.yaml --
+name: analysis
+target: liar
+image: task:v1
+cpu_millis: 500
+memory_bytes: 1073741824

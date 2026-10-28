@@ -272,7 +272,7 @@ func (s *Store) BindOutputStorage(target, binding string, storage backend.Output
 		var ids []string
 		if e = tx.Bucket(jobsBucket).ForEach(func(k, v []byte) error {
 			var j backend.Job
-			if e := json.Unmarshal(v, &j); e != nil {
+			if e := decodeStoredJob(v, &j); e != nil {
 				return e
 			}
 			if j.Target == target && j.TargetBinding == binding {

@@ -1,0 +1,30 @@
+# RAT-81 item 3: the reply to a committed create is lost, and the request
+# epoch retires before the retry. The retry resends the same pair, is
+# refused, and is reported unknown, never resubmitted with a new pair.
+
+env-domain D
+env-lose-reply
+! skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stderr '^request-domain: '$D'$'
+stderr '^request-id: web-1$'
+stderr 'retry with --request-domain '$D' --request-id web-1'
+stderr 'unavailable'
+env-records accepted.txt
+grep -count=1 ' present/creating ' accepted.txt
+
+env-retire
+! skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stderr '^request-domain: '$D'$'
+stderr '^request-id: web-1$'
+stderr 'create environment outcome unknown; request web-1 retired, do not resubmit'
+! stderr 'retry with'
+! stdout .
+env-records after.txt
+cmp accepted.txt after.txt
+
+-- web.yaml --
+name: web
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576

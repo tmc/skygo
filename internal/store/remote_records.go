@@ -440,7 +440,7 @@ func remoteValidateCore(tx *bolt.Tx, st *artifactState, plan *retentionMutation)
 			if raw == nil {
 				return ErrArtifactConflict
 			}
-			e = json.Unmarshal(raw, &j)
+			e = decodeStoredJob(raw, &j)
 		}
 		if e != nil || !slices.Contains(executionIDs(j), id) || !validBinding(j.TargetBinding) {
 			return artifactCorrupt()

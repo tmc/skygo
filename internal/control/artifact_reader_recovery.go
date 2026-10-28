@@ -114,7 +114,7 @@ func artifactReaderRecoveryShape(r maintenanceRequest) bool {
 		r.physicalOwner == nil && !r.physicalClose && r.record == nil && r.directory == "" && r.usage == nil &&
 		r.reusable == 0 && r.reservedBytes == 0 && r.reservedFiles == 0 &&
 		t.Name == "" && t.Backend == nil && t.Kind == "" && t.Binding == "" && t.Advice == nil && t.Labels == nil && t.AcceleratorNames == nil &&
-		!t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && t.Retention == nil && t.DataPolicy == nil && !t.SupportsRemoteData && !t.SupportsDataMounts && !t.SupportsRemoteDataRetry && t.OutputStorage == 0 && t.OutputReservation == 0
+		!t.SupportsResourceLimits && !t.SupportsNodeSelector && !t.SupportsRetry && !t.SupportsPersistentEnvironments && !t.SupportsEnvironmentArtifacts && t.Retention == nil && t.DataPolicy == nil && !t.SupportsRemoteData && !t.SupportsDataMounts && !t.SupportsRemoteDataRetry && t.OutputStorage == 0 && t.OutputReservation == 0
 }
 
 func runArtifactReaderRecovery(ctx context.Context, r maintenanceRequest) (*artifactReaderRecoveryResult, error) {

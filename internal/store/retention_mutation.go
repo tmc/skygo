@@ -263,7 +263,7 @@ func recordCharge(name, key, data []byte) uint64 {
 	}
 	if bytes.Equal(name, cleanupHeadersBucket) {
 		var h cleanupHeader
-		if json.Unmarshal(data, &h) != nil {
+		if decodeCleanupHeader(data, &h) != nil {
 			return ^uint64(0)
 		}
 		h.Remaining = ^uint32(0)

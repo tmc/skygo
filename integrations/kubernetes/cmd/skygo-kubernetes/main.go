@@ -12,13 +12,15 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/skygo/integrations/kubernetes/internal/kube"
+	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/cli"
 	"github.com/tmc/skygo/internal/server"
+	"github.com/tmc/skygo/internal/store"
 )
 
 type targetFlags struct {
-	file, kubeconfig, context, namespace string
+	file, kubeconfig, context, namespace, environments string
 }
 
 func command(run func(context.Context, server.Config) error) *cobra.Command {
@@ -40,6 +42,25 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			}
 		} else if flags.namespace == "" {
 			return errors.New("namespace is required for a Kubernetes target")
+		}
+		if serverCommand.Flags().Changed("environment-profiles") {
+			if !named {
+				return errors.New("--environment-profiles requires --targets")
+			}
+			if o.AuthFile == "" {
+				return errors.New("--environment-profiles requires --auth-file")
+			}
+			profiles, err := kube.ReadEnvironmentConfig(flags.environments)
+			if err != nil {
+				return err
+			}
+			// The integration constructs and owns every configured target.
+			return run(ctx, server.Config{
+				DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
+				Install: func(s *store.Store, engine *auth.Engine) (server.Integration, error) {
+					return kube.NewEnvironmentIntegration(ctx, s, engine, config, profiles)
+				},
+			})
 		}
 		return run(ctx, server.Config{
 			DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
@@ -72,6 +93,7 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			cmd.Flags().StringVar(&flags.kubeconfig, "kubeconfig", "", "Kubernetes configuration file")
 			cmd.Flags().StringVar(&flags.context, "context", "", "Kubernetes context")
 			cmd.Flags().StringVar(&flags.namespace, "namespace", "", "Kubernetes namespace (required without --targets)")
+			cmd.Flags().StringVar(&flags.environments, "environment-profiles", "", "Private environment profiles file for one of --targets (requires --auth-file)")
 		}
 	}
 	return root

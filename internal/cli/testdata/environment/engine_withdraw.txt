@@ -1,0 +1,42 @@
+# RAT-85 M4: after the target withdraws its environment support, the same
+# pair still reaches the server, which replays it before planning. A new
+# create is refused by the CLI's preflight, and an explicit new pair, which
+# skips that preflight, is refused by the server.
+
+env-domain D
+skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stdout ' web +modeled +present +creating '
+env-id E web
+env-reconcile
+
+env-withdraw
+skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stderr '^request-domain: '$D'$'
+stderr '^request-id: web-1$'
+stdout '^'$E' +web +modeled +present +ready '
+
+! skygo --token-file=$TOKEN_FILE env create -f db.yaml
+stderr 'target "modeled" does not advertise persistent-environments-v1'
+! stderr 'request-id:'
+! skygo --token-file=$TOKEN_FILE env create -f db.yaml --request-id db-1 --request-domain $D
+stderr 'invalid_argument: unsupported environment spec'
+env-records after.txt
+grep -count=1 'sessions=' after.txt
+
+# The withdrawal survives a restart; so does the replay.
+env-restart
+skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stdout '^'$E' +web '
+
+-- web.yaml --
+name: web
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576
+-- db.yaml --
+name: db
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576

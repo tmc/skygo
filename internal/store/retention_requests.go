@@ -71,32 +71,41 @@ func gateDomain(tx *bolt.Tx, d RequestDomain, now time.Time) (retentionState, er
 	if e != nil {
 		return st, nil, e
 	}
-	if !st.Enabled {
-		return st, ErrRetentionDisabled, nil
-	}
-	if d.Lineage != st.Lineage {
-		return st, &ExpiryError{Reason: RequestLineageChanged}, nil
-	}
-	if advancePhases(&st, now) {
+	changed, result := domainResult(&st, d, now)
+	if changed {
 		if e = putJSON(retentionRoot(tx), retentionStateKey, st); e != nil {
 			return st, nil, e
 		}
 	}
+	return st, result, nil
+}
+
+// domainResult is gateDomain without the write: it advances st's phases to
+// now, reporting whether they changed, and returns the refusal of d, if any.
+// A disabled store or another lineage is refused before any phase advances.
+func domainResult(st *retentionState, d RequestDomain, now time.Time) (bool, error) {
+	if !st.Enabled {
+		return false, ErrRetentionDisabled
+	}
+	if d.Lineage != st.Lineage {
+		return false, &ExpiryError{Reason: RequestLineageChanged}
+	}
+	changed := advancePhases(st, now)
 	if d.Epoch == 0 {
 		if !st.LegacyReplayOpen {
-			return st, &ExpiryError{Reason: RequestEpochExpired}, nil
+			return changed, &ExpiryError{Reason: RequestEpochExpired}
 		}
-		return st, nil, nil
+		return changed, nil
 	}
 	if d.Epoch <= st.RetiredThrough {
-		return st, &ExpiryError{Reason: RequestEpochExpired}, nil
+		return changed, &ExpiryError{Reason: RequestEpochExpired}
 	}
 	for _, ep := range st.Epochs {
 		if ep.Number == d.Epoch {
-			return st, nil, nil
+			return changed, nil
 		}
 	}
-	return st, errors.New("unknown request epoch"), nil
+	return changed, ErrUnknownRequestEpoch
 }
 func lookupRecord(tx *bolt.Tx, actor auth.Actor, d RequestDomain, id string, t backend.Task) (j backend.Job, found bool, result error) {
 	var r requestRecord
@@ -112,6 +121,9 @@ func lookupRecord(tx *bolt.Tx, actor auth.Actor, d RequestDomain, id string, t b
 		return j, true, errors.New("request identity hash collision")
 	}
 	if r.WorkflowID != "" {
+		return j, true, ErrConflict
+	}
+	if workerGroupJob(tx, r.JobID) {
 		return j, true, ErrConflict
 	}
 	digest, e := taskDigest(t)
@@ -163,8 +175,8 @@ func (s *Store) LookupRetained(actor auth.Actor, d RequestDomain, id string, t b
 	if !validRetainedRequestID(id) {
 		return j, false, errors.New("invalid request ID")
 	}
-	if !validAttemptID(d.Lineage) || d.Epoch == 0 {
-		return j, false, errors.New("invalid request domain")
+	if !validRequestDomain(d) {
+		return j, false, ErrInvalidRequestDomain
 	}
 	t.Retry, err = backend.NormalizeRetry(t.Retry)
 	if err != nil {
@@ -221,8 +233,8 @@ func (s *Store) submitRetained(actor auth.Actor, d RequestDomain, id string, t b
 	if !validRetainedRequestID(id) {
 		return j, errors.New("invalid request ID")
 	}
-	if !validAttemptID(d.Lineage) || d.Epoch == 0 {
-		return j, errors.New("invalid request domain")
+	if !validRequestDomain(d) {
+		return j, ErrInvalidRequestDomain
 	}
 	t.Retry, err = backend.NormalizeRetry(t.Retry)
 	if err != nil {

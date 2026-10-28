@@ -15,7 +15,8 @@ func (s *artifactState) clone() *artifactState {
 		Grants: maps.Clone(s.Grants), Reads: maps.Clone(s.Reads), JobInputs: maps.Clone(s.JobInputs),
 		ManualInputs: maps.Clone(s.ManualInputs), Results: maps.Clone(s.Results), Expired: maps.Clone(s.Expired),
 		Workspaces: maps.Clone(s.Workspaces), Completions: maps.Clone(s.Completions), Deletes: maps.Clone(s.Deletes),
-		Remote: make(map[string]remoteRecord, len(s.Remote)),
+		Remote:          make(map[string]remoteRecord, len(s.Remote)),
+		EnvironmentPins: maps.Clone(s.EnvironmentPins),
 	}
 	for id, r := range s.Remote {
 		out.Remote[id] = remoteClone(r)

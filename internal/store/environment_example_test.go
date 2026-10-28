@@ -9,8 +9,14 @@ import (
 )
 
 func ExampleStore_AcceptEnvironment() {
-	s, close := exampleStore()
-	defer close()
+	dir, info, remove := exampleRetentionDirectory(store.DefaultRetentionPolicy())
+	defer remove()
+	s, err := store.Open(dir)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer s.Close()
 	// Environments require scoped authentication.
 	if err := s.ActivateScoped(); err != nil {
 		fmt.Println(err)
@@ -19,16 +25,16 @@ func ExampleStore_AcceptEnvironment() {
 	actor := testActor()
 	spec := environment.Spec{Name: "analysis", Target: "kube", Image: "task:v1", CPUMillis: 500, MemoryBytes: 1 << 30}
 	cp := environment.Checkpoint{Kind: "example", Version: 1, Data: []byte("intent")}
-	e, err := s.AcceptEnvironment(actor, "create-1", spec, "test-binding", exampleAuthority(actor), cp)
+	e, err := s.AcceptEnvironment(actor, info.Domain, "create-1", spec, "test-binding", exampleAuthority(actor), cp)
 	if err != nil {
 		fmt.Println(err)
 		return
 	}
-	same, err := s.AcceptEnvironment(actor, "create-1", spec, "test-binding", exampleAuthority(actor), cp)
+	same, err := s.AcceptEnvironment(actor, info.Domain, "create-1", spec, "test-binding", exampleAuthority(actor), cp)
 	fmt.Println(same.Identity == e.Identity, err)
 	fmt.Println(e.Identity.Generation, e.Revision, e.State.Desired, e.State.Phase)
 	spec.Image = "task:v2"
-	_, err = s.AcceptEnvironment(actor, "create-1", spec, "test-binding", exampleAuthority(actor), cp)
+	_, err = s.AcceptEnvironment(actor, info.Domain, "create-1", spec, "test-binding", exampleAuthority(actor), cp)
 	fmt.Println(errors.Is(err, store.ErrConflict))
 	// Output:
 	// true <nil>
@@ -37,15 +43,21 @@ func ExampleStore_AcceptEnvironment() {
 }
 
 func ExampleStore_CommitEnvironment() {
-	s, close := exampleStore()
-	defer close()
+	dir, info, remove := exampleRetentionDirectory(store.DefaultRetentionPolicy())
+	defer remove()
+	s, err := store.Open(dir)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	defer s.Close()
 	if err := s.ActivateScoped(); err != nil {
 		fmt.Println(err)
 		return
 	}
 	actor := testActor()
 	spec := environment.Spec{Name: "analysis", Target: "kube", Image: "task:v1", CPUMillis: 500, MemoryBytes: 1 << 30}
-	e, err := s.AcceptEnvironment(actor, "create-1", spec, "test-binding", exampleAuthority(actor), environment.Checkpoint{Kind: "example", Version: 1, Data: []byte("intent")})
+	e, err := s.AcceptEnvironment(actor, info.Domain, "create-1", spec, "test-binding", exampleAuthority(actor), environment.Checkpoint{Kind: "example", Version: 1, Data: []byte("intent")})
 	if err != nil {
 		fmt.Println(err)
 		return

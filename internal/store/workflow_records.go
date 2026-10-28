@@ -142,13 +142,23 @@ func loadWorkflowState(tx *bolt.Tx, id string) (st workflowState, err error) {
 	return
 }
 
+// loadWorkflowGraph decodes the stored graph of workflow id. The stored bytes
+// must be exactly canonical, as validateWorkflow requires: json.Unmarshal
+// drops members that Graph lacks, such as a node task's workers, and only the
+// comparison refuses a graph that holds one.
 func loadWorkflowGraph(tx *bolt.Tx, id string) (g workflow.Graph, err error) {
 	raw := workflowRow(tx, workflowGraphKey(id))
 	if raw == nil {
 		return g, ErrNotFound
 	}
-	err = json.Unmarshal(raw, &g)
-	return
+	if err = json.Unmarshal(raw, &g); err != nil {
+		return
+	}
+	canonical, err := workflow.Canonical(g)
+	if err != nil || !bytes.Equal(canonical, raw) {
+		return workflow.Graph{}, errors.New("workflow graph mismatch")
+	}
+	return g, nil
 }
 
 func putWorkflowState(tx *bolt.Tx, id string, st workflowState) error {
@@ -367,6 +377,9 @@ func validateWorkflow(tx *bolt.Tx, art *artifactState, id string, st workflowSta
 	if err != nil || !bytes.Equal(canonical, raw) || st.Graph != hex.EncodeToString(digest[:]) || len(g.Nodes) != len(st.Nodes) {
 		return errors.New("workflow graph mismatch")
 	}
+	// The exact canonical comparison also refuses every node member that
+	// Graph lacks, such as a task's workers, whatever the node's disposition:
+	// a pending node has no job for the stored job fence to refuse.
 	if !validPrincipal([]byte(st.Owner)) || !validWorkflowAuthority(st.Authority, st.Owner) || st.Created.IsZero() || st.Revision == 0 || st.Ordinal == 0 {
 		return errors.New("invalid workflow identity")
 	}

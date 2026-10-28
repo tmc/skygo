@@ -1,0 +1,45 @@
+# Idle expiry, and an exec whose outcome is unknown. An unknown session
+# blocks expiry; an idle environment without one is deleted.
+
+env-domain D
+skygo --token-file=$TOKEN_FILE env create -f busy.yaml --request-id busy-1 --request-domain $D
+skygo --token-file=$TOKEN_FILE env create -f idle.yaml --request-id idle-1 --request-domain $D
+env-id B busy
+env-id I idle
+env-reconcile
+
+! skygo --token-file=$TOKEN_FILE env exec $B -- lost
+stderr 'command outcome unknown; it was not resent'
+! skygo --json --token-file=$TOKEN_FILE env exec $B -- lost
+stdout '^\{\}$'
+stderr 'command outcome unknown; it was not resent'
+# A refused command is still reported unknown: no status proves it never ran.
+! skygo --token-file=$TOKEN_FILE env exec $B -- refused
+stderr 'exec outcome unknown; it was not resent'
+stderr 'unavailable'
+skygo --token-file=$TOKEN_FILE env get $B
+stdout '^'$B' +busy +modeled +present +ready +0 +[1-8]$'
+
+env-advance 301s
+env-reconcile
+skygo --token-file=$TOKEN_FILE env get $B
+stdout '^'$B' +busy +modeled +present +ready '
+skygo --token-file=$TOKEN_FILE env get $I
+stdout '^'$I' +idle +modeled +absent +deleted '
+skygo --json --token-file=$TOKEN_FILE env get $I
+stdout '"expired": *true'
+
+-- busy.yaml --
+name: busy
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576
+idle_timeout_seconds: 300
+-- idle.yaml --
+name: idle
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576
+idle_timeout_seconds: 300

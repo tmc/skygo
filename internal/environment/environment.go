@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"path"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -14,6 +16,10 @@ import (
 const (
 	// SpecVersion is the version of the canonical Spec encoding.
 	SpecVersion = 1
+
+	// SpecVersion2 is the version of the canonical encoding of a Spec with
+	// artifacts.
+	SpecVersion2 = 2
 
 	// FirstGeneration is the only generation this release accepts. An
 	// environment is never replaced in place.
@@ -32,7 +38,13 @@ const (
 	MinIdleTimeoutSeconds = 5 * 60
 	MaxIdleTimeoutSeconds = 7 * 24 * 3600
 
+	// MaxArtifacts bounds Spec.Artifacts.
+	MaxArtifacts = 8
+
 	maxSelectors = 16
+
+	// artifactPrefix contains every artifact mount path.
+	artifactPrefix = "/skygo/artifacts/"
 )
 
 // Spec is the immutable request for one environment. Name, Target, Image,
@@ -74,6 +86,22 @@ type Spec struct {
 	// IdleTimeoutSeconds is zero, disabling expiry, or
 	// MinIdleTimeoutSeconds..MaxIdleTimeoutSeconds.
 	IdleTimeoutSeconds int64 `json:"idle_timeout_seconds,omitempty"`
+
+	// Artifacts are at most MaxArtifacts read-only inputs materialized into
+	// each incarnation. Mount paths are distinct and none contains another.
+	Artifacts []ArtifactMount `json:"artifacts,omitempty"`
+}
+
+// ArtifactMount is one read-only artifact input. ID is 32 and SHA256 is 64
+// lowercase hexadecimal digits, and Size is positive; the Store checks that
+// they name a complete artifact of the environment's principal. MountPath
+// is a clean absolute path of at most 256 printable ASCII bytes, without
+// spaces, strictly under /skygo/artifacts/.
+type ArtifactMount struct {
+	ID        string `json:"id"`
+	SHA256    string `json:"sha256"`
+	Size      uint64 `json:"size"`
+	MountPath string `json:"mount_path"`
 }
 
 // canonicalSpec is the versioned encoding. Optional fields are omitted when
@@ -90,12 +118,17 @@ func Validate(s Spec) error {
 }
 
 // Canonical returns the canonical JSON encoding of s, or an error if s is
-// invalid. The encoding starts with the version and sorts selector keys.
+// invalid. The encoding starts with the version, SpecVersion2 exactly when s
+// has artifacts, and sorts selector keys.
 func Canonical(s Spec) ([]byte, error) {
 	if err := check(s); err != nil {
 		return nil, err
 	}
-	data, err := json.Marshal(canonicalSpec{SpecVersion, s})
+	version := SpecVersion
+	if len(s.Artifacts) != 0 {
+		version = SpecVersion2
+	}
+	data, err := json.Marshal(canonicalSpec{version, s})
 	if err != nil {
 		return nil, fmt.Errorf("encode spec: %w", err)
 	}
@@ -105,8 +138,10 @@ func Canonical(s Spec) ([]byte, error) {
 	return data, nil
 }
 
-// Parse decodes a canonical encoding. It refuses any other version and any
-// bytes that Canonical would not produce for the decoded Spec.
+// Parse decodes a canonical encoding. It refuses any version other than
+// SpecVersion and SpecVersion2 and any bytes that Canonical would not produce
+// for the decoded Spec, so version 2 requires artifacts and version 1 refuses
+// them.
 func Parse(data []byte) (Spec, error) {
 	if len(data) > MaxSpecBytes {
 		return Spec{}, fmt.Errorf("canonical spec exceeds %d bytes", MaxSpecBytes)
@@ -120,7 +155,7 @@ func Parse(data []byte) (Spec, error) {
 	if err := d.Decode(new(any)); err != io.EOF {
 		return Spec{}, errors.New("decode spec: trailing data")
 	}
-	if c.Version != SpecVersion {
+	if c.Version != SpecVersion && c.Version != SpecVersion2 {
 		return Spec{}, fmt.Errorf("unsupported spec version %d", c.Version)
 	}
 	want, err := Canonical(c.Spec)
@@ -134,7 +169,7 @@ func Parse(data []byte) (Spec, error) {
 }
 
 // Normalize checks s and returns a copy that shares no memory with s. An
-// empty selector becomes nil.
+// empty selector or artifact list becomes nil.
 func Normalize(s Spec) (Spec, error) {
 	if err := check(s); err != nil {
 		return Spec{}, err
@@ -143,20 +178,24 @@ func Normalize(s Spec) (Spec, error) {
 	if len(s.NodeSelector) == 0 {
 		s.NodeSelector = nil
 	}
+	if len(s.Artifacts) == 0 {
+		s.Artifacts = nil
+	}
 	return s, nil
 }
 
 // Clone returns a copy of s that shares no memory with s.
 func (s Spec) Clone() Spec {
 	s.NodeSelector = maps.Clone(s.NodeSelector)
+	s.Artifacts = slices.Clone(s.Artifacts)
 	return s
 }
 
 func check(s Spec) error {
 	switch {
-	case !validName(s.Name):
+	case !ValidName(s.Name):
 		return errors.New("invalid environment name")
-	case !ascii(s.Target, 128):
+	case !ValidTarget(s.Target):
 		return errors.New("invalid target")
 	case !ascii(s.Image, 512) || strings.ContainsRune(s.Image, ' '):
 		return errors.New("invalid image")
@@ -175,13 +214,32 @@ func check(s Spec) error {
 		return fmt.Errorf("port must be 0 or %d", Port)
 	case s.IdleTimeoutSeconds != 0 && (s.IdleTimeoutSeconds < MinIdleTimeoutSeconds || s.IdleTimeoutSeconds > MaxIdleTimeoutSeconds):
 		return fmt.Errorf("idle timeout outside %d..%d seconds", MinIdleTimeoutSeconds, MaxIdleTimeoutSeconds)
+	case len(s.Artifacts) > MaxArtifacts:
+		return fmt.Errorf("artifacts exceed %d entries", MaxArtifacts)
 	}
 	for k, v := range s.NodeSelector {
 		if !text(k, 256, false) || !text(v, 4096, true) {
 			return errors.New("invalid node selector")
 		}
 	}
+	for i, m := range s.Artifacts {
+		if !ValidID(m.ID) || !lowerHex(m.SHA256, 64) || m.Size == 0 || !validMountPath(m.MountPath) {
+			return errors.New("invalid artifact mount")
+		}
+		for _, n := range s.Artifacts[:i] {
+			if n.MountPath == m.MountPath || strings.HasPrefix(n.MountPath, m.MountPath+"/") || strings.HasPrefix(m.MountPath, n.MountPath+"/") {
+				return errors.New("artifact mount paths overlap")
+			}
+		}
+	}
 	return nil
+}
+
+// validMountPath reports whether p is a clean absolute path strictly under
+// artifactPrefix. The path is a POSIX path inside the incarnation, never a
+// host path.
+func validMountPath(p string) bool {
+	return ascii(p, 256) && !strings.ContainsRune(p, ' ') && path.Clean(p) == p && strings.HasPrefix(p, artifactPrefix) && len(p) > len(artifactPrefix)
 }
 
 // Desired is the durable intent for an environment. The zero value is
@@ -304,8 +362,10 @@ func (i Identity) Valid() bool {
 }
 
 // ValidID reports whether s is 32 lowercase hexadecimal digits.
-func ValidID(s string) bool {
-	if len(s) != 32 {
+func ValidID(s string) bool { return lowerHex(s, 32) }
+
+func lowerHex(s string, n int) bool {
+	if len(s) != n {
 		return false
 	}
 	for i := range len(s) {
@@ -349,9 +409,15 @@ func (c Checkpoint) Clone() Checkpoint {
 	return c
 }
 
-func validName(s string) bool {
+// ValidName reports whether s is a valid Spec.Name: 1..63 lowercase letters,
+// digits or '-', starting with a letter and not ending with '-'.
+func ValidName(s string) bool {
 	return len(s) > 0 && 'a' <= s[0] && s[0] <= 'z' && validAlias(s)
 }
+
+// ValidTarget reports whether s is a valid Spec.Target: 1..128 printable
+// ASCII bytes, space included.
+func ValidTarget(s string) bool { return ascii(s, 128) }
 
 func validAlias(s string) bool {
 	if len(s) == 0 || len(s) > 63 || s[0] == '-' || s[len(s)-1] == '-' {

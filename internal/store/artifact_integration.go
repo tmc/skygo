@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"unicode/utf8"
 
@@ -12,6 +11,10 @@ import (
 
 // ErrWorkspaceSubmitRequired rejects snapshot fields at a legacy submit boundary.
 var ErrWorkspaceSubmitRequired = errors.New("workspace task requires workspace submission")
+
+// errWorkerRoute refuses worker execution on an ordinary route: a dedicated
+// worker group's job, or a stored task that requests workers.
+var errWorkerRoute = errors.New("worker task requires a worker route")
 
 func artifactDiagnostic(s string) string {
 	s = boundedReason(s)
@@ -89,7 +92,7 @@ func artifactValidateTaskRows(tx *bolt.Tx, st *artifactState) error {
 	}
 	return tx.Bucket(jobsBucket).ForEach(func(id, raw []byte) error {
 		var job backend.Job
-		if err := json.Unmarshal(raw, &job); err != nil {
+		if err := decodeStoredJob(raw, &job); err != nil {
 			return err
 		}
 		if err := backend.ValidateWorkspace(job.Task); err != nil {

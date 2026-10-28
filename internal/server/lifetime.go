@@ -58,6 +58,9 @@ type serverRun struct {
 	cancelRun, cancelAuth        context.CancelFunc
 	runDone, serveDone, authDone chan struct{}
 	runErr, serveErr             error
+	integration                  Integration
+	integrationDone              chan struct{}
+	integrationErr               error
 	held                         *RunError
 }
 
@@ -167,7 +170,7 @@ func (f *serverRun) closeStartup(cause error) error {
 	if f.held != nil {
 		return f.held
 	}
-	if f.runDone != nil || f.serveDone != nil || f.authDone != nil {
+	if f.runDone != nil || f.serveDone != nil || f.authDone != nil || f.integrationDone != nil {
 		return f.hold("startup functions already launched", cause)
 	}
 	var uncertain *local.ServerLifetimeCloseError
@@ -179,6 +182,9 @@ func (f *serverRun) closeStartup(cause error) error {
 			return f.hold("startup listener close", errors.Join(cause, err))
 		}
 		f.listener = nil
+	}
+	if err := f.closeIntegration(cause); err != nil {
+		return err
 	}
 	return f.closeResources(cause)
 }
@@ -239,6 +245,11 @@ func (f *serverRun) shutdown(cause error) error {
 	if err := f.control.WaitShutdownPrepared(prepare); err != nil {
 		return f.hold("original preparation remains held", errors.Join(cause, err))
 	}
+	// An integration's artifact I/O is released only once its effects stop,
+	// so they are stopped before the drain waits for that I/O.
+	if stopper, ok := f.integration.(EffectStopper); ok {
+		stopper.StopEffects()
+	}
 	f.control.StopArtifactAdmission()
 	drain, cancelDrain := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancelDrain()
@@ -257,11 +268,44 @@ func (f *serverRun) shutdown(cause error) error {
 	if f.runErr != nil && !errors.Is(f.runErr, context.Canceled) {
 		return f.hold("original run failed", errors.Join(cause, f.runErr))
 	}
+	if f.integrationDone != nil {
+		if err := waitServerOwner(join, f.integrationDone); err != nil {
+			return f.hold("original integration run remains held", errors.Join(cause, err))
+		}
+		if err := f.integrationErr; err != nil && !errors.Is(err, context.Canceled) && !errors.Is(cause, err) {
+			cause = errors.Join(cause, err)
+		}
+	}
+	if err := f.closeIntegration(cause); err != nil {
+		return err
+	}
+	// Close is cooperative and may outlast join, so the same authentication
+	// loop gets its own ten-second join; its cancellation is not its return.
 	f.cancelAuth()
-	if err := waitServerOwner(join, f.authDone); err != nil {
+	authJoin, cancelAuthJoin := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelAuthJoin()
+	if err := waitServerOwner(authJoin, f.authDone); err != nil {
 		return f.hold("original authentication remains held", errors.Join(cause, err))
 	}
 	return f.closeResources(cause)
+}
+
+// closeIntegration closes the installed original once, after Control and the
+// integration's own Run have returned and before authentication stops. A
+// failure is sticky and closes nothing the integration depends on. The
+// ten-second ctx is cooperative: Close is called synchronously, and no timer
+// or goroutine takes its place if it does not return.
+func (f *serverRun) closeIntegration(cause error) error {
+	if f.integration == nil {
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := f.integration.Close(ctx); err != nil {
+		return f.hold("integration closure remains held", errors.Join(cause, err))
+	}
+	f.integration = nil
+	return nil
 }
 
 // Each nonnil original is closed at most once. A failure is sticky and halts

@@ -78,7 +78,7 @@ func companionEligible(tx *bolt.Tx) (*artifactState, error) {
 		}
 		if err := retentionTable(tx, cleanupHeadersBucket).ForEach(func(k, v []byte) error {
 			var h cleanupHeader
-			if err := json.Unmarshal(v, &h); err != nil {
+			if err := decodeCleanupHeader(v, &h); err != nil {
 				return err
 			}
 			p, ok := st.ManualInputs[string(k)]
@@ -98,7 +98,7 @@ func companionEligible(tx *bolt.Tx) (*artifactState, error) {
 	}
 	if err := tx.Bucket(jobsBucket).ForEach(func(_, v []byte) error {
 		var j backend.Job
-		if err := json.Unmarshal(v, &j); err != nil {
+		if err := decodeStoredJob(v, &j); err != nil {
 			return err
 		}
 		var m retainedJob

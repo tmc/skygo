@@ -109,7 +109,7 @@ func get(tx *bolt.Tx, id string) (backend.Job, error) {
 	if v == nil {
 		return j, ErrNotFound
 	}
-	if err := json.Unmarshal(v, &j); err != nil {
+	if err := decodeStoredJob(v, &j); err != nil {
 		return j, fmt.Errorf("decode job %s: %w", id, err)
 	}
 	return j, nil
@@ -423,6 +423,9 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	if remoteRoute(tx, id) && !reflect.DeepEqual(before.Status, j.Status) {
 		return j, ErrRemoteAttemptRequired
 	}
+	if workerGroupJob(tx, id) && !reflect.DeepEqual(before.Status, j.Status) {
+		return j, errWorkerRoute
+	}
 	if e = validateUpdate(before, j); e != nil {
 		return j, e
 	}
@@ -436,7 +439,8 @@ func update(tx *bolt.Tx, id string, fn func(*backend.Job) error) (j backend.Job,
 	return get(tx, id)
 }
 
-// Active reads all nonterminal jobs in acceptance order.
+// Active reads all nonterminal jobs in acceptance order. Worker groups are
+// excluded: only worker group transitions reconcile them.
 func (s *Store) Active() (out []backend.Job, err error) {
 	err = s.db.View(func(tx *bolt.Tx) error {
 		return tx.Bucket(sequenceBucket).ForEach(func(_, id []byte) error {
@@ -444,7 +448,7 @@ func (s *Store) Active() (out []backend.Job, err error) {
 			if e != nil {
 				return e
 			}
-			if !j.Status.State.Terminal() {
+			if !j.Status.State.Terminal() && !workerGroupJob(tx, string(id)) {
 				out = append(out, j)
 			}
 			return nil

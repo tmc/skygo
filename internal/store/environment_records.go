@@ -16,18 +16,26 @@ import (
 )
 
 // The environments bucket, installed empty by the schema9 migration, holds
-// flat typed rows. Rows are never removed, so the bucket sequence is also the
-// number of accepted environments. Ordinals are fixed eight-byte big-endian
-// values.
+// flat typed rows. Ordinals are fixed eight-byte big-endian values and are
+// never reused. Before schema12 rows are never removed, so the bucket
+// sequence is the number of accepted environments. From schema12 an
+// environment accepted in a request domain is witnessed under w/ instead of
+// r/, and ReclaimEnvironment may replace its rows with a tombstone; the
+// sequence is then the number of live environments plus the reclaimed
+// counts.
 //
 //	e/<id>                   bounded environment record
 //	s/<id>                   canonical immutable spec
-//	r/<principal>/<request>  id; the request binding
+//	r/<principal>/<request>  id; the request binding of a pre-12 record
 //	n/<principal>/<name>     id; the name reservation
 //	a/<alias>/<target>       id; the storage alias reservation
 //	i/<ordinal>              id; the bucket sequence is the global high-water
-//	h/<principal>            dense per-principal high-water
+//	h/<principal>            per-principal high-water
 //	p/<principal>/<ordinal>  id
+//	w/<principal>/<lineage>/<epoch>/<request>  request witness (schema12)
+//	t/<id>                   tombstone of a reclaimed environment (schema12)
+//	x/<principal>            count of the principal's reclaimed environments
+//	                         (schema12)
 var environmentsBucket = []byte("environments")
 
 // environmentRecordLimit bounds one encoded record, which holds at most one
@@ -48,6 +56,13 @@ type environmentRecord struct {
 	Revision   uint64                 `json:"revision"`
 	State      environment.State      `json:"state"`
 	Checkpoint environment.Checkpoint `json:"checkpoint"`
+	// The committed incarnation is omitted until one is committed, so
+	// earlier records encode unchanged.
+	Incarnation    string `json:"incarnation,omitempty"`
+	IncarnationSeq uint64 `json:"incarnation_seq,omitempty"`
+	// Domain is omitted for a record accepted before schema12, which has
+	// an r/ binding instead and is never reclaimed.
+	Domain *RequestDomain `json:"domain,omitempty"`
 }
 
 func environmentRecordKey(id string) []byte { return []byte("e/" + id) }
@@ -76,11 +91,17 @@ func encodeEnvironmentRecord(r environmentRecord) ([]byte, error) {
 	if !r.Identity.Valid() || !validPrincipal([]byte(r.Principal)) || !validRetainedRequestID(r.RequestID) || !artifactHex(r.Spec, 64) || !validBinding(r.Binding) || !validWorkflowAuthority(r.Authority, r.Principal) {
 		return nil, errors.New("invalid environment identity")
 	}
-	if r.Ordinal == 0 || r.Scope == 0 || r.Scope > maxPrincipalEnvironments || r.Revision == 0 || r.Created.IsZero() || r.Updated.Before(r.Created) {
+	if r.Ordinal == 0 || r.Scope == 0 || r.Revision == 0 || r.Created.IsZero() || r.Updated.Before(r.Created) {
 		return nil, errors.New("invalid environment record")
+	}
+	if r.Domain != nil && !validRequestDomain(*r.Domain) {
+		return nil, errors.New("invalid environment request domain")
 	}
 	if !r.State.Valid() {
 		return nil, errors.New("invalid environment state")
+	}
+	if r.IncarnationSeq == 0 && r.Incarnation != "" || r.IncarnationSeq != 0 && !validIncarnation(r.Incarnation) {
+		return nil, errors.New("invalid environment incarnation")
 	}
 	if err := r.Checkpoint.Validate(); err != nil {
 		return nil, err
@@ -189,5 +210,24 @@ func environmentView(b *bolt.Bucket, id string) (out Environment, err error) {
 		Revision:   r.Revision,
 		State:      r.State,
 		Checkpoint: r.Checkpoint.Clone(),
+
+		Incarnation:    r.Incarnation,
+		IncarnationSeq: r.IncarnationSeq,
+		Domain:         cloneEnvironmentDomain(r.Domain),
 	}, nil
+}
+
+// validIncarnation reports whether s is 1..128 bytes of ASCII letters,
+// digits, '.', '_', ':' or '-', none of which JSON escapes.
+func validIncarnation(s string) bool {
+	if len(s) == 0 || len(s) > 128 {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		if !('a' <= c && c <= 'z' || 'A' <= c && c <= 'Z' || '0' <= c && c <= '9' || c == '.' || c == '_' || c == ':' || c == '-') {
+			return false
+		}
+	}
+	return true
 }

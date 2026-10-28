@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"slices"
 	"time"
@@ -24,7 +23,7 @@ func artifactValidateCorePlanned(tx *bolt.Tx, st *artifactState, plan *retention
 			return backend.Job{}, ErrNotFound
 		}
 		var job backend.Job
-		if err := json.Unmarshal(raw, &job); err != nil {
+		if err := decodeStoredJob(raw, &job); err != nil {
 			return job, err
 		}
 		return job, nil
@@ -39,7 +38,7 @@ func artifactValidateCorePlanned(tx *bolt.Tx, st *artifactState, plan *retention
 		if raw == nil {
 			return h, ErrNotFound
 		}
-		err := json.Unmarshal(raw, &h)
+		err := decodeCleanupHeader(raw, &h)
 		return h, err
 	}
 	ownerOf := func(job string) string {
@@ -145,7 +144,10 @@ func artifactValidateCorePlanned(tx *bolt.Tx, st *artifactState, plan *retention
 			return artifactCorrupt()
 		}
 	}
-	return workflowValidateInputs(tx, st, plan)
+	if err := workflowValidateInputs(tx, st, plan); err != nil {
+		return err
+	}
+	return environmentValidatePins(tx, st)
 }
 
 // artifactAcceptInput belongs at the end of the existing accepting transaction,

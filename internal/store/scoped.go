@@ -216,6 +216,13 @@ func (s *Store) UpdateFor(actor auth.Actor, id string, fn func(*backend.Job) err
 		return
 	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
+		if tx.Bucket(jobsBucket).Get([]byte(id)) == nil {
+			var witness string
+			if loadJSON(retentionTable(tx, resultWitnessBucket), []byte(id), &witness) == nil && (actor.Role() == auth.Admin || witness == actor.Principal()) {
+				return &ExpiryError{Reason: ResultExpired, JobID: id}
+			}
+			return ErrNotFound
+		}
 		if !visible(tx, actor, id) {
 			return ErrNotFound
 		}

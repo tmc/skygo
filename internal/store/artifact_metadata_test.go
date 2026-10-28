@@ -100,6 +100,8 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var row, request []byte
+	// MODEL: a schema5 installation, built by removing everything later
+	// schemas added.
 	if err := s.db.Update(func(tx *bolt.Tx) error {
 		row = bytes.Clone(tx.Bucket(jobsBucket).Get([]byte(j.ID)))
 		request = bytes.Clone(tx.Bucket(requestsBucket).Get([]byte("unchanged")))
@@ -107,6 +109,12 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 			return err
 		}
 		if err := tx.DeleteBucket(environmentsBucket); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket(workerGroupsBucket); err != nil {
+			return err
+		}
+		if err := environmentArtifactStripModel(tx); err != nil {
 			return err
 		}
 		return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5))
@@ -124,11 +132,20 @@ func TestArtifactSchema5FenceAndDormantMigration(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// MODEL: a schema5 marker over an undecodable artifact root. The tag is
+	// removed too, so that the format fence passes and the artifact fence is
+	// the one under test.
 	if err := s.db.Update(func(tx *bolt.Tx) error {
 		if err := tx.DeleteBucket(workflowsBucket); err != nil {
 			return err
 		}
 		if err := tx.DeleteBucket(environmentsBucket); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket(workerGroupsBucket); err != nil {
+			return err
+		}
+		if err := environmentArtifactStripModel(tx); err != nil {
 			return err
 		}
 		if err := tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(5)); err != nil {

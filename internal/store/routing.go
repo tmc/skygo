@@ -16,6 +16,9 @@ func validBinding(binding string) bool {
 	return len(binding) > 0 && len(binding) <= 256 && utf8.ValidString(binding) && !strings.ContainsRune(binding, 0)
 }
 
+// validateRouting checks the routing fields of a decoded stored job. The
+// caller has already refused, from its raw bytes, a task that requests
+// workers; see decodeStoredJob.
 func validateRouting(tx *bolt.Tx, job backend.Job) error {
 	version := uint64(0)
 	if raw := tx.Bucket(metadataBucket).Get(schemaKey); len(raw) == 8 {
@@ -59,7 +62,7 @@ func bindLegacyLocal(tx *bolt.Tx, binding string) error {
 	for _, id := range ids {
 		data := jobs.Get([]byte(id))
 		var job backend.Job
-		if err := json.Unmarshal(data, &job); err != nil {
+		if err := decodeStoredJob(data, &job); err != nil {
 			return errors.New("invalid legacy job")
 		}
 		if job.Target != "local" || job.TargetBinding != "" {

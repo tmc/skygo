@@ -120,6 +120,73 @@ func TestValidate(t *testing.T) {
 	}
 }
 
+// TestValidNameTarget checks ValidName and ValidTarget at their boundaries and
+// that a complete, otherwise valid Spec is accepted exactly when they are.
+func TestValidNameTarget(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		s    string
+		want bool
+	}{
+		{"min", "a", true},
+		{"digits and dash", "a1-b2", true},
+		{"63", "a" + strings.Repeat("b", 62), true},
+		{"64", "a" + strings.Repeat("b", 63), false},
+		{"empty", "", false},
+		{"upper first", "Analysis", false},
+		{"upper inner", "anAlysis", false},
+		{"slash", "a/b", false},
+		{"leading digit", "1a", false},
+		{"leading dash", "-a", false},
+		{"trailing dash", "a-", false},
+		{"underscore", "a_b", false},
+		{"space", "a b", false},
+	} {
+		t.Run("name "+test.name, func(t *testing.T) {
+			if got := environment.ValidName(test.s); got != test.want {
+				t.Fatalf("ValidName(%q) = %v, want %v", test.s, got, test.want)
+			}
+			s := spec()
+			s.Name = test.s
+			if err := environment.Validate(s); (err == nil) != test.want {
+				t.Fatalf("Validate with name %q = %v, want ok %v", test.s, err, test.want)
+			}
+		})
+	}
+	for _, test := range []struct {
+		name string
+		s    string
+		want bool
+	}{
+		{"min", "k", true},
+		{"128", strings.Repeat("t", 128), true},
+		{"129", strings.Repeat("t", 129), false},
+		{"empty", "", false},
+		{"space", "kube east", true},
+		{"only space", " ", true},
+		{"printable ends", "!~", true},
+		{"upper and slash", "Kube/East", true},
+		{"NUL", "kube\x00", false},
+		{"newline", "kube\n", false},
+		{"tab", "a\tb", false},
+		{"unit separator", "kube\x1f", false},
+		{"DEL", "kube\x7f", false},
+		{"non-ASCII", "kubé", false},
+		{"high byte", "kube\x80", false},
+	} {
+		t.Run("target "+test.name, func(t *testing.T) {
+			if got := environment.ValidTarget(test.s); got != test.want {
+				t.Fatalf("ValidTarget(%q) = %v, want %v", test.s, got, test.want)
+			}
+			s := spec()
+			s.Target = test.s
+			if err := environment.Validate(s); (err == nil) != test.want {
+				t.Fatalf("Validate with target %q = %v, want ok %v", test.s, err, test.want)
+			}
+		})
+	}
+}
+
 func selector(n int) map[string]string {
 	m := map[string]string{}
 	for i := range n {
@@ -285,5 +352,122 @@ func TestCheckpoint(t *testing.T) {
 	d.Data[0] = 'x'
 	if string(c.Data) != "abc" {
 		t.Fatal("Clone shares Data")
+	}
+}
+
+func artifactMount(path string) environment.ArtifactMount {
+	return environment.ArtifactMount{ID: strings.Repeat("1", 32), SHA256: strings.Repeat("2", 64), Size: 3, MountPath: path}
+}
+
+func artifactSpec() environment.Spec {
+	s := spec()
+	s.Artifacts = []environment.ArtifactMount{artifactMount("/skygo/artifacts/data")}
+	return s
+}
+
+func TestCanonicalArtifacts(t *testing.T) {
+	image := `"image":"registry.example/task@sha256:` + strings.Repeat("a", 64) + `"`
+	want := `{"version":2,"name":"analysis","target":"kube",` + image + `,"cpu_millis":1000,"memory_bytes":1073741824,"artifacts":[{"id":"` + strings.Repeat("1", 32) + `","sha256":"` + strings.Repeat("2", 64) + `","size":3,"mount_path":"/skygo/artifacts/data"}]}`
+	data, err := environment.Canonical(artifactSpec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != want {
+		t.Fatalf("Canonical = %s, want %s", data, want)
+	}
+	got, err := environment.Parse(data)
+	if err != nil || !reflect.DeepEqual(got, artifactSpec()) {
+		t.Fatalf("Parse = %+v, %v", got, err)
+	}
+	plain, err := environment.Canonical(spec())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name, data string
+	}{
+		{"version 1 with artifacts", strings.Replace(want, `"version":2`, `"version":1`, 1)},
+		{"version 3", strings.Replace(want, `"version":2`, `"version":3`, 1)},
+		{"version 2 empty artifacts", strings.Replace(strings.Replace(string(plain), `"version":1`, `"version":2`, 1), `}`, `,"artifacts":[]}`, 1)},
+		{"version 1 empty artifacts", strings.Replace(string(plain), `}`, `,"artifacts":[]}`, 1)},
+		{"unknown mount field", strings.Replace(want, `"size":3`, `"size":3,"mode":"rw"`, 1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := environment.Parse([]byte(test.data)); err == nil {
+				t.Fatalf("Parse(%.80q) succeeded", test.data)
+			}
+		})
+	}
+}
+
+func TestValidateArtifacts(t *testing.T) {
+	eight := make([]environment.ArtifactMount, environment.MaxArtifacts)
+	for i := range eight {
+		eight[i] = artifactMount("/skygo/artifacts/a" + string(rune('0'+i)))
+	}
+	for _, test := range []struct {
+		name string
+		edit func(*environment.Spec)
+		ok   bool
+	}{
+		{"one", func(*environment.Spec) {}, true},
+		{"eight", func(s *environment.Spec) { s.Artifacts = eight }, true},
+		{"nine", func(s *environment.Spec) {
+			s.Artifacts = append(append([]environment.ArtifactMount(nil), eight...), artifactMount("/skygo/artifacts/a8"))
+		}, false},
+		{"one artifact twice", func(s *environment.Spec) {
+			s.Artifacts = append(s.Artifacts, artifactMount("/skygo/artifacts/again"))
+		}, true},
+		{"sibling with shared prefix", func(s *environment.Spec) {
+			s.Artifacts = append(s.Artifacts, artifactMount("/skygo/artifacts/database"))
+		}, true},
+		{"duplicate path", func(s *environment.Spec) {
+			s.Artifacts = append(s.Artifacts, artifactMount("/skygo/artifacts/data"))
+		}, false},
+		{"nested path", func(s *environment.Spec) {
+			s.Artifacts = append(s.Artifacts, artifactMount("/skygo/artifacts/data/inner"))
+		}, false},
+		{"relative", func(s *environment.Spec) { s.Artifacts[0].MountPath = "skygo/artifacts/data" }, false},
+		{"parent", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts/../etc" }, false},
+		{"inner parent", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts/a/../b" }, false},
+		{"prefix", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts/" }, false},
+		{"prefix directory", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts" }, false},
+		{"outside", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/data" }, false},
+		{"trailing slash", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts/data/" }, false},
+		{"space", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts/a b" }, false},
+		{"long path", func(s *environment.Spec) { s.Artifacts[0].MountPath = "/skygo/artifacts/" + strings.Repeat("p", 240) }, false},
+		{"upper id", func(s *environment.Spec) { s.Artifacts[0].ID = strings.Repeat("A", 32) }, false},
+		{"short sha", func(s *environment.Spec) { s.Artifacts[0].SHA256 = strings.Repeat("2", 63) }, false},
+		{"zero size", func(s *environment.Spec) { s.Artifacts[0].Size = 0 }, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := artifactSpec()
+			test.edit(&s)
+			if err := environment.Validate(s); (err == nil) != test.ok {
+				t.Fatalf("Validate = %v, want ok %v", err, test.ok)
+			}
+		})
+	}
+}
+
+func TestCloneOwnsArtifacts(t *testing.T) {
+	s := artifactSpec()
+	n, err := environment.Normalize(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Artifacts[0].MountPath = "/skygo/artifacts/changed"
+	if n.Artifacts[0].MountPath != "/skygo/artifacts/data" {
+		t.Fatal("Normalize shares the caller's artifacts")
+	}
+	c := n.Clone()
+	c.Artifacts[0].MountPath = "/skygo/artifacts/clone"
+	if n.Artifacts[0].MountPath != "/skygo/artifacts/data" {
+		t.Fatal("Clone shares the artifacts")
+	}
+	empty := spec()
+	empty.Artifacts = []environment.ArtifactMount{}
+	if n, err := environment.Normalize(empty); err != nil || n.Artifacts != nil {
+		t.Fatalf("Normalize kept an empty artifact list: %v", err)
 	}
 }

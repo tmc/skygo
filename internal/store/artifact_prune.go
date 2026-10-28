@@ -1,7 +1,6 @@
 package store
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -63,7 +62,7 @@ func artifactTransferInputPlanned(st *artifactState, plan *retentionMutation, jo
 	if raw == nil {
 		return ErrArtifactConflict
 	}
-	if err := json.Unmarshal(raw, &h); err != nil {
+	if err := decodeCleanupHeader(raw, &h); err != nil {
 		return err
 	}
 	if h.ID != job || h.JobID != job || h.Principal != p.Owner || !h.NeedsManual || h.Task != nil || h.TaskDigest != p.TaskDigest {

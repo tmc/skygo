@@ -1,0 +1,264 @@
+syntax = "proto3";
+
+package skygo.v1;
+
+import "google/protobuf/timestamp.proto";
+import "skygo/v1/control.proto";
+
+option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
+
+// EnvironmentService manages persistent environments: one accepted spec, a
+// latched desired state and the last recorded phase of the environment's own
+// resources. It is a separate endpoint. Clients call it only when
+// GetServerInfo reports CAPABILITY_ENVIRONMENTS_V1 and never fall back to job
+// submission; an endpoint without the capability answers unimplemented.
+// Commands and forwarded requests are sessions of an environment, never
+// jobs. Forwarding an HTTP request to the declared port is an authenticated
+// HTTP route on the same endpoint, not a method here; it takes no host, port
+// or URL from the caller.
+//
+// Servers refuse, as invalid_argument, a request carrying unknown fields or
+// enum values outside those declared here, at any depth, so a field added
+// later is never silently dropped by an older server. Clients send artifact
+// mounts only to a target reporting CAPABILITY_ENVIRONMENT_ARTIFACTS_V1; a
+// server without them refuses the spec. No message carries provider
+// checkpoints, native object names or identities, volume or secret names,
+// bearer credentials or delegated authority.
+service EnvironmentService {
+  // PlanEnvironment validates a spec, including its name and storage alias
+  // syntax, and asks whether the target's configuration supports its shape,
+  // including the storage alias. It needs only the caller's current read
+  // authority. It checks no name or alias uniqueness and no admission quota,
+  // and it reserves nothing. It makes no write, delegation, artifact pin,
+  // request binding or provider request, and returns no private binding or
+  // native data. Its answer is a sample, so a later CreateEnvironment may
+  // still be refused.
+  rpc PlanEnvironment(PlanEnvironmentRequest) returns (PlanEnvironmentResponse);
+  // CreateEnvironment accepts or replays an environment.
+  rpc CreateEnvironment(CreateEnvironmentRequest) returns (CreateEnvironmentResponse);
+  rpc GetEnvironment(GetEnvironmentRequest) returns (GetEnvironmentResponse);
+  rpc ListEnvironments(ListEnvironmentsRequest) returns (ListEnvironmentsResponse);
+  // DeleteEnvironment latches the environment absent. It reports deletion
+  // intent, not removal: phase DELETED requires observed cleanup.
+  rpc DeleteEnvironment(DeleteEnvironmentRequest) returns (DeleteEnvironmentResponse);
+  // ExecEnvironmentCommand runs one noninteractive command in a ready
+  // environment as a new session, for at most one hour. It is never
+  // replayed: a client must not resend a command whose result it did not
+  // receive. A command that was refused before anything ran is unavailable;
+  // a full session table is resource_exhausted; an environment that is not
+  // ready, deleting or expired is failed_precondition.
+  rpc ExecEnvironmentCommand(ExecEnvironmentCommandRequest) returns (ExecEnvironmentCommandResponse);
+}
+
+// EnvironmentSpec is the immutable request for one environment. Name,
+// target, image, cpu_millis and memory_bytes are required. The zero value of
+// every other field means none; nothing is defaulted.
+message EnvironmentSpec {
+  // 1..63 lowercase letters, digits or '-', starting with a letter and not
+  // ending with '-'; unique among the principal's environments.
+  string name = 1;
+  // One configured target name.
+  string target = 2;
+  string image = 3;
+  // Positive requests. A nonzero limit is at least its request.
+  int64 cpu_millis = 4;
+  int64 memory_bytes = 5;
+  int64 cpu_limit_millis = 6;
+  int64 memory_limit_bytes = 7;
+  // Set together with a positive accelerator_count.
+  string accelerator = 8;
+  int32 accelerator_count = 9;
+  // At most 16 entries.
+  map<string, string> node_selector = 10;
+  // An operator-configured writable volume alias of the target, not a
+  // native volume or claim name. Deleting the environment never deletes it.
+  string storage_alias = 11;
+  // Zero, or 8080: the one port the forward route may reach.
+  int32 port = 12;
+  // Zero disables idle expiry; otherwise 300..604800.
+  int64 idle_timeout_seconds = 13;
+  // At most 8 read-only artifact inputs, in order. A spec without them is a
+  // version 1 spec, whose canonical encoding and spec_sha256 are unchanged.
+  repeated EnvironmentArtifactMount artifacts = 14;
+  reserved "checkpoint", "claim", "native", "secret", "volume";
+}
+
+// EnvironmentArtifactMount mounts one complete artifact of the environment's
+// principal read-only into each incarnation. id is 32 and sha256 is 64
+// lowercase hexadecimal digits, and size is positive; together they must name
+// one complete artifact the principal may pin. mount_path is a clean absolute
+// path of at most 256 printable ASCII bytes, without spaces, strictly under
+// /skygo/artifacts/. The mount paths of one spec are distinct and none
+// contains another. One artifact may be mounted at several paths; it is
+// pinned once.
+message EnvironmentArtifactMount {
+  string id = 1;
+  string sha256 = 2;
+  uint64 size = 3;
+  string mount_path = 4;
+}
+
+enum EnvironmentDesired {
+  ENVIRONMENT_DESIRED_UNSPECIFIED = 0;
+  ENVIRONMENT_DESIRED_PRESENT = 1;
+  // Latched by DeleteEnvironment; never returns to PRESENT.
+  ENVIRONMENT_DESIRED_ABSENT = 2;
+}
+
+// EnvironmentPhase is the last recorded phase of the environment's own
+// resources.
+enum EnvironmentPhase {
+  ENVIRONMENT_PHASE_UNSPECIFIED = 0;
+  ENVIRONMENT_PHASE_CREATING = 1;
+  // A fresh matching observation of the environment's own resources; not
+  // evidence that a command or a served port works.
+  ENVIRONMENT_PHASE_READY = 2;
+  ENVIRONMENT_PHASE_DELETING = 3;
+  // Cleanup was observed complete. Final.
+  ENVIRONMENT_PHASE_DELETED = 4;
+  // Nothing is known about the resources; every reservation is kept.
+  ENVIRONMENT_PHASE_UNKNOWN = 5;
+}
+
+// Environment is one principal's environment. An admin may list and delete
+// other principals' environments, but exec and forward to them are
+// not_found.
+message Environment {
+  // 32 lowercase hexadecimal characters.
+  string id = 1;
+  EnvironmentSpec spec = 2;
+  // Lowercase hexadecimal SHA-256 of the canonical spec encoding.
+  string spec_sha256 = 3;
+  EnvironmentDesired desired = 4;
+  EnvironmentPhase phase = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  // Sessions in progress. Together with unknown_sessions at most 8.
+  uint32 open_sessions = 8;
+  // Sessions whose command's end was not observed, for example after a
+  // disconnect or a server restart. Each blocks idle expiry until the
+  // environment's resources are deleted; none is reported stopped.
+  uint32 unknown_sessions = 9;
+  // The earliest time idle expiry may latch deletion. Present only for a
+  // nonzero idle timeout, no open or unknown session, desired PRESENT and
+  // a phase other than CREATING.
+  google.protobuf.Timestamp expires_at = 10;
+  // Idle expiry latched the deletion.
+  bool expired = 11;
+  // Server-only state that no response carries.
+  reserved "binding", "checkpoint", "delegation", "installation", "native", "nonce";
+}
+
+message PlanEnvironmentRequest {
+  EnvironmentSpec spec = 1;
+}
+
+// EnvironmentPlanSupport is whether the target's current configuration
+// supports a spec's shape. SUPPORTED does not mean that resources are
+// available, that an environment would become ready or stage its artifacts,
+// or that the caller is within any quota. UNSUPPORTED carries no reason; it
+// never names a profile, binding or native object.
+enum EnvironmentPlanSupport {
+  ENVIRONMENT_PLAN_SUPPORT_UNSPECIFIED = 0;
+  ENVIRONMENT_PLAN_SUPPORT_SUPPORTED = 1;
+  ENVIRONMENT_PLAN_SUPPORT_UNSUPPORTED = 2;
+}
+
+// EnvironmentPlanFact is what planning learned about a precondition that
+// only acceptance enforces.
+enum EnvironmentPlanFact {
+  // The precondition does not apply. Never sent for a precondition that
+  // applies, and never read as VERIFIED.
+  ENVIRONMENT_PLAN_FACT_UNSPECIFIED = 0;
+  // Not checked; nothing is implied.
+  ENVIRONMENT_PLAN_FACT_UNKNOWN = 1;
+  // A current authorized read found it met. It is not reserved.
+  ENVIRONMENT_PLAN_FACT_VERIFIED = 2;
+  // A current authorized read found it unmet, without saying which part.
+  ENVIRONMENT_PLAN_FACT_REFUSED = 3;
+}
+
+// PlanEnvironmentResponse reports no name or alias availability and no quota.
+message PlanEnvironmentResponse {
+  // The spec normalized as CreateEnvironment would accept it.
+  EnvironmentSpec spec = 1;
+  // The spec_sha256 CreateEnvironment would record for spec.
+  string spec_sha256 = 2;
+  // Never UNSPECIFIED. SUPPORTED is the configured shape's support, not proof
+  // that a command or a served port will work.
+  EnvironmentPlanSupport support = 3;
+  // Whether every artifact mount names a complete artifact the principal may
+  // pin now: UNSPECIFIED exactly when spec has no artifacts, and otherwise
+  // explicitly UNKNOWN unless a current authorized read checked them all.
+  EnvironmentPlanFact artifacts = 4;
+}
+
+// request_id is 1..128 ASCII letters, digits, '_' or '-'. A retry resends
+// both request_id and domain unchanged, never a newly sampled domain: an
+// equal spec replays the original environment and a different spec with the
+// same ID is refused. A retired epoch refuses even an exact replay, and a
+// client then reports the original request as unknown.
+message CreateEnvironmentRequest {
+  string request_id = 1;
+  EnvironmentSpec spec = 2;
+  // Required. The current domain from GetRetention when the request is
+  // first made; an epoch of zero is invalid. It grants no authority.
+  RequestDomain domain = 3;
+}
+
+message CreateEnvironmentResponse {
+  Environment environment = 1;
+}
+
+message GetEnvironmentRequest {
+  string id = 1;
+}
+
+message GetEnvironmentResponse {
+  Environment environment = 1;
+}
+
+// Pages follow acceptance order and are live, not a snapshot. Zero page_size
+// selects 50; the maximum is 200. page_token is opaque, at most 256 bytes,
+// and valid only for the principal that received it.
+message ListEnvironmentsRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListEnvironmentsResponse {
+  repeated Environment environments = 1;
+  string next_page_token = 2;
+}
+
+// Deleting an absent environment returns it unchanged.
+message DeleteEnvironmentRequest {
+  string id = 1;
+}
+
+message DeleteEnvironmentResponse {
+  Environment environment = 1;
+}
+
+// ExecEnvironmentCommandRequest runs argv without a shell. argv is not
+// empty, at most 64 KiB in total, and no argument contains NUL.
+message ExecEnvironmentCommandRequest {
+  string id = 1;
+  repeated string argv = 2;
+  // At most 64 KiB. Absent means no stdin stream; present and empty means
+  // an immediately closed one.
+  optional bytes stdin = 3;
+}
+
+// ExecEnvironmentCommandResponse reports one ended session. exit_code is
+// present only when the command's exit status was relayed; absent means the
+// outcome is unknown, never exit zero, and the session is counted in
+// unknown_sessions. The target bounds the retained output; for Kubernetes,
+// stdout and stderr together hold at most 1 MiB.
+message ExecEnvironmentCommandResponse {
+  optional int32 exit_code = 1;
+  bytes stdout = 2;
+  bytes stderr = 3;
+  // More output was produced than retained.
+  bool truncated = 4;
+}

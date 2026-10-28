@@ -1068,9 +1068,10 @@ func TestWorkflowBackupRestoreKeepsHistory(t *testing.T) {
 	}
 }
 
-// workflowSchemaSeven rewrites a fresh installation to the C16 schema7
-// layout: no workflows bucket, no workflow_inputs table, root floor 7. It is
-// the same construction schemaSixFixture uses one schema earlier.
+// workflowSchemaSeven is a MODEL: it rewrites a fresh installation to the C16
+// schema7 layout: no workflows bucket, no workflow_inputs table, no storage
+// format tag or environment pin table, root floor 7. It is the same
+// construction schemaSixFixture uses one schema earlier.
 func workflowSchemaSeven(t *testing.T, dir string) backend.Job {
 	t.Helper()
 	s, err := Open(dir)
@@ -1088,6 +1089,12 @@ func workflowSchemaSeven(t *testing.T, dir string) backend.Job {
 			return err
 		}
 		if err := tx.DeleteBucket(environmentsBucket); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket(workerGroupsBucket); err != nil {
+			return err
+		}
+		if err := environmentArtifactStripModel(tx); err != nil {
 			return err
 		}
 		b := tx.Bucket(artifactsBucket)

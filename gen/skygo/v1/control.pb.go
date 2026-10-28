@@ -173,6 +173,30 @@ const (
 	// Reserved fact for WORKER_MODE_TCP_RENDEZVOUS, withheld on the same terms.
 	// No worker retry capability exists.
 	Capability_CAPABILITY_TCP_RENDEZVOUS_V1 Capability = 14
+	// Reserved endpoint fact for ServiceService and its authenticated forward
+	// route. Not advertised until both are mounted on a qualified service
+	// controller with at least one configured service runtime.
+	Capability_CAPABILITY_SERVICES_V1 Capability = 15
+	// Reserved selected-target fact for fixed-replica services, withheld on
+	// the same terms.
+	Capability_CAPABILITY_FIXED_SERVICES_V1 Capability = 16
+	// Reserved selected-target fact for service workdir, setup and approved
+	// read-only mounts; also requires FIXED_SERVICES_V1.
+	Capability_CAPABILITY_SERVICE_DATA_V1 Capability = 17
+	// Reserved selected-target fact for CPU-utilization autoscaling; also
+	// requires FIXED_SERVICES_V1. Configured support, not metrics availability.
+	Capability_CAPABILITY_SERVICE_CPU_AUTOSCALING_V1 Capability = 18
+	// Reserved endpoint fact for EnvironmentService and its authenticated
+	// forward route. Not advertised until both are mounted on a controller
+	// that persists session and expiry authority.
+	Capability_CAPABILITY_ENVIRONMENTS_V1 Capability = 19
+	// Reserved selected-target fact for persistent environments, withheld on
+	// the same terms.
+	Capability_CAPABILITY_PERSISTENT_ENVIRONMENTS_V1 Capability = 20
+	// Reserved selected-target fact for environment artifact mounts; also
+	// requires PERSISTENT_ENVIRONMENTS_V1. Not advertised until the target
+	// materializes every mount read-only into each incarnation.
+	Capability_CAPABILITY_ENVIRONMENT_ARTIFACTS_V1 Capability = 21
 )
 
 // Enum value maps for Capability.
@@ -193,6 +217,13 @@ var (
 		12: "CAPABILITY_STATIC_WORKFLOWS_V1",
 		13: "CAPABILITY_INDEXED_WORKERS_V1",
 		14: "CAPABILITY_TCP_RENDEZVOUS_V1",
+		15: "CAPABILITY_SERVICES_V1",
+		16: "CAPABILITY_FIXED_SERVICES_V1",
+		17: "CAPABILITY_SERVICE_DATA_V1",
+		18: "CAPABILITY_SERVICE_CPU_AUTOSCALING_V1",
+		19: "CAPABILITY_ENVIRONMENTS_V1",
+		20: "CAPABILITY_PERSISTENT_ENVIRONMENTS_V1",
+		21: "CAPABILITY_ENVIRONMENT_ARTIFACTS_V1",
 	}
 	Capability_value = map[string]int32{
 		"CAPABILITY_UNSPECIFIED":                  0,
@@ -210,6 +241,13 @@ var (
 		"CAPABILITY_STATIC_WORKFLOWS_V1":          12,
 		"CAPABILITY_INDEXED_WORKERS_V1":           13,
 		"CAPABILITY_TCP_RENDEZVOUS_V1":            14,
+		"CAPABILITY_SERVICES_V1":                  15,
+		"CAPABILITY_FIXED_SERVICES_V1":            16,
+		"CAPABILITY_SERVICE_DATA_V1":              17,
+		"CAPABILITY_SERVICE_CPU_AUTOSCALING_V1":   18,
+		"CAPABILITY_ENVIRONMENTS_V1":              19,
+		"CAPABILITY_PERSISTENT_ENVIRONMENTS_V1":   20,
+		"CAPABILITY_ENVIRONMENT_ARTIFACTS_V1":     21,
 	}
 )
 
@@ -6185,7 +6223,7 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"WorkerMode\x12\x1b\n" +
 	"\x17WORKER_MODE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17WORKER_MODE_INDEPENDENT\x10\x01\x12\x1e\n" +
-	"\x1aWORKER_MODE_TCP_RENDEZVOUS\x10\x02*\x95\x04\n" +
+	"\x1aWORKER_MODE_TCP_RENDEZVOUS\x10\x02*\x92\x06\n" +
 	"\n" +
 	"Capability\x12\x1a\n" +
 	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
@@ -6203,7 +6241,14 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\x1fCAPABILITY_REMOTE_DATA_RETRY_V1\x10\v\x12\"\n" +
 	"\x1eCAPABILITY_STATIC_WORKFLOWS_V1\x10\f\x12!\n" +
 	"\x1dCAPABILITY_INDEXED_WORKERS_V1\x10\r\x12 \n" +
-	"\x1cCAPABILITY_TCP_RENDEZVOUS_V1\x10\x0e*d\n" +
+	"\x1cCAPABILITY_TCP_RENDEZVOUS_V1\x10\x0e\x12\x1a\n" +
+	"\x16CAPABILITY_SERVICES_V1\x10\x0f\x12 \n" +
+	"\x1cCAPABILITY_FIXED_SERVICES_V1\x10\x10\x12\x1e\n" +
+	"\x1aCAPABILITY_SERVICE_DATA_V1\x10\x11\x12)\n" +
+	"%CAPABILITY_SERVICE_CPU_AUTOSCALING_V1\x10\x12\x12\x1e\n" +
+	"\x1aCAPABILITY_ENVIRONMENTS_V1\x10\x13\x12)\n" +
+	"%CAPABILITY_PERSISTENT_ENVIRONMENTS_V1\x10\x14\x12'\n" +
+	"#CAPABILITY_ENVIRONMENT_ARTIFACTS_V1\x10\x15*d\n" +
 	"\rOutputStorage\x12\x1e\n" +
 	"\x1aOUTPUT_STORAGE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14OUTPUT_STORAGE_LOCAL\x10\x01\x12\x19\n" +

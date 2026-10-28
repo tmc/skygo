@@ -101,7 +101,7 @@ func (s *Store) SubmitWorkflow(actor auth.Actor, domain *RequestDomain, requestI
 		return out, errors.New("invalid request ID")
 	}
 	if domain != nil && (!validAttemptID(domain.Lineage) || domain.Epoch == 0) {
-		return out, errors.New("invalid request domain")
+		return out, ErrInvalidRequestDomain
 	}
 	graph, err := workflow.Canonical(g)
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Store) LookupWorkflow(actor auth.Actor, domain *RequestDomain, requestI
 		return out, false, errors.New("invalid request ID")
 	}
 	if domain != nil && (!validAttemptID(domain.Lineage) || domain.Epoch == 0) {
-		return out, false, errors.New("invalid request domain")
+		return out, false, ErrInvalidRequestDomain
 	}
 	graph, err := workflow.Canonical(g)
 	if err != nil {

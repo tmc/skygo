@@ -14,23 +14,34 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-// AcceptEnvironment atomically accepts spec under requestID in the actor's
-// namespace as a Present, Creating environment at revision 1 with the given
-// target binding, file delegation and initial provider checkpoint. The same
-// request with identical canonical spec bytes returns the original
-// environment before any other check; with different bytes it is ErrConflict.
-// A new acceptance requires scoped authentication, reserves the principal's
+// AcceptEnvironment atomically accepts spec under requestID in request domain
+// d and the actor's namespace as a Present, Creating environment at revision
+// 1 with the given target binding, file delegation and initial provider
+// checkpoint. A malformed d is ErrInvalidRequestDomain. The domain is checked
+// first: a disabled store is ErrRetentionDisabled, another lineage or a
+// retired epoch is an *ExpiryError and an epoch never issued is
+// ErrUnknownRequestEpoch, even for an exact replay. Then the same request
+// with identical canonical spec bytes returns the original environment, or
+// its retired view once reclaimed; with different bytes it is ErrConflict. A
+// new acceptance is refused with an *ExpiryError once d's epoch is closed to
+// new requests, requires scoped authentication, reserves the principal's
 // name and the target's storage alias, and is refused with
-// ErrEnvironmentLimit beyond 32 environments, 4 per principal or 16 MiB of
-// environment metadata. The caller must check the delegation fresh before
-// acceptance and must not cause any provider effect before this method
-// returns without error.
-func (s *Store) AcceptEnvironment(actor auth.Actor, requestID string, spec environment.Spec, binding string, authority auth.Delegation, checkpoint environment.Checkpoint) (out Environment, err error) {
+// ErrEnvironmentLimit beyond 32 unreclaimed environments, 4 per principal or
+// 16 MiB of environment metadata. A spec with artifacts pins each one, in the
+// same transaction, under the principal's actual grant; a mount the
+// principal may not pin is ErrEnvironmentArtifact. Every refusal writes
+// nothing. The caller must check the delegation fresh before acceptance and
+// must not cause any provider effect before this method returns without
+// error.
+func (s *Store) AcceptEnvironment(actor auth.Actor, d RequestDomain, requestID string, spec environment.Spec, binding string, authority auth.Delegation, checkpoint environment.Checkpoint) (out Environment, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
 		return
 	}
 	if !validRetainedRequestID(requestID) {
 		return out, errors.New("invalid request ID")
+	}
+	if !validRequestDomain(d) {
+		return out, ErrInvalidRequestDomain
 	}
 	raw, err := environment.Canonical(spec)
 	if err != nil {
@@ -42,7 +53,7 @@ func (s *Store) AcceptEnvironment(actor auth.Actor, requestID string, spec envir
 	}
 	err = s.db.Update(func(tx *bolt.Tx) error {
 		var e error
-		out, e = acceptEnvironment(tx, actor.Principal(), requestID, raw, binding, authority, checkpoint, id, s.now().UTC())
+		out, e = acceptEnvironment(tx, actor.Principal(), d, requestID, raw, binding, authority, checkpoint, id, s.now().UTC())
 		return e
 	})
 	return
@@ -63,7 +74,7 @@ func (s *Store) EnvironmentFor(actor auth.Actor, id string) (out Environment, er
 }
 
 // EnvironmentsFor lists the authenticated scope in acceptance order. A
-// nonadmin pages by its own dense ordinal.
+// nonadmin pages by its own ordinal, which skips reclaimed environments.
 func (s *Store) EnvironmentsFor(actor auth.Actor, after uint64, limit int) (out EnvironmentPage, err error) {
 	if err = s.authorize(actor, auth.Read); err != nil {
 		return
@@ -91,14 +102,18 @@ func (s *Store) Environments(after uint64, limit int) (EnvironmentPage, error) {
 	return s.environments([]byte("i/"), after, limit)
 }
 
-// CommitEnvironment atomically replaces the state and checkpoint of
-// environment id if its revision is still revision, and advances the
-// revision. A stale revision is ErrEnvironmentStale. The move must satisfy
-// environment.State.Next, and the checkpoint keeps its kind and version.
-// Identity, spec, binding and authority cannot change. Deletion is a commit
-// of Desired Absent; it removes no row, reservation or charge. Only a nil
-// error means the commit is durable; the caller must not cause a provider
-// effect that depends on it otherwise.
+// CommitEnvironment atomically replaces the state, checkpoint and
+// incarnation of environment id if its revision is still revision, and
+// advances the revision. A stale revision is ErrEnvironmentStale. The move
+// must satisfy environment.State.Next, and the checkpoint keeps its kind and
+// version. Identity, spec, binding and authority cannot change. Deletion is a
+// commit of Desired Absent; it removes no row, reservation or charge, which
+// only ReclaimEnvironment of a Deleted environment does. The
+// Deleted commit releases the environment's artifact pins. It and every
+// incarnation change are ErrEnvironmentArtifactHeld while a materialization
+// read of the environment is unsettled. Only a nil error means the commit is
+// durable; the caller must not cause a provider effect that depends on it
+// otherwise.
 func (s *Store) CommitEnvironment(id string, revision uint64, next EnvironmentCommit) (out Environment, err error) {
 	next.Checkpoint = next.Checkpoint.Clone()
 	err = s.db.Update(func(tx *bolt.Tx) error {
@@ -150,36 +165,27 @@ func environmentFor(tx *bolt.Tx, actor auth.Actor, id string) (Environment, erro
 	return out, err
 }
 
-// environmentReplay finds the request binding. Only identical canonical spec
-// bytes replay.
-func environmentReplay(b *bolt.Bucket, principal, requestID string, raw []byte) (out Environment, found bool, err error) {
-	id := b.Get(environmentRequestKey(principal, requestID))
-	if id == nil {
-		return out, false, nil
-	}
-	if out, err = environmentView(b, string(id)); err != nil {
-		return out, true, err
-	}
-	if out.Principal != principal || out.RequestID != requestID {
-		return Environment{}, true, errors.New("environment request binding mismatch")
-	}
-	if out.SpecDigest != sha256.Sum256(raw) {
-		return Environment{}, true, ErrConflict
-	}
-	return out, true, nil
-}
-
-// acceptEnvironment writes the record, spec, request binding, reservations
-// and indexes in one transaction, or nothing. Exact replay precedes every
-// other check.
-func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, binding string, authority auth.Delegation, checkpoint environment.Checkpoint, id string, now time.Time) (out Environment, err error) {
+// acceptEnvironment writes the record, spec, request witness, reservations
+// and indexes in one transaction, or nothing. The domain gate precedes exact
+// replay, which precedes every other check.
+func acceptEnvironment(tx *bolt.Tx, principal string, d RequestDomain, requestID string, raw []byte, binding string, authority auth.Delegation, checkpoint environment.Checkpoint, id string, now time.Time) (out Environment, err error) {
 	b := tx.Bucket(environmentsBucket)
 	if b == nil {
 		return out, errors.New("environment metadata requires schema 9")
 	}
-	out, found, err := environmentReplay(b, principal, requestID, raw)
+	st, result, err := gateDomain(tx, d, now)
+	if err != nil {
+		return
+	}
+	if result != nil {
+		return out, result
+	}
+	out, found, err := environmentWitnessReplay(b, principal, d, requestID, raw)
 	if found || err != nil {
 		return
+	}
+	if environmentEpochClosed(st, d) {
+		return out, &ExpiryError{Reason: RequestEpochExpired}
 	}
 	if !isScoped(tx) {
 		return out, auth.ErrPermissionDenied
@@ -201,7 +207,7 @@ func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, bin
 	if err != nil {
 		return
 	}
-	if b.Sequence() >= maxEnvironments || high >= maxPrincipalEnvironments {
+	if environmentCount(b, []byte("e/")) >= maxEnvironments || environmentCount(b, environmentScopePrefix(principal)) >= maxPrincipalEnvironments {
 		return out, ErrEnvironmentLimit
 	}
 	var alias []byte
@@ -211,7 +217,7 @@ func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, bin
 	if b.Get(environmentNameKey(principal, spec.Name)) != nil || alias != nil && b.Get(alias) != nil {
 		return out, ErrEnvironmentReserved
 	}
-	if b.Get(environmentRecordKey(id)) != nil || b.Get(environmentSpecKey(id)) != nil {
+	if b.Get(environmentRecordKey(id)) != nil || b.Get(environmentSpecKey(id)) != nil || b.Get(environmentTombstoneKey(id)) != nil {
 		return out, errors.New("random environment identity collision")
 	}
 	ordinal := b.Sequence() + 1
@@ -230,8 +236,13 @@ func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, bin
 		Revision:   1,
 		State:      environment.State{Desired: environment.Present, Phase: environment.Creating},
 		Checkpoint: checkpoint.Clone(),
+		Domain:     &d,
 	}
 	record, err := encodeEnvironmentRecord(r)
+	if err != nil {
+		return
+	}
+	witness, err := encodeEnvironmentWitness(environmentWitness{Environment: id, Spec: r.Spec})
 	if err != nil {
 		return
 	}
@@ -239,7 +250,7 @@ func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, bin
 	rows := []row{
 		{environmentRecordKey(id), record},
 		{environmentSpecKey(id), raw},
-		{environmentRequestKey(principal, requestID), []byte(id)},
+		{environmentWitnessKey(principal, d, requestID), witness},
 		{environmentNameKey(principal, spec.Name), []byte(id)},
 		{environmentIndexKey(ordinal), []byte(id)},
 		{environmentScopeKey(principal, r.Scope), []byte(id)},
@@ -262,6 +273,10 @@ func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, bin
 	if err = environmentCharge(usage, removed, added); err != nil {
 		return
 	}
+	pins, err := environmentStagePins(tx, r, spec, now)
+	if err != nil {
+		return
+	}
 	if err = b.SetSequence(ordinal); err != nil {
 		return
 	}
@@ -270,11 +285,19 @@ func acceptEnvironment(tx *bolt.Tx, principal, requestID string, raw []byte, bin
 			return
 		}
 	}
+	var budget uint64
+	if added < maxChangeBytes {
+		budget = maxChangeBytes - added
+	}
+	if err = pins.commit(tx, budget); err != nil {
+		return
+	}
 	return environmentView(b, id)
 }
 
 // commitEnvironment is the compare-and-swap step. It checks the revision
-// before the transition and checkpoint.
+// before the transition, checkpoint and incarnation, and the open
+// materialization reads before the incarnation sequence advances.
 func commitEnvironment(tx *bolt.Tx, id string, revision uint64, next EnvironmentCommit, now time.Time) (out Environment, err error) {
 	b := tx.Bucket(environmentsBucket)
 	r, err := loadEnvironmentRecord(b, id)
@@ -296,6 +319,29 @@ func commitEnvironment(tx *bolt.Tx, id string, revision uint64, next Environment
 	if r.Revision == math.MaxUint64 {
 		return out, errors.New("environment revision exhausted")
 	}
+	moved := next.Incarnation != "" && next.Incarnation != r.Incarnation
+	if moved {
+		if !validIncarnation(next.Incarnation) {
+			return out, errors.New("invalid environment incarnation")
+		}
+		if r.State.Desired != environment.Present || next.State.Desired != environment.Present {
+			return out, errors.New("environment incarnation changes only while present")
+		}
+	}
+	spec, err := environment.Parse(b.Get(environmentSpecKey(id)))
+	if err != nil {
+		return
+	}
+	pins, err := environmentStageCommit(tx, r, spec, moved, next.State.Phase == environment.Deleted, now)
+	if err != nil {
+		return
+	}
+	if moved {
+		if r.IncarnationSeq == math.MaxUint64 {
+			return out, errors.New("environment incarnation sequence exhausted")
+		}
+		r.Incarnation, r.IncarnationSeq = next.Incarnation, r.IncarnationSeq+1
+	}
 	old := b.Get(environmentRecordKey(id))
 	r.State, r.Checkpoint, r.Revision = next.State, next.Checkpoint.Clone(), r.Revision+1
 	if now.After(r.Updated) {
@@ -313,6 +359,9 @@ func commitEnvironment(tx *bolt.Tx, id string, revision uint64, next Environment
 		return
 	}
 	if err = b.Put(environmentRecordKey(id), record); err != nil {
+		return
+	}
+	if err = pins.commit(tx, maxChangeBytes-uint64(len(old)+len(record))); err != nil {
 		return
 	}
 	return environmentView(b, id)

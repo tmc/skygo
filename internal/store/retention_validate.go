@@ -94,7 +94,7 @@ func validateRetention(tx *bolt.Tx) error {
 	}
 	if e = tx.Bucket(jobsBucket).ForEach(func(id, raw []byte) error {
 		var j backend.Job
-		if e := json.Unmarshal(raw, &j); e != nil {
+		if e := decodeStoredJob(raw, &j); e != nil {
 			return e
 		}
 		var m retainedJob
@@ -248,7 +248,7 @@ func validateRetention(tx *bolt.Tx) error {
 	}
 	if e = retentionTable(tx, cleanupHeadersBucket).ForEach(func(k, v []byte) error {
 		var h cleanupHeader
-		if e := json.Unmarshal(v, &h); e != nil {
+		if e := decodeCleanupHeader(v, &h); e != nil {
 			return e
 		}
 		limit := cleanupHeaderLimit
@@ -276,6 +276,8 @@ func validateRetention(tx *bolt.Tx) error {
 			return errors.New("cleanup header index mismatch")
 		}
 		if h.Task != nil {
+			// A header can outlive its job; decodeCleanupHeader has refused
+			// a Task that requests workers.
 			d, e := taskDigest(*h.Task)
 			if e != nil || d != h.TaskDigest {
 				return errors.New("cleanup header task mismatch")

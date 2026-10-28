@@ -38,9 +38,10 @@ func closeOwned(c io.Closer) error {
 	return nil
 }
 
-type paths struct{ workspace, helper, self, input, output string }
+type paths struct{ workspace, helper, self, input, output, instance, artifacts string }
 
-var productionPaths = paths{"/workspace", "/opt/skygo", "/skygo-data", "/run/skygo/input", "/run/skygo/output"}
+var productionPaths = paths{"/workspace", "/opt/skygo", "/skygo-data", "/run/skygo/input", "/run/skygo/output",
+	"/run/skygo/instance", "/run/skygo/artifacts"}
 
 // Run executes the helper command and writes only fixed safe diagnostics.
 // It is intended as the final command invocation in a helper process. An
@@ -74,9 +75,16 @@ func Run(ctx context.Context, args, env []string, stdout, stderr io.Writer) int 
 	processFailure.Lock()
 	processFailure.err = errors.Join(processFailure.err, err)
 	processFailure.Unlock()
-	if errors.Is(err, errConfiguration) {
+	switch {
+	case errors.Is(err, errIdentity):
+		fmt.Fprintln(stderr, "skygo-data: instance identity differs")
+		return identityExit
+	case errors.Is(err, errSealed):
+		fmt.Fprintln(stderr, "skygo-data: instance already released")
+		return sealedExit
+	case errors.Is(err, errConfiguration):
 		fmt.Fprintln(stderr, "skygo-data: invalid configuration")
-	} else {
+	default:
 		fmt.Fprintln(stderr, "skygo-data: operation failed")
 	}
 	return 1
@@ -95,6 +103,18 @@ func grammar(args []string) error {
 		if len(args) >= 3 && len(args) <= 18 && args[1] == "--" {
 			return nil
 		}
+	case "env-put":
+		if len(args) == 5 {
+			return nil
+		}
+	case "env-wait":
+		if len(args) >= 3 && len(args) <= 2+maxEnvArtifacts && args[1] == "--" {
+			return nil
+		}
+	case "env-release":
+		if len(args) >= 4 && len(args) <= 3+maxEnvArtifacts && args[2] == "--" {
+			return nil
+		}
 	}
 	return errArguments
 }
@@ -102,8 +122,15 @@ func run(ctx context.Context, args, env []string, p paths) error {
 	if err := grammar(args); err != nil {
 		return err
 	}
-	if args[0] == "exec" {
+	switch args[0] {
+	case "exec":
 		return execute(filepath.Join(p.workspace, "work"), args[2:], env)
+	case "env-put":
+		return putArtifact(args[1:], os.Stdin, p)
+	case "env-wait":
+		return waitArtifacts(ctx, args[2:], p)
+	case "env-release":
+		return releaseArtifacts(ctx, args[1], args[3:], p)
 	}
 	timeout := 600 * time.Second
 	if args[0] == "collect" {

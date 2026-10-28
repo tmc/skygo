@@ -52,7 +52,9 @@ type PhysicalInspection struct {
 }
 
 // ProbePhysicalState reads only fixed, bounded metadata and descriptor facts.
-// It never scans bindings or decodes Jobs. Its 100 ms cooperative budget and
+// It never scans bindings or decodes Jobs, and it never examines artifact
+// read rows: with any, SchemaSupported stays unknown and Conditions includes
+// storage_format_unverified. Its 100 ms cooperative budget and
 // 25 ms lock wait do not interrupt filesystem calls blocked in the kernel.
 func ProbePhysicalState(ctx context.Context, dir string) (PhysicalInspection, error) {
 	return inspectPhysicalState(ctx, dir, false, physicalLimits{duration: 100 * time.Millisecond, lock: 25 * time.Millisecond})
@@ -279,10 +281,14 @@ func readPhysicalScalars(tx *bolt.Tx, b *physicalBudget) error {
 		}
 		version = binary.BigEndian.Uint64(raw)
 	}
-	supported := marker == nil || version >= 1 && version <= schemaVersion
-	b.out.SchemaVersion, b.out.SchemaSupported = &version, &supported
-	if !supported {
+	b.out.SchemaVersion = &version
+	if marker != nil && (version < 1 || version > schemaVersion) {
+		supported := false
+		b.out.SchemaSupported = &supported
 		return b.fail("unsupported_schema")
+	}
+	if err := readPhysicalFormat(tx, b, version); err != nil {
+		return err
 	}
 	if err := b.check(); err != nil {
 		return err
@@ -352,6 +358,50 @@ func readPhysicalScalars(tx *bolt.Tx, b *physicalBudget) error {
 	} else {
 		return b.fail("retention_state_missing")
 	}
+	return b.check()
+}
+
+// readPhysicalFormat decides SchemaSupported for a supported ordinal. The
+// ordinal alone does not decide it: another storage format reused ordinals,
+// so a known foreign format reports false. Fixed lookups come first; artifact
+// read rows are then examined under the entry budget. A probe has no entry
+// budget, so with any read row it leaves support unknown and records
+// storage_format_unverified. A budget failure also leaves support unknown,
+// never true.
+func readPhysicalFormat(tx *bolt.Tx, b *physicalBudget, version uint64) error {
+	unsupported := func() error {
+		supported := false
+		b.out.SchemaSupported = &supported
+		return b.fail("unsupported_storage_format")
+	}
+	// A tag longer than the known one is foreign and is refused unread.
+	if tag := tx.Bucket(metadataBucket).Get(environmentStorageFormatKey); len(tag) <= len(environmentStorageFormat) {
+		if err := b.account(uint64(len(tag))); err != nil {
+			return err
+		}
+	}
+	if err := checkFixedStorageFormat(tx, version); err != nil {
+		return unsupported()
+	}
+	if err := b.check(); err != nil {
+		return err
+	}
+	if reads := artifactReadsTable(tx); reads != nil && b.limit.entries == 0 {
+		if k, _ := reads.Cursor().First(); k != nil {
+			b.out.Conditions = append(b.out.Conditions, "storage_format_unverified")
+			return b.check()
+		}
+	}
+	switch err := checkReadPurposes(tx, b.entry); {
+	case errors.Is(err, ErrUnsupportedSchema):
+		return unsupported()
+	case errors.Is(err, errPhysicalInspection):
+		return err
+	case err != nil:
+		return b.fail("invalid_artifact_reads")
+	}
+	supported := true
+	b.out.SchemaSupported = &supported
 	return b.check()
 }
 

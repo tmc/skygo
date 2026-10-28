@@ -86,7 +86,6 @@ func TestEnvironmentRecordInvariants(t *testing.T) {
 		{"authority", func(r *environmentRecord) { r.Authority = environmentDelegation("bob") }},
 		{"ordinal", func(r *environmentRecord) { r.Ordinal = 0 }},
 		{"scope", func(r *environmentRecord) { r.Scope = 0 }},
-		{"scope limit", func(r *environmentRecord) { r.Scope = maxPrincipalEnvironments + 1 }},
 		{"revision", func(r *environmentRecord) { r.Revision = 0 }},
 		{"created", func(r *environmentRecord) { r.Created, r.Updated = time.Time{}, time.Time{} }},
 		{"updated before created", func(r *environmentRecord) { r.Updated = r.Created.Add(-time.Nanosecond) }},
@@ -111,6 +110,39 @@ func TestEnvironmentRecordInvariants(t *testing.T) {
 			}
 			if _, err := decodeEnvironmentRecord(raw); err == nil {
 				t.Fatal("decoded invalid record")
+			}
+		})
+	}
+}
+
+// Scope is the principal's monotonic acceptance ordinal, not a live count:
+// an environment accepted after earlier ones were reclaimed has a Scope
+// above the live limit.
+func TestEnvironmentRecordScopeIsOrdinal(t *testing.T) {
+	for _, test := range []struct {
+		name           string
+		ordinal, scope uint64
+	}{
+		{"fifth", maxPrincipalEnvironments + 1, maxPrincipalEnvironments + 1},
+		{"maximum", ^uint64(0), ^uint64(0)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			r := environmentTestRecord()
+			r.Ordinal, r.Scope = test.ordinal, test.scope
+			raw, err := encodeEnvironmentRecord(r)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := decodeEnvironmentRecord(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Ordinal != test.ordinal || got.Scope != test.scope || got.Identity != r.Identity || got.Principal != r.Principal {
+				t.Fatalf("decoded %+v", got)
+			}
+			again, err := encodeEnvironmentRecord(got)
+			if err != nil || !bytes.Equal(again, raw) {
+				t.Fatalf("round trip: %s %v", again, err)
 			}
 		})
 	}

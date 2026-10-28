@@ -63,10 +63,16 @@ type artifactState struct {
 	Deletes      map[string]artifactDelete
 	// WorkflowInputs are input edges prepaid at graph acceptance.
 	WorkflowInputs map[string]workflowInput
+	// EnvironmentPins hold the artifacts of undeleted version 2
+	// environments.
+	EnvironmentPins map[string]artifactEnvironmentPin
 }
 
 type artifactRows map[string]map[string][]byte
 
+// artifactTables is in installation order: schema6 has the tables before
+// remote_attempts, schema7 adds remote_attempts, schema8 through schema10
+// add workflow_inputs and schema11 adds environment_pins.
 var artifactTables = []struct {
 	name string
 	max  uint64
@@ -74,7 +80,25 @@ var artifactTables = []struct {
 	{"uploads", 2048}, {"objects", 1536}, {"grants", 1024}, {"reads", 1024},
 	{"job_inputs", 1024}, {"manual_inputs", 1024}, {"results", 1536},
 	{"result_expired", 512}, {"workspaces", 4096}, {"completions", 1024}, {"gc", 2048}, {"owners", 80}, {"remote_attempts", 4096},
-	{"workflow_inputs", 1024},
+	{"workflow_inputs", 1024}, {"environment_pins", 768},
+}
+
+// artifactTablesFor returns the artifact tables and root floor of schema n.
+func artifactTablesFor(n uint64) (tables []struct {
+	name string
+	max  uint64
+}, floor uint64, err error) {
+	switch n {
+	case 6:
+		return artifactTables[:len(artifactTables)-3], 6, nil
+	case 7:
+		return artifactTables[:len(artifactTables)-2], 7, nil
+	case artifactFormat, 9, 10:
+		return artifactTables[:len(artifactTables)-1], artifactFormat, nil
+	case environmentArtifactSchema, environmentRetirementSchema:
+		return artifactTables, artifactFormat, nil
+	}
+	return nil, 0, ErrUnsupportedSchema
 }
 
 func artifactCorrupt() error { return errors.New("invalid artifact metadata") }
@@ -119,17 +143,9 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 		return nil, ErrArtifactsDisabled
 	}
 	// The genuine legacy layout must be checked before migration adds a table.
-	tables := artifactTables
-	floor := schemaNumber(tx)
-	switch floor {
-	case 6:
-		tables = tables[:len(tables)-2]
-	case 7:
-		tables = tables[:len(tables)-1]
-	case artifactFormat, schemaVersion:
-		floor = artifactFormat
-	default:
-		return nil, ErrUnsupportedSchema
+	tables, floor, err := artifactTablesFor(schemaNumber(tx))
+	if err != nil {
+		return nil, err
 	}
 	s := new(artifactState)
 	if err := artifactDecode(b.Get([]byte("state")), &s.Root); err != nil {
@@ -170,7 +186,6 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 			return nil, err
 		}
 	}
-	var err error
 	if s.Uploads, err = artifactReadMap[artifactUploadRecord](b.Bucket([]byte("uploads"))); err != nil {
 		return nil, err
 	}
@@ -232,6 +247,13 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 		}
 	} else {
 		s.WorkflowInputs = make(map[string]workflowInput)
+	}
+	if schemaNumber(tx) >= environmentArtifactSchema {
+		if s.EnvironmentPins, err = artifactReadMap[artifactEnvironmentPin](b.Bucket([]byte("environment_pins"))); err != nil {
+			return nil, err
+		}
+	} else {
+		s.EnvironmentPins = make(map[string]artifactEnvironmentPin)
 	}
 	rows, usage, owners, err := s.encode()
 	if err != nil {
@@ -746,6 +768,14 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 			return nil, usage, nil, err
 		}
 		if err := put("workflow_inputs", id, in.Owner, in); err != nil {
+			return nil, usage, nil, err
+		}
+	}
+	for id, p := range s.EnvironmentPins {
+		if err := environmentPinValid(s, id, p); err != nil {
+			return nil, usage, nil, err
+		}
+		if err := put("environment_pins", id, p.Owner, p); err != nil {
 			return nil, usage, nil, err
 		}
 	}

@@ -168,6 +168,30 @@ enum Capability {
   // Reserved fact for WORKER_MODE_TCP_RENDEZVOUS, withheld on the same terms.
   // No worker retry capability exists.
   CAPABILITY_TCP_RENDEZVOUS_V1 = 14;
+  // Reserved endpoint fact for ServiceService and its authenticated forward
+  // route. Not advertised until both are mounted on a qualified service
+  // controller with at least one configured service runtime.
+  CAPABILITY_SERVICES_V1 = 15;
+  // Reserved selected-target fact for fixed-replica services, withheld on
+  // the same terms.
+  CAPABILITY_FIXED_SERVICES_V1 = 16;
+  // Reserved selected-target fact for service workdir, setup and approved
+  // read-only mounts; also requires FIXED_SERVICES_V1.
+  CAPABILITY_SERVICE_DATA_V1 = 17;
+  // Reserved selected-target fact for CPU-utilization autoscaling; also
+  // requires FIXED_SERVICES_V1. Configured support, not metrics availability.
+  CAPABILITY_SERVICE_CPU_AUTOSCALING_V1 = 18;
+  // Reserved endpoint fact for EnvironmentService and its authenticated
+  // forward route. Not advertised until both are mounted on a controller
+  // that persists session and expiry authority.
+  CAPABILITY_ENVIRONMENTS_V1 = 19;
+  // Reserved selected-target fact for persistent environments, withheld on
+  // the same terms.
+  CAPABILITY_PERSISTENT_ENVIRONMENTS_V1 = 20;
+  // Reserved selected-target fact for environment artifact mounts; also
+  // requires PERSISTENT_ENVIRONMENTS_V1. Not advertised until the target
+  // materializes every mount read-only into each incarnation.
+  CAPABILITY_ENVIRONMENT_ARTIFACTS_V1 = 21;
 }
 message Target {
   string name = 1;

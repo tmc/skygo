@@ -1,0 +1,60 @@
+# Lifecycle against the engine fixture: a real Store, Controller and
+# EnvironmentService handler with a MODELED runtime on target "modeled".
+# env-id is the requested fixture hook (CLI-P4 PROPOSAL-4 §3).
+
+env-domain D
+skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stderr '^request-domain: '$D'$'
+stderr '^request-id: web-1$'
+stdout ' web +modeled +present +creating +0 +0$'
+env-id E web
+
+env-reconcile
+skygo --token-file=$TOKEN_FILE env get $E
+stdout '^'$E' +web +modeled +present +ready +0 +0$'
+skygo --token-file=$TOKEN_FILE env list
+stdout '^'$E' +web '
+
+skygo --token-file=$TOKEN_FILE env exec $E -- echo hi
+stdout '^echo hi$'
+! stderr .
+
+# Plan records nothing: the records are unchanged and its name stays free.
+env-records before.txt
+skygo --token-file=$TOKEN_FILE env plan -f db.yaml
+stdout '^support: supported$'
+stdout '^artifacts: not-applicable$'
+env-records after.txt
+cmp before.txt after.txt
+skygo --token-file=$TOKEN_FILE env create -f db.yaml --request-id db-1 --request-domain $D
+stdout ' db +modeled +present +creating '
+
+# After a restart the same pair replays the same environment.
+env-restart
+skygo --token-file=$TOKEN_FILE env create -f web.yaml --request-id web-1 --request-domain $D
+stdout '^'$E' +web +modeled +present +ready '
+
+# Delete latches absent intent; deleted follows observed cleanup.
+! skygo --token-file=$TOKEN_FILE env delete $E
+stderr 'deletion requires --yes'
+skygo --token-file=$TOKEN_FILE env delete $E --yes
+stdout '^'$E' +web +modeled +absent +deleting '
+env-reconcile
+skygo --token-file=$TOKEN_FILE env get $E
+stdout '^'$E' +web +modeled +absent +deleted '
+! skygo --token-file=$TOKEN_FILE env exec $E -- echo hi
+stderr 'exec outcome unknown; it was not resent'
+
+-- web.yaml --
+name: web
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576
+port: 8080
+-- db.yaml --
+name: db
+target: modeled
+image: task:v1
+cpu_millis: 100
+memory_bytes: 1048576

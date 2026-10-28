@@ -431,6 +431,7 @@ func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
 	if err := json.Unmarshal(routingState(t, db), &buckets); err != nil {
 		t.Fatal(err)
 	}
+	buckets, _ = formatStrip(t, buckets)
 	var out []fixtureBucket
 	workflowFound := false
 	for _, b := range buckets {
@@ -444,6 +445,12 @@ func priorRoutingState(t *testing.T, db *bolt.DB) []byte {
 		if bytes.Equal(b.Name, environmentsBucket) {
 			if b.Sequence != 0 || len(b.Entries) != 0 || len(b.Buckets) != 0 {
 				t.Fatal("migration added environment contents or sequence")
+			}
+			continue
+		}
+		if bytes.Equal(b.Name, workerGroupsBucket) {
+			if b.Sequence != 0 || len(b.Entries) != 0 || len(b.Buckets) != 0 {
+				t.Fatal("migration added worker group contents or sequence")
 			}
 			continue
 		}

@@ -15,6 +15,7 @@ import (
 	"github.com/tmc/skygo/internal/auth"
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
+	"github.com/tmc/skygo/internal/environmentcontrol"
 	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/rpc"
 	"github.com/tmc/skygo/internal/store"
@@ -64,6 +65,12 @@ type Config struct {
 	// It is called once, after the store opens and before the server listens.
 	// A nil function adds no targets. Targets must not require a Close call.
 	Targets func(owner string) ([]backend.Target, error)
+
+	// Install, if set, constructs the one Integration from the open Store
+	// and authentication Engine. It is called once, after authentication
+	// loads and before Targets. An Integration returned with an error is
+	// still closed before anything it depends on.
+	Install func(*store.Store, *auth.Engine) (Integration, error)
 }
 
 // Run serves until cancellation and rejects new work before draining. It stops
@@ -87,6 +94,11 @@ func Run(ctx context.Context, cfg Config) error {
 		if errors.Is(cause, http.ErrServerClosed) {
 			cause = nil
 		}
+	case <-frame.integrationDone:
+		cause = frame.integrationErr
+		if cause == nil {
+			cause = errors.New("integration returned before shutdown")
+		}
 	}
 	return frame.shutdown(cause)
 }
@@ -103,7 +115,7 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	if cfg.AuthFile != "" && cfg.Token != "" {
 		return errors.New("auth file conflicts with legacy token")
 	}
-	if cfg.DisableLocal && cfg.Targets == nil {
+	if cfg.DisableLocal && cfg.Targets == nil && cfg.Install == nil {
 		return errors.New("no execution targets configured")
 	}
 	localName, err := localTargetName(cfg)
@@ -167,6 +179,13 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		}
 	}
 	f.engine = engine
+	if cfg.Install != nil {
+		in, err := cfg.Install(s, engine)
+		f.integration = in
+		if err != nil {
+			return fmt.Errorf("install integration: %w", err)
+		}
+	}
 	var targets []backend.Target
 	var localBinding string
 	var localOutput control.LocalOutputConfig
@@ -233,6 +252,21 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		if err != nil {
 			return fmt.Errorf("configure targets: %w", err)
 		}
+		if environmentTargets(extra) {
+			return errors.New("configure targets: environment support requires an environment integration")
+		}
+		targets = append(targets, extra...)
+	}
+	if f.integration != nil {
+		extra := f.integration.Targets()
+		if _, ok := f.integration.(EnvironmentProvider); !ok && environmentTargets(extra) {
+			return errors.New("install integration: environment support requires an environment integration")
+		}
+		for _, t := range extra {
+			if t.SupportsEnvironmentArtifacts && !t.SupportsPersistentEnvironments {
+				return errors.New("install integration: environment artifacts require persistent environments")
+			}
+		}
 		targets = append(targets, extra...)
 	}
 	f.targets = targets
@@ -248,6 +282,19 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		return err
 	}
 	f.control = c
+	if binder, ok := f.integration.(ControlBinder); ok {
+		if err := binder.BindControl(c); err != nil {
+			return fmt.Errorf("bind integration: %w", err)
+		}
+	}
+	// The integration keeps owning the Controller; the handler only serves it.
+	var environments *environmentcontrol.Controller
+	if provider, ok := f.integration.(EnvironmentProvider); ok {
+		environments = provider.EnvironmentController()
+		if environments == nil {
+			return errors.New("install integration: environment integration has no controller")
+		}
+	}
 	// Only the built-in backend constructed above authorizes legacy local binding.
 	if localBinding != "" {
 		if err := s.BindLegacyLocal(localBinding); err != nil {
@@ -290,6 +337,9 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		w.WriteHeader(http.StatusOK)
 	})
 	rpcHTTP := rpc.NewHandler(c, engine)
+	if environments != nil {
+		rpcHTTP = rpc.NewEnvironmentHandler(c, engine, environments)
+	}
 	f.rpcHTTP = rpcHTTP
 	var api http.Handler = rpcHTTP
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -313,6 +363,10 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	f.http = &http.Server{Handler: f.outer, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 15 * time.Second, WriteTimeout: 5 * time.Minute, IdleTimeout: 30 * time.Second, MaxHeaderBytes: 16 << 10, BaseContext: func(net.Listener) context.Context { return base }}
 	f.runDone, f.serveDone = make(chan struct{}), make(chan struct{})
 	go func() { defer close(f.runDone); f.runErr = c.Run(runCtx) }()
+	if in := f.integration; in != nil {
+		f.integrationDone = make(chan struct{})
+		go func() { defer close(f.integrationDone); f.integrationErr = in.Run(runCtx) }()
+	}
 	ready.Store(true)
 	// The TLS listener closes the same original owner, so its Close outcome
 	// stays recorded for shutdown.
@@ -322,6 +376,17 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	}
 	go func() { defer close(f.serveDone); f.serveErr = f.http.Serve(serving) }()
 	return nil
+}
+
+// environmentTargets reports whether any of targets claims environment
+// support.
+func environmentTargets(targets []backend.Target) bool {
+	for _, t := range targets {
+		if t.SupportsPersistentEnvironments || t.SupportsEnvironmentArtifacts {
+			return true
+		}
+	}
+	return false
 }
 
 // localTargetName returns the name of the built-in local target.

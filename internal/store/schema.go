@@ -10,12 +10,13 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = 9
+const schemaVersion = environmentRetirementSchema
 
 var schemaKey = []byte("schema_version")
 
 // ErrUnsupportedSchema reports state whose schema is newer than this binary
-// supports. Refusal does not migrate or write the database.
+// supports, or of another storage format. Refusal does not migrate or write
+// the database.
 var ErrUnsupportedSchema = errors.New("unsupported database schema")
 
 // inspect checks the refusal fence before inspecting any records. An empty
@@ -23,15 +24,21 @@ var ErrUnsupportedSchema = errors.New("unsupported database schema")
 func inspect(tx *bolt.Tx) error {
 	m := tx.Bucket(metadataBucket)
 	if m != nil {
+		if m.Bucket(schemaKey) != nil {
+			return errors.New("invalid database schema marker")
+		}
 		if v := m.Get(schemaKey); v != nil {
 			if len(v) != 8 {
 				return errors.New("invalid database schema marker")
 			}
 			n := binary.BigEndian.Uint64(v)
-			if n != 1 && n != 2 && n != 3 && n != 4 && n != 5 && n != 6 && n != 7 && n != 8 && n != schemaVersion {
+			if n < 1 || n > schemaVersion {
 				return fmt.Errorf("%w: version %d, supported %d", ErrUnsupportedSchema, n, schemaVersion)
 			}
 		}
+	}
+	if err := checkFixedStorageFormat(tx, schemaNumber(tx)); err != nil {
+		return err
 	}
 	// Fence before decoding ANY artifact or accepted job record. Schema5
 	// never promised this root, even if the rows happen to look familiar.
@@ -46,6 +53,12 @@ func inspect(tx *bolt.Tx) error {
 	}
 	if schemaNumber(tx) < 9 && tx.Bucket(environmentsBucket) != nil {
 		return errors.New("environment metadata requires schema 9")
+	}
+	if schemaNumber(tx) < workerGroupSchema && tx.Bucket(workerGroupsBucket) != nil {
+		return errors.New("worker group metadata requires schema 10")
+	}
+	if err := checkReadPurposes(tx, nil); err != nil {
+		return err
 	}
 	count := 0
 	for _, name := range [][]byte{jobsBucket, requestsBucket, sequenceBucket, metadataBucket} {
@@ -99,7 +112,7 @@ func initialize(tx *bolt.Tx, owner string) error {
 		var total uint64
 		if err := tx.Bucket(jobsBucket).ForEach(func(_, data []byte) error {
 			var j backend.Job
-			if err := json.Unmarshal(data, &j); err != nil {
+			if err := decodeStoredJob(data, &j); err != nil {
 				return err
 			}
 			task, err := backend.TaskBytes(j.Task)
@@ -142,11 +155,14 @@ func initialize(tx *bolt.Tx, owner string) error {
 		if err := migrateArtifactFence(tx); err != nil {
 			return err
 		}
-	} else if n := schemaNumber(tx); n != 7 && n != 8 && n != schemaVersion {
+	} else if n := schemaNumber(tx); n < 7 {
 		if err := m.Put(schemaKey, sequenceKey(7)); err != nil {
 			return err
 		}
 	}
+	// Each stage validates the whole installation at its own ordinal before
+	// its first write. All stages share the caller's transaction, so a
+	// failure at any stage leaves the database unchanged.
 	if schemaNumber(tx) == 7 {
 		if err := migrateWorkflowFence(tx); err != nil {
 			return err
@@ -154,6 +170,21 @@ func initialize(tx *bolt.Tx, owner string) error {
 	}
 	if schemaNumber(tx) == 8 {
 		if err := migrateEnvironmentFence(tx); err != nil {
+			return err
+		}
+	}
+	if schemaNumber(tx) == 9 {
+		if err := migrateWorkerGroupFence(tx); err != nil {
+			return err
+		}
+	}
+	if schemaNumber(tx) == workerGroupSchema {
+		if err := migrateEnvironmentArtifactFence(tx); err != nil {
+			return err
+		}
+	}
+	if schemaNumber(tx) == environmentArtifactSchema {
+		if err := migrateEnvironmentRetirement(tx); err != nil {
 			return err
 		}
 	}
@@ -256,7 +287,7 @@ func validateSnapshot(tx *bolt.Tx) error {
 	}
 	if err := jobs.ForEach(func(id, data []byte) error {
 		var j backend.Job
-		if err := json.Unmarshal(data, &j); err != nil {
+		if err := decodeStoredJob(data, &j); err != nil {
 			return fmt.Errorf("decode snapshot job: %w", err)
 		}
 		if string(id) != j.ID || j.Sequence == 0 || j.Sequence > sequence.Sequence() || string(sequence.Get(sequenceKey(j.Sequence))) != j.ID {
@@ -316,5 +347,8 @@ func validateSnapshot(tx *bolt.Tx) error {
 	if err := validateWorkflows(tx, art); err != nil {
 		return err
 	}
-	return validateEnvironments(tx)
+	if err := validateEnvironments(tx); err != nil {
+		return err
+	}
+	return validateWorkerGroups(tx)
 }

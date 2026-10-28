@@ -182,6 +182,13 @@ type artifactRead struct {
 	Closed          bool
 	ClosedAt        time.Time
 	Producer        *OriginalServerLifetime `json:",omitempty"`
+	// An environment materialization read names its environment and the
+	// committed incarnation, string and Store-assigned sequence, it was
+	// admitted for. Only its original materializer settles it; it is never a
+	// download.
+	Environment    string `json:",omitempty"`
+	Incarnation    string `json:",omitempty"`
+	IncarnationSeq uint64 `json:",omitempty"`
 }
 
 // artifactPin is private and concrete: jobInputs and manualInputs have

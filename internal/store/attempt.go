@@ -122,6 +122,13 @@ func beginAttemptCore(tx *bolt.Tx, id, expected, candidate string, outputReserve
 	if err != nil || j.CurrentAttemptID() != expected {
 		return
 	}
+	// get has refused a stored task that requests workers, before the
+	// cancellation and terminal branches, so such a row is never changed here.
+	// A worker group's task has no workers; its typed schema10 relation, not
+	// the task, marks it. Only worker group transitions may start it.
+	if workerGroupJob(tx, id) {
+		return j, false, errWorkerRoute
+	}
 	if j.Status.State != backend.Queued && j.Status.State != backend.Retrying {
 		return
 	}
@@ -245,6 +252,9 @@ func observeAttemptCore(tx *bolt.Tx, id, expected string, status backend.Status,
 	j, err := get(tx, id)
 	if err != nil {
 		return j, err
+	}
+	if workerGroupJob(tx, id) {
+		return j, errWorkerRoute
 	}
 	if j.CurrentAttemptID() != expected || j.Status.State.Terminal() || j.Status.State == backend.Retrying {
 		return j, nil
@@ -490,7 +500,7 @@ func validateAttempts(tx *bolt.Tx) error {
 	var reserved uint64
 	if err := tx.Bucket(jobsBucket).ForEach(func(id, data []byte) error {
 		var j backend.Job
-		if err := json.Unmarshal(data, &j); err != nil {
+		if err := decodeStoredJob(data, &j); err != nil {
 			return err
 		}
 		if version < 4 && (j.Task.Retry != nil || len(j.Attempts) > 0 || j.NextAttemptAt != nil || j.Status.Termination != 0 || j.Status.Instance != "" || j.Status.State == backend.Retrying) {

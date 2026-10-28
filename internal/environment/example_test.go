@@ -39,9 +39,29 @@ func ExampleNormalize() {
 }
 
 func ExampleParse() {
-	_, err := environment.Parse([]byte(`{"version":2,"name":"analysis"}`))
+	_, err := environment.Parse([]byte(`{"version":3,"name":"analysis"}`))
 	fmt.Println(err)
-	// Output: unsupported spec version 2
+	// Output: unsupported spec version 3
+}
+
+func ExampleValidName() {
+	fmt.Println(environment.ValidName("analysis-2"))
+	fmt.Println(environment.ValidName("Analysis"))
+	fmt.Println(environment.ValidName("analysis-"))
+	// Output:
+	// true
+	// false
+	// false
+}
+
+func ExampleValidTarget() {
+	fmt.Println(environment.ValidTarget("kube east"))
+	fmt.Println(environment.ValidTarget("kube\n"))
+	fmt.Println(environment.ValidTarget(""))
+	// Output:
+	// true
+	// false
+	// false
 }
 
 func ExampleState_Next() {

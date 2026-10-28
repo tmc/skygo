@@ -165,4 +165,14 @@ type Target struct {
 	// SupportsRemoteDataRetry reports qualified remote data retry and requires
 	// SupportsRemoteData. It stays false until retry execution is qualified.
 	SupportsRemoteDataRetry bool
+	// SupportsPersistentEnvironments reports that this target is the
+	// configured target of the server's environment runtime. It is a trusted
+	// constructor fact of that runtime's integration, not capacity, readiness
+	// or native qualification, and is advertised only by a handler that
+	// serves the runtime's environments.
+	SupportsPersistentEnvironments bool
+	// SupportsEnvironmentArtifacts reports configured environment artifact
+	// mounts and requires SupportsPersistentEnvironments. It is advertised
+	// only while the server's Control has its artifact service.
+	SupportsEnvironmentArtifacts bool
 }

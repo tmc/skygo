@@ -57,7 +57,7 @@ func artifactGranted(st *artifactState, owner string, ref ArtifactRef, now time.
 	if !ok || g.Owner != owner || g.Ref != ref {
 		return ErrNotFound
 	}
-	if !now.Before(g.Expires) && !st.pinned(ref.ID) {
+	if !now.Before(g.Expires) && !st.grantPinned(ref.ID) {
 		return ErrArtifactExpired
 	}
 	o, ok := st.Objects[ref.ID]
@@ -67,7 +67,21 @@ func artifactGranted(st *artifactState, owner string, ref ArtifactRef, now time.
 	return nil
 }
 
+// pinned reports whether id is required by any durable consumer, including an
+// environment. It protects the object from deletion.
 func (st *artifactState) pinned(id string) bool {
+	for _, p := range st.EnvironmentPins {
+		if p.Ref.ID == id {
+			return true
+		}
+	}
+	return st.grantPinned(id)
+}
+
+// grantPinned reports whether id is required by a job, workspace, remote
+// attempt or workflow. Only these keep an expired grant usable; an environment
+// pin is not read permission for its owner.
+func (st *artifactState) grantPinned(id string) bool {
 	for _, r := range st.JobInputs {
 		if r.Ref.ID == id {
 			return true
@@ -153,7 +167,7 @@ func (s *Store) GetArtifactDownload(actor auth.Actor, id string) (out ArtifactLe
 			return e
 		}
 		r, ok := st.Reads[id]
-		if !ok || r.Owner != actor.Principal() || r.RemoteAttemptID != "" {
+		if !ok || r.Owner != actor.Principal() || !downloadRead(r) {
 			return ErrNotFound
 		}
 		if r.Closing || !s.now().Before(r.Expires) {
@@ -177,7 +191,7 @@ func (s *Store) CloseArtifactDownload(actor auth.Actor, c ArtifactCursor) (out A
 	}
 	err = s.artifactUpdate(func(st *artifactState) error {
 		r, ok := st.Reads[c.ID]
-		if !ok || r.Owner != actor.Principal() || r.RemoteAttemptID != "" {
+		if !ok || r.Owner != actor.Principal() || !downloadRead(r) {
 			return ErrNotFound
 		}
 		if r.Revision != c.Revision {

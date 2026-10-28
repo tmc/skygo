@@ -401,6 +401,18 @@ func (s *Store) Prune(actor auth.Actor, sel PruneSelection, execute bool, blocke
 				}
 				continue
 			}
+			if x.Obligation == nil {
+				// A group's members are retired only through its own
+				// transitions; a Done group is retired with its job.
+				live, e := workerGroupLive(tx, x.Job.ID)
+				if e != nil {
+					return e
+				}
+				if live {
+					addSkip(&out, "worker_group")
+					continue
+				}
+			}
 			if sel.Mode != OutputOnly && x.Obligation == nil {
 				held, e := workflowHeld(tx, x.Job)
 				if e != nil {
@@ -748,6 +760,9 @@ func markPrune(m *retentionMutation, x PruneSubject, sel PruneSelection, h clean
 		}
 	}
 	if e = m.drop(retainedJobsBucket, []byte(j.ID)); e != nil {
+		return e
+	}
+	if e = m.dropWorkerGroup(j.ID); e != nil {
 		return e
 	}
 	if e = m.coreDelete(jobsBucket, []byte(j.ID)); e != nil {

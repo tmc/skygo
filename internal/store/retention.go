@@ -66,6 +66,20 @@ func (e *ExpiryError) Error() string { return "retention result or request expir
 
 var ErrRetentionDisabled = errors.New("retention is disabled")
 
+// ErrInvalidRequestDomain reports a malformed request domain: a lineage that
+// is not 32 lowercase hexadecimal digits, or epoch zero. It is refused before
+// the domain is checked against retention state.
+var ErrInvalidRequestDomain = errors.New("invalid request domain")
+
+// validRequestDomain is the syntax rule ErrInvalidRequestDomain reports:
+// a lineage of 32 lowercase hexadecimal digits and a nonzero epoch.
+func validRequestDomain(d RequestDomain) bool { return validAttemptID(d.Lineage) && d.Epoch != 0 }
+
+// ErrUnknownRequestEpoch reports a request domain of the current lineage
+// whose epoch is neither retired nor issued. It is not an expiry; a request
+// in it can be neither replayed nor accepted.
+var ErrUnknownRequestEpoch = errors.New("unknown request epoch")
+
 // RetentionPolicy bounds logical accounting. Physical watermarks are guards,
 // not preallocation or hard filesystem size guarantees.
 type RetentionPolicy struct {

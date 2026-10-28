@@ -144,6 +144,9 @@ func loadJSON(b *bolt.Bucket, key []byte, out any) error {
 	if data == nil {
 		return ErrNotFound
 	}
+	if h, ok := out.(*cleanupHeader); ok {
+		return decodeCleanupHeader(data, h)
+	}
 	return json.Unmarshal(data, out)
 }
 func loadRetention(tx *bolt.Tx) (retentionState, error) {

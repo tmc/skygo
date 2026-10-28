@@ -21,8 +21,11 @@ type environmentFixture struct {
 	scopeFixture
 	dir       string
 	authority map[string]auth.Delegation
+	domain    RequestDomain
 }
 
+// newEnvironmentFixture returns a scoped, retention-enabled store: every
+// acceptance names a request domain, as newWorkerFixture's do.
 func newEnvironmentFixture(t *testing.T) *environmentFixture {
 	t.Helper()
 	sf := newScopeFixture(t)
@@ -34,6 +37,20 @@ func newEnvironmentFixture(t *testing.T) *environmentFixture {
 		}
 		f.authority[id] = d
 	}
+	if err := f.s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := EnableRetention(f.dir, workerPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.domain = info.Domain
+	s, err := Open(f.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { s.Close() })
+	f.s = s
 	return f
 }
 
@@ -52,7 +69,7 @@ func (f *environmentFixture) restart(t *testing.T) {
 
 func (f *environmentFixture) accept(t *testing.T, who, request string, spec environment.Spec) Environment {
 	t.Helper()
-	e, err := f.s.AcceptEnvironment(f.actors[who], request, spec, "test-binding", f.authority[who], environmentCheckpoint("created"))
+	e, err := f.s.AcceptEnvironment(f.actors[who], f.domain, request, spec, "test-binding", f.authority[who], environmentCheckpoint("created"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,18 +117,18 @@ func TestEnvironmentAcceptAndReplay(t *testing.T) {
 	}
 	before := workflowDatabase(t, f.s)
 	// Exact replay precedes binding, authority, checkpoint and capacity.
-	again, err := f.s.AcceptEnvironment(f.actors["alice"], "create-1", spec, "other-binding", auth.Delegation{}, environment.Checkpoint{})
+	again, err := f.s.AcceptEnvironment(f.actors["alice"], f.domain, "create-1", spec, "other-binding", auth.Delegation{}, environment.Checkpoint{})
 	if err != nil || again.Identity != e.Identity || again.Binding != "test-binding" || again.Revision != 1 {
 		t.Fatalf("replay: %+v %v", again, err)
 	}
 	changed := spec
 	changed.CPUMillis++
-	if _, err := f.s.AcceptEnvironment(f.actors["alice"], "create-1", changed, "test-binding", f.authority["alice"], environmentCheckpoint("x")); !errors.Is(err, ErrConflict) {
+	if _, err := f.s.AcceptEnvironment(f.actors["alice"], f.domain, "create-1", changed, "test-binding", f.authority["alice"], environmentCheckpoint("x")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed replay: %v", err)
 	}
 	workflowUnchanged(t, f.s, before)
 	f.restart(t)
-	again, err = f.s.AcceptEnvironment(f.actors["alice"], "create-1", spec, "test-binding", f.authority["alice"], environmentCheckpoint("created"))
+	again, err = f.s.AcceptEnvironment(f.actors["alice"], f.domain, "create-1", spec, "test-binding", f.authority["alice"], environmentCheckpoint("created"))
 	if err != nil || again.Identity != e.Identity {
 		t.Fatalf("replay after reopen: %+v %v", again, err)
 	}
@@ -142,7 +159,7 @@ func TestEnvironmentAcceptRefusals(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := workflowDatabase(t, f.s)
-			_, err := f.s.AcceptEnvironment(test.actor, test.request, test.spec, test.binding, test.authority, test.cp)
+			_, err := f.s.AcceptEnvironment(test.actor, f.domain, test.request, test.spec, test.binding, test.authority, test.cp)
 			if err == nil || test.want != nil && !errors.Is(err, test.want) {
 				t.Fatalf("accept: %v, want %v", err, test.want)
 			}
@@ -152,10 +169,17 @@ func TestEnvironmentAcceptRefusals(t *testing.T) {
 }
 
 func TestEnvironmentRefusesUnscopedInstallation(t *testing.T) {
-	s := openTest(t)
+	// A retention-enabled store that was never scoped issues a real domain;
+	// the legacy actor passes authorization and the domain gate, and the
+	// transaction refuses the unscoped installation.
+	s, info := enableTest(t, DefaultRetentionPolicy())
 	actor := testActor()
 	before := workflowDatabase(t, s)
-	if _, err := s.AcceptEnvironment(actor, "r", environmentSpec("a"), "b", environmentDelegation(actor.Principal()), environmentCheckpoint("c")); !errors.Is(err, auth.ErrPermissionDenied) {
+	if _, err := s.AcceptEnvironment(actor, RequestDomain{}, "r", environmentSpec("a"), "b", environmentDelegation(actor.Principal()), environmentCheckpoint("c")); !errors.Is(err, ErrInvalidRequestDomain) {
+		t.Fatalf("zero domain accept: %v", err)
+	}
+	workflowUnchanged(t, s, before)
+	if _, err := s.AcceptEnvironment(actor, info.Domain, "r", environmentSpec("a"), "b", environmentDelegation(actor.Principal()), environmentCheckpoint("c")); !errors.Is(err, auth.ErrPermissionDenied) {
 		t.Fatalf("unscoped accept: %v", err)
 	}
 	workflowUnchanged(t, s, before)
@@ -170,7 +194,7 @@ func TestEnvironmentConcurrentReplay(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			e, err := f.s.AcceptEnvironment(f.actors["alice"], "same", environmentSpec("a"), "test-binding", f.authority["alice"], environmentCheckpoint("c"))
+			e, err := f.s.AcceptEnvironment(f.actors["alice"], f.domain, "same", environmentSpec("a"), "test-binding", f.authority["alice"], environmentCheckpoint("c"))
 			ids[i], errs[i] = e.Identity.ID, err
 		}()
 	}
@@ -202,7 +226,7 @@ func TestEnvironmentReservations(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := workflowDatabase(t, f.s)
-			if _, err := f.s.AcceptEnvironment(f.actors[test.who], test.request, test.spec, "test-binding", f.authority[test.who], environmentCheckpoint("c")); !errors.Is(err, ErrEnvironmentReserved) {
+			if _, err := f.s.AcceptEnvironment(f.actors[test.who], f.domain, test.request, test.spec, "test-binding", f.authority[test.who], environmentCheckpoint("c")); !errors.Is(err, ErrEnvironmentReserved) {
 				t.Fatalf("accept: %v", err)
 			}
 			workflowUnchanged(t, f.s, before)
@@ -222,7 +246,7 @@ func TestEnvironmentReservations(t *testing.T) {
 		who  string
 		spec environment.Spec
 	}{{"alice", other}, {"bob", renamed}} {
-		if _, err := f.s.AcceptEnvironment(f.actors[test.who], "after-delete", test.spec, "test-binding", f.authority[test.who], environmentCheckpoint("c")); !errors.Is(err, ErrEnvironmentReserved) {
+		if _, err := f.s.AcceptEnvironment(f.actors[test.who], f.domain, "after-delete", test.spec, "test-binding", f.authority[test.who], environmentCheckpoint("c")); !errors.Is(err, ErrEnvironmentReserved) {
 			t.Fatalf("%s after delete: %v", test.who, err)
 		}
 	}
@@ -241,7 +265,7 @@ func TestEnvironmentPrincipalLimitCountsDeleted(t *testing.T) {
 		}
 	}
 	before := workflowDatabase(t, f.s)
-	if _, err := f.s.AcceptEnvironment(f.actors["alice"], "over", environmentSpec("over"), "test-binding", f.authority["alice"], environmentCheckpoint("c")); !errors.Is(err, ErrEnvironmentLimit) {
+	if _, err := f.s.AcceptEnvironment(f.actors["alice"], f.domain, "over", environmentSpec("over"), "test-binding", f.authority["alice"], environmentCheckpoint("c")); !errors.Is(err, ErrEnvironmentLimit) {
 		t.Fatalf("fifth environment: %v", err)
 	}
 	workflowUnchanged(t, f.s, before)
@@ -262,7 +286,7 @@ func TestEnvironmentGlobalLimit(t *testing.T) {
 			t.Fatal(err)
 		}
 		return f.s.db.Update(func(tx *bolt.Tx) error {
-			_, e := acceptEnvironment(tx, principal, "r-"+name, raw, "test-binding", environmentDelegation(principal), environmentCheckpoint("c"), id, f.s.now().UTC())
+			_, e := acceptEnvironment(tx, principal, f.domain, "r-"+name, raw, "test-binding", environmentDelegation(principal), environmentCheckpoint("c"), id, f.s.now().UTC())
 			return e
 		})
 	}
@@ -295,16 +319,16 @@ func TestEnvironmentCommitCompareAndSwap(t *testing.T) {
 		next     EnvironmentCommit
 		want     error
 	}{
-		{"stale", 1, EnvironmentCommit{unknown, e.Checkpoint}, ErrEnvironmentStale},
-		{"future", 3, EnvironmentCommit{unknown, e.Checkpoint}, ErrEnvironmentStale},
-		{"creating again", 2, EnvironmentCommit{environment.State{Desired: environment.Present, Phase: environment.Creating}, e.Checkpoint}, nil},
-		{"deleted without deleting", 2, EnvironmentCommit{environment.State{Desired: environment.Absent, Phase: environment.Deleted}, e.Checkpoint}, nil},
-		{"deleting while present", 2, EnvironmentCommit{environment.State{Desired: environment.Present, Phase: environment.Deleting}, e.Checkpoint}, nil},
-		{"zero state", 2, EnvironmentCommit{environment.State{}, e.Checkpoint}, nil},
-		{"kind", 2, EnvironmentCommit{unknown, environment.Checkpoint{Kind: "kube-pod", Version: 1, Data: []byte("c")}}, nil},
-		{"version", 2, EnvironmentCommit{unknown, environment.Checkpoint{Kind: "ec2-vm", Version: 2, Data: []byte("c")}}, nil},
-		{"empty checkpoint", 2, EnvironmentCommit{unknown, environment.Checkpoint{Kind: "ec2-vm", Version: 1}}, nil},
-		{"oversize checkpoint", 2, EnvironmentCommit{unknown, environment.Checkpoint{Kind: "ec2-vm", Version: 1, Data: make([]byte, environment.MaxCheckpointBytes+1)}}, nil},
+		{"stale", 1, EnvironmentCommit{State: unknown, Checkpoint: e.Checkpoint}, ErrEnvironmentStale},
+		{"future", 3, EnvironmentCommit{State: unknown, Checkpoint: e.Checkpoint}, ErrEnvironmentStale},
+		{"creating again", 2, EnvironmentCommit{State: environment.State{Desired: environment.Present, Phase: environment.Creating}, Checkpoint: e.Checkpoint}, nil},
+		{"deleted without deleting", 2, EnvironmentCommit{State: environment.State{Desired: environment.Absent, Phase: environment.Deleted}, Checkpoint: e.Checkpoint}, nil},
+		{"deleting while present", 2, EnvironmentCommit{State: environment.State{Desired: environment.Present, Phase: environment.Deleting}, Checkpoint: e.Checkpoint}, nil},
+		{"zero state", 2, EnvironmentCommit{State: environment.State{}, Checkpoint: e.Checkpoint}, nil},
+		{"kind", 2, EnvironmentCommit{State: unknown, Checkpoint: environment.Checkpoint{Kind: "kube-pod", Version: 1, Data: []byte("c")}}, nil},
+		{"version", 2, EnvironmentCommit{State: unknown, Checkpoint: environment.Checkpoint{Kind: "ec2-vm", Version: 2, Data: []byte("c")}}, nil},
+		{"empty checkpoint", 2, EnvironmentCommit{State: unknown, Checkpoint: environment.Checkpoint{Kind: "ec2-vm", Version: 1}}, nil},
+		{"oversize checkpoint", 2, EnvironmentCommit{State: unknown, Checkpoint: environment.Checkpoint{Kind: "ec2-vm", Version: 1, Data: make([]byte, environment.MaxCheckpointBytes+1)}}, nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			before := workflowDatabase(t, f.s)
@@ -316,14 +340,14 @@ func TestEnvironmentCommitCompareAndSwap(t *testing.T) {
 		})
 	}
 	// The stale check precedes the transition check.
-	if _, err := f.s.CommitEnvironment(e.Identity.ID, 1, EnvironmentCommit{environment.State{}, environment.Checkpoint{}}); !errors.Is(err, ErrEnvironmentStale) {
+	if _, err := f.s.CommitEnvironment(e.Identity.ID, 1, EnvironmentCommit{State: environment.State{}, Checkpoint: environment.Checkpoint{}}); !errors.Is(err, ErrEnvironmentStale) {
 		t.Fatalf("stale invalid commit: %v", err)
 	}
-	if _, err := f.s.CommitEnvironment(strings.Repeat("f", 32), 1, EnvironmentCommit{unknown, e.Checkpoint}); !errors.Is(err, ErrNotFound) {
+	if _, err := f.s.CommitEnvironment(strings.Repeat("f", 32), 1, EnvironmentCommit{State: unknown, Checkpoint: e.Checkpoint}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("missing commit: %v", err)
 	}
 	maximal := environment.Checkpoint{Kind: "ec2-vm", Version: 1, Data: make([]byte, environment.MaxCheckpointBytes)}
-	got, err := f.s.CommitEnvironment(e.Identity.ID, 2, EnvironmentCommit{unknown, maximal})
+	got, err := f.s.CommitEnvironment(e.Identity.ID, 2, EnvironmentCommit{State: unknown, Checkpoint: maximal})
 	if err != nil || got.Revision != 3 || len(got.Checkpoint.Data) != environment.MaxCheckpointBytes {
 		t.Fatalf("maximal checkpoint: %v", err)
 	}
@@ -344,17 +368,17 @@ func TestEnvironmentAbsentLatches(t *testing.T) {
 	}
 	before := workflowDatabase(t, f.s)
 	// A writer still holding the old revision is stale, and Absent latches.
-	if _, err := f.s.CommitEnvironment(e.Identity.ID, e.Revision, EnvironmentCommit{e.State, e.Checkpoint}); !errors.Is(err, ErrEnvironmentStale) {
+	if _, err := f.s.CommitEnvironment(e.Identity.ID, e.Revision, EnvironmentCommit{State: e.State, Checkpoint: e.Checkpoint}); !errors.Is(err, ErrEnvironmentStale) {
 		t.Fatalf("stale adapter commit: %v", err)
 	}
-	if _, err := f.s.CommitEnvironment(d.Identity.ID, d.Revision, EnvironmentCommit{environment.State{Desired: environment.Present, Phase: environment.Ready}, d.Checkpoint}); err == nil {
+	if _, err := f.s.CommitEnvironment(d.Identity.ID, d.Revision, EnvironmentCommit{State: environment.State{Desired: environment.Present, Phase: environment.Ready}, Checkpoint: d.Checkpoint}); err == nil {
 		t.Fatal("absent environment became present")
 	}
 	workflowUnchanged(t, f.s, before)
 	deleting := f.commit(t, d, environment.Absent, environment.Deleting)
 	deleted := f.commit(t, deleting, environment.Absent, environment.Deleted)
 	for _, p := range []environment.Phase{environment.Ready, environment.Unknown, environment.Deleting} {
-		if _, err := f.s.CommitEnvironment(deleted.Identity.ID, deleted.Revision, EnvironmentCommit{environment.State{Desired: environment.Absent, Phase: p}, deleted.Checkpoint}); err == nil {
+		if _, err := f.s.CommitEnvironment(deleted.Identity.ID, deleted.Revision, EnvironmentCommit{State: environment.State{Desired: environment.Absent, Phase: p}, Checkpoint: deleted.Checkpoint}); err == nil {
 			t.Fatalf("deleted environment moved to %v", p)
 		}
 	}
@@ -417,7 +441,7 @@ func TestEnvironmentValuesAreCopies(t *testing.T) {
 	spec := environmentSpec("a")
 	spec.NodeSelector = map[string]string{"zone": "a"}
 	cp := environmentCheckpoint("abc")
-	e, err := f.s.AcceptEnvironment(f.actors["alice"], "r", spec, "test-binding", f.authority["alice"], cp)
+	e, err := f.s.AcceptEnvironment(f.actors["alice"], f.domain, "r", spec, "test-binding", f.authority["alice"], cp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +450,7 @@ func TestEnvironmentValuesAreCopies(t *testing.T) {
 	e.Checkpoint.Data[1] = 'x'
 	e.Spec.NodeSelector["zone"] = "c"
 	next := environmentCheckpoint("def")
-	got, err := f.s.CommitEnvironment(e.Identity.ID, 1, EnvironmentCommit{environment.State{Desired: environment.Present, Phase: environment.Ready}, next})
+	got, err := f.s.CommitEnvironment(e.Identity.ID, 1, EnvironmentCommit{State: environment.State{Desired: environment.Present, Phase: environment.Ready}, Checkpoint: next})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +470,7 @@ func TestEnvironmentCommitErrorWritesNothing(t *testing.T) {
 	if err := f.s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := f.s.CommitEnvironment(e.Identity.ID, 1, EnvironmentCommit{environment.State{Desired: environment.Present, Phase: environment.Ready}, e.Checkpoint}); err == nil {
+	if _, err := f.s.CommitEnvironment(e.Identity.ID, 1, EnvironmentCommit{State: environment.State{Desired: environment.Present, Phase: environment.Ready}, Checkpoint: e.Checkpoint}); err == nil {
 		t.Fatal("commit on a closed store succeeded")
 	}
 	s, err := Open(f.dir)

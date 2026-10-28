@@ -3,8 +3,6 @@ package store
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -19,13 +17,16 @@ import (
 )
 
 // environmentState is the logical database without the format marker. The
-// environment bucket must exist and be empty; it is then left out.
+// environment bucket must exist and be empty; it is then left out, as are the
+// empty worker group metadata, the storage format tag and the empty
+// environment pin table.
 func environmentState(t *testing.T, db *bolt.DB) []byte {
 	t.Helper()
 	var buckets []fixtureBucket
 	if err := json.Unmarshal(routingState(t, db), &buckets); err != nil {
 		t.Fatal(err)
 	}
+	buckets, _ = formatStrip(t, buckets)
 	var out []fixtureBucket
 	found := false
 	for _, b := range buckets {
@@ -34,6 +35,12 @@ func environmentState(t *testing.T, db *bolt.DB) []byte {
 				t.Fatal("migration added environment contents or sequence")
 			}
 			found = true
+			continue
+		}
+		if bytes.Equal(b.Name, workerGroupsBucket) {
+			if b.Sequence != 0 || len(b.Entries) != 0 || len(b.Buckets) != 0 {
+				t.Fatal("migration added worker group contents or sequence")
+			}
 			continue
 		}
 		out = append(out, b)
@@ -59,7 +66,7 @@ func TestEnvironmentMigrationFromPredecessorFixtures(t *testing.T) {
 			defer s.Close()
 			environmentState(t, s.db)
 			if err := s.db.View(func(tx *bolt.Tx) error {
-				if schemaNumber(tx) != 9 {
+				if schemaNumber(tx) != schemaVersion {
 					t.Errorf("marker %d", schemaNumber(tx))
 				}
 				return validateSnapshot(tx)
@@ -93,7 +100,7 @@ func TestEnvironmentMigrationRollback(t *testing.T) {
 		if err := initialize(tx, "unused"); err != nil {
 			return err
 		}
-		if schemaNumber(tx) != 9 || tx.Bucket(environmentsBucket) == nil {
+		if schemaNumber(tx) != schemaVersion || tx.Bucket(environmentsBucket) == nil {
 			t.Error("environment migration did not run")
 		}
 		return injected
@@ -133,6 +140,9 @@ func TestEnvironmentMigrationRefusesWrongSource(t *testing.T) {
 
 // environmentPopulated returns a closed scoped installation with two
 // environments: alice's Ready "analysis" on alias "scratch", and bob's "b".
+// Both are rewritten by environmentLegacyModel, so the installation is also
+// a coherent source for MODEL markers 8 through 11, and the returned views
+// carry no domain.
 func environmentPopulated(t *testing.T) (dir string, alice, bob Environment) {
 	t.Helper()
 	f := newEnvironmentFixture(t)
@@ -144,7 +154,44 @@ func environmentPopulated(t *testing.T) (dir string, alice, bob Environment) {
 	if err := f.s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	editFixture(t, f.dir, false, func(tx *bolt.Tx) error {
+		return environmentLegacyModel(tx, alice, bob)
+	})
+	alice.Domain, bob.Domain = nil, nil
 	return f.dir, alice, bob
+}
+
+// environmentLegacyModel is a MODEL of the records a Store before schema 12
+// (environmentRetirementSchema) wrote: each domain record of envs loses its
+// domain and witness and gains the request binding, as in
+// TestEnvironmentRetirementMigration. The result is valid at every marker
+// from 9 through 12.
+func environmentLegacyModel(tx *bolt.Tx, envs ...Environment) error {
+	b := tx.Bucket(environmentsBucket)
+	for _, e := range envs {
+		if e.Domain == nil {
+			return errors.New("environment has no request domain")
+		}
+		r, err := loadEnvironmentRecord(b, e.Identity.ID)
+		if err != nil {
+			return err
+		}
+		r.Domain = nil
+		data, err := encodeEnvironmentRecord(r)
+		if err != nil {
+			return err
+		}
+		if err := b.Put(environmentRecordKey(r.Identity.ID), data); err != nil {
+			return err
+		}
+		if err := b.Delete(environmentWitnessKey(e.Principal, *e.Domain, e.RequestID)); err != nil {
+			return err
+		}
+		if err := b.Put(environmentRequestKey(e.Principal, e.RequestID), []byte(r.Identity.ID)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // environmentRefused checks that Open refuses dir without changing a byte.
@@ -175,11 +222,10 @@ func TestEnvironmentSchemaFences(t *testing.T) {
 		name, want string
 		edit       func(*bolt.Tx) error
 	}{
-		{"eight with environments", "environment metadata requires schema 9", func(tx *bolt.Tx) error {
+		{"eight with environments", "environment metadata requires schema 9", lowerMarkerModel(8)},
+		{"seven with environments", "requires schema", lowerMarkerModel(7)},
+		{"eight with tag", "storage format tag before schema 11", func(tx *bolt.Tx) error {
 			return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(8))
-		}},
-		{"seven with environments", "requires schema", func(tx *bolt.Tx) error {
-			return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(7))
 		}},
 		{"nine without environments", "missing environment metadata", func(tx *bolt.Tx) error {
 			return tx.DeleteBucket(environmentsBucket)
@@ -341,7 +387,7 @@ func TestEnvironmentBackupRestorePreservesCheckpoint(t *testing.T) {
 	}
 	// An unknown kind is retained and copied, never interpreted.
 	cp := environment.Checkpoint{Kind: "future-provider", Version: 9, Data: data}
-	e, err := f.s.AcceptEnvironment(f.actors["alice"], "r", environmentSpec("a"), "test-binding", f.authority["alice"], cp)
+	e, err := f.s.AcceptEnvironment(f.actors["alice"], f.domain, "r", environmentSpec("a"), "test-binding", f.authority["alice"], cp)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,18 +435,7 @@ func TestEnvironmentBackupRestorePreservesCheckpoint(t *testing.T) {
 // database written by the predecessor's own Store code. See the S10
 // producer packet for the writer and the command that produces it.
 func TestEnvironmentGenuineSchemaEightMigration(t *testing.T) {
-	src := os.Getenv("SKYGO_SCHEMA8_DB")
-	if src == "" {
-		t.Skip("requires a populated schema8 database from the predecessor's Store")
-	}
-	raw, err := os.ReadFile(src)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(raw)
-	if os.Getenv("SKYGO_SCHEMA8_DB_SHA256") != hex.EncodeToString(sum[:]) {
-		t.Fatal("schema8 database hash mismatch")
-	}
+	_, raw := genuineFixture(t, "SKYGO_SCHEMA8_DB")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "jobs.db")
 	if err := os.WriteFile(path, raw, 0600); err != nil {
@@ -444,7 +479,7 @@ func TestEnvironmentGenuineSchemaEightMigration(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if schemaNumber(tx) != 9 || st.Root.SchemaFloor != artifactFormat {
+		if schemaNumber(tx) != schemaVersion || st.Root.SchemaFloor != artifactFormat {
 			t.Errorf("migrated to %d floor %d", schemaNumber(tx), st.Root.SchemaFloor)
 		}
 		return nil
@@ -462,40 +497,13 @@ func TestEnvironmentGenuineSchemaEightMigration(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if out := os.Getenv("SKYGO_SCHEMA9_OUT"); out != "" {
-		data, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		w, err := os.OpenFile(out, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, err = w.Write(data)
-		if closeErr := w.Close(); err == nil {
-			err = closeErr
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
 }
 
 // TestEnvironmentSchemaEightBinaryRefusesSchemaNine runs the accepted schema8
-// binary against a schema9 installation. It must refuse before any write.
+// binary against a current (schema12) installation. It must refuse before any
+// write.
 func TestEnvironmentSchemaEightBinaryRefusesSchemaNine(t *testing.T) {
-	exe := os.Getenv("SKYGO_SCHEMA8_BINARY")
-	if exe == "" {
-		t.Skip("requires the accepted schema8 binary")
-	}
-	binary, err := os.ReadFile(exe)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sum := sha256.Sum256(binary)
-	if os.Getenv("SKYGO_SCHEMA8_BINARY_SHA256") != hex.EncodeToString(sum[:]) {
-		t.Fatal("schema8 binary hash mismatch")
-	}
+	exe, _ := genuineFixture(t, "SKYGO_SCHEMA8_BINARY")
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {

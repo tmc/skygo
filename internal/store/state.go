@@ -27,6 +27,11 @@ func backup(dir, output string) error {
 		return fmt.Errorf("open backup source (stop the server first): %w", err)
 	}
 	defer db.Close()
+	// Validate before creating any file beside output, so a refused source,
+	// including one of another storage format, leaves that directory untouched.
+	if err := db.View(validateSnapshot); err != nil {
+		return fmt.Errorf("validate backup source: %w", err)
+	}
 	return writeSnapshot(db, output)
 }
 

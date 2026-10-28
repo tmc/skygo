@@ -319,7 +319,7 @@ func initializeRetention(tx *bolt.Tx) error {
 	}
 	if e = tx.Bucket(jobsBucket).ForEach(func(id, data []byte) error {
 		var j backend.Job
-		if e := json.Unmarshal(data, &j); e != nil {
+		if e := decodeStoredJob(data, &j); e != nil {
 			return e
 		}
 		req, ok := reverse[string(id)]
@@ -372,6 +372,14 @@ func sumUsage(tx *bolt.Tx) (retentionUsage, error) {
 		if e := b.ForEach(func(k, v []byte) error {
 			if v == nil {
 				return errors.New("unexpected retention nested bucket")
+			}
+			if bytes.Equal(name, cleanupHeadersBucket) {
+				// recordCharge refuses an undecodable header only by an
+				// overflowing charge; report the header's own refusal.
+				var h cleanupHeader
+				if e := decodeCleanupHeader(v, &h); e != nil {
+					return e
+				}
 			}
 			q, c := tableDomains(name)
 			if e := add(q, recordCharge(name, k, v)); e != nil {
@@ -462,6 +470,13 @@ func sumUsage(tx *bolt.Tx) (retentionUsage, error) {
 	if e = add(MetadataBytesQuota, metadata); e != nil {
 		return u, e
 	}
+	groups, e := workerGroupUsage(tx)
+	if e != nil {
+		return u, e
+	}
+	if e = add(MetadataBytesQuota, groups); e != nil {
+		return u, e
+	}
 	st, e := loadRetention(tx)
 	if e != nil {
 		return u, e
@@ -524,7 +539,7 @@ func reindexRetentionScopes(tx *bolt.Tx) error {
 	}
 	return tx.Bucket(jobsBucket).ForEach(func(id, raw []byte) error {
 		var j backend.Job
-		if e := json.Unmarshal(raw, &j); e != nil {
+		if e := decodeStoredJob(raw, &j); e != nil {
 			return e
 		}
 		var m retainedJob

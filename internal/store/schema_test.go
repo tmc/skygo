@@ -332,8 +332,10 @@ func TestMigrationTransactionRollback(t *testing.T) {
 	}
 }
 
-// schemaSixFixture retains genuine version6 bytes: no remote table, rootfloor6,
-// and the legacy job/task/request rows left unchanged.
+// schemaSixFixture is a MODEL of version6: it initializes the current schema
+// and removes every later addition. It keeps no remote table, rootfloor6,
+// and the legacy job/task/request rows unchanged. Genuine predecessor bytes
+// come only from the path+SHA fixtures in storage_format_test.go.
 func schemaSixFixture(t *testing.T, dir string) backend.Job {
 	t.Helper()
 	j := legacyFixture(t, dir, false)
@@ -349,6 +351,12 @@ func schemaSixFixture(t *testing.T, dir string) backend.Job {
 			return err
 		}
 		if err := tx.DeleteBucket(environmentsBucket); err != nil {
+			return err
+		}
+		if err := tx.DeleteBucket(workerGroupsBucket); err != nil {
+			return err
+		}
+		if err := environmentArtifactStripModel(tx); err != nil {
 			return err
 		}
 		b := tx.Bucket(artifactsBucket)

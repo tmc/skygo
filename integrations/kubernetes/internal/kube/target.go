@@ -25,8 +25,16 @@ import (
 // mismatch, failure or uncertain response body refuses the target. Only such
 // a target reports remote data support.
 func FromTarget(ctx context.Context, t TargetConfig, owner string) (backend.Target, error) {
+	target, _, err := loadTarget(ctx, t, owner)
+	return target, err
+}
+
+// loadTarget is FromTarget that also returns the frozen REST configuration
+// the target was built from: its canonical server and CA bytes. The caller
+// must not change it.
+func loadTarget(ctx context.Context, t TargetConfig, owner string) (backend.Target, *rest.Config, error) {
 	if err := validateTarget(t); err != nil {
-		return backend.Target{}, err
+		return backend.Target{}, nil, err
 	}
 	var config *rest.Config
 	var err error
@@ -37,9 +45,9 @@ func FromTarget(ctx context.Context, t TargetConfig, owner string) (backend.Targ
 		config, err = clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: t.Context}).ClientConfig()
 	}
 	if err != nil {
-		return backend.Target{}, errors.New("load kubernetes target configuration")
+		return backend.Target{}, nil, errors.New("load kubernetes target configuration")
 	}
-	return fromRESTContext(ctx, t, owner, config)
+	return fromRESTFrozen(ctx, t, owner, config)
 }
 
 // FromConfig constructs the legacy target named kubernetes. It uses in-cluster
@@ -77,61 +85,69 @@ func fromREST(t TargetConfig, owner string, config *rest.Config) (backend.Target
 // fromRESTContext constructs a target from a loaded REST configuration. Only
 // a configured data qualification makes requests, under ctx.
 func fromRESTContext(ctx context.Context, t TargetConfig, owner string, config *rest.Config) (backend.Target, error) {
+	target, _, err := fromRESTFrozen(ctx, t, owner, config)
+	return target, err
+}
+
+// fromRESTFrozen is fromRESTContext that also returns the frozen copy of
+// config that built the target's client and binding. The caller must not
+// change it.
+func fromRESTFrozen(ctx context.Context, t TargetConfig, owner string, config *rest.Config) (backend.Target, *rest.Config, error) {
 	if t.Name == "local" || len(validation.IsDNS1123Label(t.Name)) != 0 {
-		return backend.Target{}, errors.New("invalid kubernetes target name")
+		return backend.Target{}, nil, errors.New("invalid kubernetes target name")
 	}
 	if len(validation.IsDNS1123Label(t.Namespace)) != 0 {
-		return backend.Target{}, errors.New("invalid kubernetes namespace")
+		return backend.Target{}, nil, errors.New("invalid kubernetes namespace")
 	}
 	if owner == "" || len(validation.IsValidLabelValue(owner)) != 0 {
-		return backend.Target{}, errors.New("invalid kubernetes owner")
+		return backend.Target{}, nil, errors.New("invalid kubernetes owner")
 	}
 	if err := validateLabels(t.Labels); err != nil {
-		return backend.Target{}, errors.New("invalid target labels")
+		return backend.Target{}, nil, errors.New("invalid target labels")
 	}
 	if err := validatePolicy(t.Resources); err != nil {
-		return backend.Target{}, err
+		return backend.Target{}, nil, err
 	}
 	if config == nil {
-		return backend.Target{}, errors.New("kubernetes configuration is required")
+		return backend.Target{}, nil, errors.New("kubernetes configuration is required")
 	}
 	config = rest.CopyConfig(config)
 	host, err := canonicalServer(config.Host)
 	if err != nil {
-		return backend.Target{}, err
+		return backend.Target{}, nil, err
 	}
 	config.Host = host
 	config.CAData = slices.Clone(config.CAData)
 	if len(config.CAData) == 0 && config.CAFile != "" {
 		config.CAData, err = os.ReadFile(config.CAFile)
 		if err != nil {
-			return backend.Target{}, errors.New("read kubernetes certificate authority")
+			return backend.Target{}, nil, errors.New("read kubernetes certificate authority")
 		}
 		if len(config.CAData) == 0 {
-			return backend.Target{}, errors.New("empty kubernetes certificate authority")
+			return backend.Target{}, nil, errors.New("empty kubernetes certificate authority")
 		}
 	}
 	// Freeze the bytes used by both the binding and the actual transport.
 	config.CAFile = ""
 	data, err := newDataProfile(t.Data)
 	if err != nil {
-		return backend.Target{}, err
+		return backend.Target{}, nil, err
 	}
 	t.Labels = maps.Clone(t.Labels)
 	t.Resources = clonePolicy(t.Resources)
 	t.Data = cloneDataConfig(t.Data)
 	client, err := newClient(config, data != nil)
 	if err != nil {
-		return backend.Target{}, errors.New("create kubernetes client")
+		return backend.Target{}, nil, errors.New("create kubernetes client")
 	}
 	q, err := qualifyTarget(ctx, t, config, data, client)
 	if err != nil {
-		return backend.Target{}, err
+		return backend.Target{}, nil, err
 	}
 	// The record bound the binding without q; the target's binding adds it.
 	binding, err := targetBinding(t, config, data, q)
 	if err != nil {
-		return backend.Target{}, err
+		return backend.Target{}, nil, err
 	}
 	names := make([]string, 0, len(t.Resources.Accelerators))
 	for name := range t.Resources.Accelerators {
@@ -158,7 +174,7 @@ func fromRESTContext(ctx context.Context, t TargetConfig, owner string, config *
 		SupportsRemoteData:      q != nil,
 		SupportsDataMounts:      q != nil && slices.ContainsFunc(q.record.Images, func(i qualificationImage) bool { return len(i.Mounts) != 0 }),
 		SupportsRemoteDataRetry: false,
-	}, nil
+	}, config, nil
 }
 
 // newClient builds the clientset as kubernetes.NewForConfig does. For a data
