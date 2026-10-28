@@ -336,11 +336,32 @@ func principalID(s string) bool {
 }
 func validRole(r Role) bool { return r == Reader || r == Operator || r == Admin }
 
-func readConfig(path string) (*config, []byte, os.FileInfo, error) {
+// ErrCloseUncertain means a read of the credential file attempted to close its
+// original descriptor and did not prove closure. No configuration from that
+// read is accepted. The caller must keep the error and stop; it must not
+// reopen or retry the read in its place. Use errors.Is.
+var ErrCloseUncertain = errors.New("authentication file closure is uncertain")
+
+// fileCloseError retains the original credential file whose one Close failed.
+// Its text omits the path; Unwrap exposes the read and Close errors.
+type fileCloseError struct {
+	file *os.File
+	err  error
+}
+
+func (e *fileCloseError) Error() string        { return "close authentication file" }
+func (e *fileCloseError) Unwrap() error        { return e.err }
+func (e *fileCloseError) Is(target error) bool { return target == ErrCloseUncertain }
+
+// closeConfigFile closes the descriptor readConfig opened. Tests replace it
+// to model an operating system Close failure of that same file.
+var closeConfigFile = (*os.File).Close
+
+func readConfig(path string) (c *config, data []byte, info os.FileInfo, err error) {
 	if err := safeParent(path); err != nil {
 		return nil, nil, nil, err
 	}
-	info, err := os.Lstat(path)
+	info, err = os.Lstat(path)
 	if err != nil {
 		return nil, nil, nil, fileError("read authentication file", err)
 	}
@@ -351,28 +372,34 @@ func readConfig(path string) (*config, []byte, os.FileInfo, error) {
 	if err != nil {
 		return nil, nil, nil, fileError("open authentication file", err)
 	}
-	defer f.Close()
+	// The one Close decides the result: a failed Close accepts nothing.
+	defer func() {
+		if closeErr := closeConfigFile(f); closeErr != nil {
+			c, data, info = nil, nil, nil
+			err = &fileCloseError{file: f, err: errors.Join(err, closeErr)}
+		}
+	}()
 	opened, err := f.Stat()
 	if err != nil || !os.SameFile(info, opened) {
 		return nil, nil, nil, ErrInvalid
 	}
-	data, err := io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
+	data, err = io.ReadAll(io.LimitReader(f, maxConfigBytes+1))
 	if err != nil {
 		return nil, nil, nil, errors.New("read authentication file")
 	}
 	if len(data) > maxConfigBytes || !uniqueJSON(data) {
 		return nil, nil, nil, ErrInvalid
 	}
-	var c config
+	var parsed config
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
-	if d.Decode(&c) != nil || d.Decode(new(any)) != io.EOF {
+	if d.Decode(&parsed) != nil || d.Decode(new(any)) != io.EOF {
 		return nil, nil, nil, ErrInvalid
 	}
-	if validate(&c) != nil {
+	if validate(&parsed) != nil {
 		return nil, nil, nil, ErrInvalid
 	}
-	return &c, data, info, nil
+	return &parsed, data, info, nil
 }
 func validate(c *config) error {
 	if c.Version != 1 || !hexID(c.Installation) || c.Generation == 0 || len(c.Principals) == 0 || len(c.Principals) > 128 || len(c.Tokens) > 256 {

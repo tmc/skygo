@@ -51,6 +51,16 @@ type Config struct {
 	ArtifactDir                                   string
 	DataDir, Listen, Token, AuthFile, TargetFacts string
 
+	// ExistingInstallation starts only an existing, current, scoped
+	// installation with installed artifacts; it never creates, initializes
+	// or migrates state. It requires AuthFile and ArtifactDir and conflicts
+	// with Artifacts and RecoverStoppedArtifactReaders. The installation's
+	// read-only facts bind the auth file owner and the artifact root before
+	// the writer lock is taken, and the writer is accepted only if they
+	// still hold. Every other writer must be stopped: raw same-user edits of
+	// the auth file, root or database outside bbolt's lock are not detected.
+	ExistingInstallation bool
+
 	// LocalTargetName names the built-in local target; empty means "local".
 	// It must be a lowercase DNS name of at most 63 bytes. Jobs record the
 	// name, so changing it for an existing DataDir leaves earlier jobs naming
@@ -115,6 +125,9 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	if cfg.AuthFile != "" && cfg.Token != "" {
 		return errors.New("auth file conflicts with legacy token")
 	}
+	if cfg.ExistingInstallation && (cfg.AuthFile == "" || cfg.ArtifactDir == "" || cfg.Artifacts != nil || cfg.RecoverStoppedArtifactReaders) {
+		return errors.New("existing installation requires an auth file and artifact directory, without borrowed files or reader recovery")
+	}
 	if cfg.DisableLocal && cfg.Targets == nil && cfg.Install == nil {
 		return errors.New("no execution targets configured")
 	}
@@ -150,35 +163,15 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	if cfg.RecoverStoppedArtifactReaders && (f.captureErr != nil || f.lifetime.NamespaceDevice == 0 || f.lifetime.StartTicks == 0) {
 		return errors.New("stopped artifact reader recovery requires a strict known server lifetime")
 	}
-	s, err := store.Open(cfg.DataDir)
+	if cfg.ExistingInstallation {
+		err = f.openExisting(cfg)
+	} else {
+		err = f.openState(cfg)
+	}
 	if err != nil {
-		// Store returns no original on failure. Preserve its whole error chain;
-		// dependency-hidden cleanup/lock state supplies no retry authority.
-		return f.hold("state acquisition failed", err)
+		return err
 	}
-	f.store = s
-	f.files = cfg.Artifacts
-	if cfg.ArtifactDir != "" {
-		if err := f.openArtifacts(cfg.ArtifactDir); err != nil {
-			return err
-		}
-	}
-	if f.files != nil {
-		if err := f.preflightArtifacts(); err != nil {
-			return err
-		}
-	}
-	if s.Scoped() != (cfg.AuthFile != "") {
-		return errors.New("scoped state requires its auth file; activate legacy state with auth init first")
-	}
-	engine := auth.NewLegacy(cfg.Token)
-	if cfg.AuthFile != "" {
-		engine, err = auth.NewFile(cfg.AuthFile, s.Owner())
-		if err != nil {
-			return fmt.Errorf("load authentication: %w", err)
-		}
-	}
-	f.engine = engine
+	s, engine := f.store, f.engine
 	if cfg.Install != nil {
 		in, err := cfg.Install(s, engine)
 		f.integration = in
@@ -376,6 +369,63 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	}
 	go func() { defer close(f.serveDone); f.serveErr = f.http.Serve(serving) }()
 	return nil
+}
+
+// openState opens or initializes state, then artifacts and authentication.
+func (f *serverRun) openState(cfg Config) error {
+	s, err := store.Open(cfg.DataDir)
+	if err != nil {
+		// Store returns no original on failure. Preserve its whole error chain;
+		// dependency-hidden cleanup/lock state supplies no retry authority.
+		return f.hold("state acquisition failed", err)
+	}
+	f.store = s
+	f.files = cfg.Artifacts
+	if cfg.ArtifactDir != "" {
+		if err := f.openArtifacts(cfg.ArtifactDir); err != nil {
+			return err
+		}
+	}
+	if f.files != nil {
+		if err := f.preflightArtifacts(); err != nil {
+			return err
+		}
+	}
+	if s.Scoped() != (cfg.AuthFile != "") {
+		return errors.New("scoped state requires its auth file; activate legacy state with auth init first")
+	}
+	engine := auth.NewLegacy(cfg.Token)
+	if cfg.AuthFile != "" {
+		engine, err = auth.NewFile(cfg.AuthFile, s.Owner())
+		if err != nil {
+			return fmt.Errorf("load authentication: %w", err)
+		}
+	}
+	f.engine = engine
+	return nil
+}
+
+// openExisting acquires an existing current installation without creating,
+// initializing or migrating it. Its read-only facts bind the auth file and
+// the artifact root first; the writer lock is then accepted only if those
+// facts still hold, and the same Engine, root and Files are kept.
+func (f *serverRun) openExisting(cfg Config) error {
+	installed, err := store.InspectExisting(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("inspect existing installation: %w", err)
+	}
+	f.engine, err = auth.NewFile(cfg.AuthFile, installed.Owner())
+	if err != nil {
+		return fmt.Errorf("load authentication: %w", err)
+	}
+	if err := f.openArtifactRoot(cfg.ArtifactDir, installed.ArtifactInstallation()); err != nil {
+		return err
+	}
+	f.store, err = store.OpenExisting(cfg.DataDir, installed)
+	if err != nil {
+		return fmt.Errorf("acquire existing installation: %w", err)
+	}
+	return f.preflightArtifacts()
 }
 
 // environmentTargets reports whether any of targets claims environment

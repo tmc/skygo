@@ -34,17 +34,22 @@ func (s *Store) GetArtifactUploadFile(actor auth.Actor, c ArtifactCursor) (uploa
 // does not certify a constructor's live root marker/device/ownership facts.
 func (s *Store) ArtifactInstallation() (out ArtifactInstallation, err error) {
 	err = s.db.View(func(tx *bolt.Tx) error {
-		if tx.Bucket(artifactsBucket) == nil {
-			return nil
-		}
-		st, e := artifactLoad(tx)
-		if e != nil {
-			return e
-		}
-		out = ArtifactInstallation{Enabled: true, ID: st.Root.ID, Unit: st.Root.Unit, Volume: st.Root.Volume}
-		return nil
+		var e error
+		out, e = artifactInstallation(tx)
+		return e
 	})
 	return
+}
+
+func artifactInstallation(tx *bolt.Tx) (ArtifactInstallation, error) {
+	if tx.Bucket(artifactsBucket) == nil {
+		return ArtifactInstallation{}, nil
+	}
+	st, err := artifactLoad(tx)
+	if err != nil {
+		return ArtifactInstallation{}, err
+	}
+	return ArtifactInstallation{Enabled: true, ID: st.Root.ID, Unit: st.Root.Unit, Volume: st.Root.Volume}, nil
 }
 
 func artifactMatchDownload(st *artifactState, c ArtifactDownloadClosure) (artifactRead, error) {

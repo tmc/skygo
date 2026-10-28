@@ -10,4 +10,7 @@
 // Config.ArtifactDir opens an existing private root installed by the explicit
 // stopped InitializeArtifacts operation. It creates no marker or directory.
 // Borrowed Config.Artifacts never supplies workspace-root authority.
+//
+// Config.ExistingInstallation starts only an existing current installation and
+// never creates, initializes or migrates state; see store.InspectExisting.
 package server

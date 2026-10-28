@@ -113,6 +113,12 @@ func (f *serverRun) openArtifacts(directory string) error {
 	if err != nil {
 		return err
 	}
+	return f.openArtifactRoot(directory, installed)
+}
+
+// openArtifactRoot opens and retains the private root and its Files, and
+// requires their identity and marker facts to equal installed.
+func (f *serverRun) openArtifactRoot(directory string, installed store.ArtifactInstallation) error {
 	if !installed.Enabled {
 		return errors.New("artifact metadata not installed")
 	}
@@ -174,7 +180,7 @@ func (f *serverRun) closeStartup(cause error) error {
 		return f.hold("startup functions already launched", cause)
 	}
 	var uncertain *local.ServerLifetimeCloseError
-	if errors.As(cause, &uncertain) || errors.Is(cause, artifact.ErrFileCloseUncertain) {
+	if errors.As(cause, &uncertain) || errors.Is(cause, artifact.ErrFileCloseUncertain) || errors.Is(cause, store.ErrCloseUncertain) || errors.Is(cause, auth.ErrCloseUncertain) {
 		return f.hold("startup owner remains held", cause)
 	}
 	if f.listener != nil {
@@ -286,6 +292,9 @@ func (f *serverRun) shutdown(cause error) error {
 	defer cancelAuthJoin()
 	if err := waitServerOwner(authJoin, f.authDone); err != nil {
 		return f.hold("original authentication remains held", errors.Join(cause, err))
+	}
+	if err := f.engine.Err(); err != nil {
+		return f.hold("authentication file closure remains held", errors.Join(cause, err))
 	}
 	return f.closeResources(cause)
 }

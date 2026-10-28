@@ -256,6 +256,10 @@ func trackJobMetadata(tx *bolt.Tx, j backend.Job, m retainedJob) error {
 	}
 	return putRetentionRecord(tx, retainedJobsBucket, []byte(j.ID), m)
 }
+
+// retentionTables are the tables initializeRetention creates in the retention root.
+var retentionTables = [][]byte{retainedJobsBucket, retainedRequestsBucket, retainedOutputsBucket, retainedClosuresBucket, expiredOutputBucket, resultWitnessBucket, cleanupHeadersBucket, cleanupHeaderIndexBucket, cleanupOperationsBucket, cleanupOperationIndexBucket, retainedScopesBucket}
+
 func initializeRetention(tx *bolt.Tx) error {
 	if retentionRoot(tx) != nil {
 		return validateRetention(tx)
@@ -264,7 +268,7 @@ func initializeRetention(tx *bolt.Tx) error {
 	if e != nil {
 		return e
 	}
-	for _, name := range [][]byte{retainedJobsBucket, retainedRequestsBucket, retainedOutputsBucket, retainedClosuresBucket, expiredOutputBucket, resultWitnessBucket, cleanupHeadersBucket, cleanupHeaderIndexBucket, cleanupOperationsBucket, cleanupOperationIndexBucket, retainedScopesBucket} {
+	for _, name := range retentionTables {
 		if _, e = r.CreateBucket(name); e != nil {
 			return e
 		}
@@ -364,7 +368,7 @@ const timeHour = 3600000000000
 func sumUsage(tx *bolt.Tx) (retentionUsage, error) {
 	u := retentionUsage{MetadataBytesQuota: 2048}
 	add := func(q QuotaDomain, n uint64) error { v, e := addChecked(u[q], n); u[q] = v; return e }
-	for _, name := range [][]byte{retainedJobsBucket, retainedRequestsBucket, retainedOutputsBucket, retainedClosuresBucket, expiredOutputBucket, resultWitnessBucket, cleanupHeadersBucket, cleanupHeaderIndexBucket, cleanupOperationsBucket, cleanupOperationIndexBucket, retainedScopesBucket} {
+	for _, name := range retentionTables {
 		b := retentionTable(tx, name)
 		if b == nil {
 			return u, errors.New("missing retention table")

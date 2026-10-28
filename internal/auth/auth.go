@@ -72,6 +72,7 @@ type Engine struct {
 	hash               [32]byte
 	lastRead           time.Time
 	available          bool
+	held               error // sticky ErrCloseUncertain from a credential file read
 	changed            chan struct{}
 	now                func() time.Time
 	oidcPath           string                        // empty: no OIDC authentication
@@ -223,10 +224,25 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
+// Err returns the retained error of a credential file read whose original
+// Close failed, or nil. Such an Engine is unavailable from then on and never
+// reads the file again; the caller must keep the error and stop.
+func (e *Engine) Err() error {
+	if e == nil {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.held
+}
+
 // refresh reads and publishes the credential file. Freshness dates from the
 // start of the read, so a slow read that returns old bytes cannot renew the
-// window.
+// window. After an uncertain Close it returns that error without reading.
 func (e *Engine) refresh() error {
+	if err := e.Err(); err != nil {
+		return err
+	}
 	start := e.now()
 	c, data, _, err := readConfig(e.path)
 	if err == nil && c.Installation != e.installation {
@@ -235,6 +251,9 @@ func (e *Engine) refresh() error {
 	hash := sha256.Sum256(data)
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	if errors.Is(err, ErrCloseUncertain) {
+		e.held = err
+	}
 	if err == nil && e.snapshot != nil && (c.Generation < e.snapshot.Generation || c.Generation == e.snapshot.Generation && hash != e.hash) {
 		err = ErrConflict
 	}
