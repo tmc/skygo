@@ -70,9 +70,12 @@ Every other field is accepted only as null or refused by the parser with its
 source position. The importer accepts one task document, not the SDK's DAG
 envelope.
 
-The local target refuses images and resource requests at plan time, so an
-imported resource request fails `skygo plan` and creates no job; it is never
-dropped in translation.
+The local target admits CPU and memory requests against host inventory and
+reservations. NVIDIA GPU requests select matching device UUIDs and set
+`CUDA_VISIBLE_DEVICES` and `NVIDIA_VISIBLE_DEVICES` for cooperating workloads.
+These reservations do not enforce CPU or memory limits or provide device
+isolation. Local execution still refuses images and enforced resource limits
+at plan time. Planning creates no job; imported resource fields are preserved.
 
 ## Differences from upstream execution
 
@@ -107,8 +110,9 @@ The fixture scripts in `cmd/skycompat/testdata/script` run the actual
 importer, the actual `skygo` client against a recording server, and an
 actual `skygo` server on the test host. They cover grammar, previews,
 refusals, strict decoding of every emitted file with exact integer and
-reference values, a resource refusal at plan time with no job, a workspace
-refusal before submission and a byte-exact local run of an imported task.
+reference values, CPU/memory import and planning with no job, an image
+refusal at plan time, a workspace refusal before submission and a byte-exact
+local run of an imported task.
 The workspace upload-run-download workflow on Linux, Kubernetes execution
 and comparison with upstream `sky jobs launch` are separate acceptance runs.
 

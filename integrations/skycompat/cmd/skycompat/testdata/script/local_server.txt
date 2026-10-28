@@ -2,12 +2,27 @@
 
 skygo-server start
 
-# Imported resources are never dropped: the local target refuses them at
-# plan time and no job is created.
+# CPU and memory requests survive import and plan against real host inventory.
+# Planning creates no job and does not enforce CPU or memory limits.
+skycompat import --shell /bin/sh --target local admission.yaml
+cp stdout admission.json
+cmp admission.json want-admission.json
+skygo plan -f admission.json
+stdout '\Alocal\n\z'
+! stderr .
+skygo --json plan -f admission.json
+stdout '"target": *"local"'
+! stdout '"id"'
+! stderr .
+skygo jobs list
+cmp stdout jobs-empty.txt
+
+# Imported resource fields are never dropped. This fixture also requests an
+# image, which local execution refuses at plan time without creating a job.
 skycompat import --shell /bin/bash --target local --timeout-seconds 3600 $IMPORT/accept/resources.yaml
 cp stdout resources.json
 ! skygo plan -f resources.json
-stderr 'local execution does not support images or resource requests'
+stderr 'failed_precondition:.*local: unsupported by local execution: images'
 skycompat import --shell /bin/sh --workdir-ref $IMPORT/workdir-ref.json --output out --target local --allow-drop name $IMPORT/kubernetes/task.yaml
 cp stdout kubernetes.json
 ! skygo plan -f kubernetes.json
@@ -43,3 +58,15 @@ it's|a  b|$HOME
 tab	here ✓
 -- jobs-empty.txt --
 ID  TARGET  STATE
+-- admission.yaml --
+run: unused
+resources:
+  cpus: 1
+  memory: 1Ki
+-- want-admission.json --
+{
+  "argv": ["/bin/sh", "-c", "unused"],
+  "cpu_millis": 1000,
+  "memory_bytes": 1024,
+  "target": "local"
+}
