@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/tmc/skygo/internal/backend"
 )
@@ -51,36 +52,147 @@ func storedTask(data []byte, refusal error) error {
 // eachMember calls fn with the value of each member of the JSON object data
 // whose unescaped key equals name under Unicode case folding, in order and
 // including duplicates. Data that is not an object has no members. Data must
-// be valid JSON.
+// be valid JSON: eachMember finds the extent of each value without checking
+// its syntax, and does not copy the values of other members. Each value
+// passed to fn is a copy that fn may retain or modify.
 func eachMember(data []byte, name string, fn func(value []byte) error) error {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 || data[0] != '{' {
 		return nil
 	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	if _, err := d.Token(); err != nil {
-		return err
+	i := memberSpace(data, 1)
+	if i < len(data) && data[i] == '}' {
+		return nil
 	}
-	for d.More() {
-		t, err := d.Token()
+	for i < len(data) && data[i] == '"' {
+		end := memberString(data, i)
+		if end < 0 {
+			break
+		}
+		match, err := memberKeyIs(data[i:end], name)
 		if err != nil {
 			return err
 		}
-		key, ok := t.(string)
-		if !ok {
-			return errors.New("malformed stored record")
+		i = memberSpace(data, end)
+		if i >= len(data) || data[i] != ':' {
+			break
 		}
-		var v json.RawMessage
-		if err := d.Decode(&v); err != nil {
-			return err
+		start := memberSpace(data, i+1)
+		end = memberValue(data, start)
+		if end < 0 {
+			break
 		}
-		if strings.EqualFold(key, name) {
-			if err := fn(bytes.TrimSpace(v)); err != nil {
+		if match {
+			if err := fn(bytes.TrimSpace(bytes.Clone(data[start:end]))); err != nil {
 				return err
 			}
 		}
+		i = memberSpace(data, end)
+		if i < len(data) && data[i] == '}' {
+			return nil
+		}
+		if i >= len(data) || data[i] != ',' {
+			break
+		}
+		i = memberSpace(data, i+1)
 	}
-	return nil
+	return errors.New("malformed stored record")
+}
+
+// memberKeyIs reports whether the JSON string key, unescaped as
+// encoding/json unescapes it, equals name under Unicode case folding.
+// A key of ASCII bytes without escapes unescapes to itself.
+func memberKeyIs(key []byte, name string) (bool, error) {
+	raw := key[1 : len(key)-1]
+	for _, c := range raw {
+		if c == '\\' || c >= utf8.RuneSelf {
+			var s string
+			if err := json.Unmarshal(key, &s); err != nil {
+				return false, err
+			}
+			return strings.EqualFold(s, name), nil
+		}
+	}
+	return strings.EqualFold(string(raw), name), nil
+}
+
+// memberSpace returns the index of the first byte of data at or after i
+// that is not JSON white space.
+func memberSpace(data []byte, i int) int {
+	for i < len(data) {
+		switch data[i] {
+		case ' ', '\t', '\r', '\n':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// memberString returns the end of the JSON string that begins with the
+// quote data[i], or -1 if it is unterminated.
+func memberString(data []byte, i int) int {
+	j := i + 1
+	for {
+		k := bytes.IndexByte(data[j:], '"')
+		if k < 0 {
+			return -1
+		}
+		j += k
+		// A quote preceded by an odd run of backslashes is escaped.
+		n := 0
+		for j-1-n > i && data[j-1-n] == '\\' {
+			n++
+		}
+		if n%2 == 0 {
+			return j + 1
+		}
+		j++
+	}
+}
+
+// memberValue returns the end of the JSON value that begins at data[i], a
+// member value, or -1 if it is incomplete. It skips nested values
+// iteratively, counting only their depth.
+func memberValue(data []byte, i int) int {
+	depth := 0
+	for i < len(data) {
+		switch data[i] {
+		case '"':
+			if i = memberString(data, i); i < 0 {
+				return -1
+			}
+		case '{', '[':
+			depth++
+			i++
+		case '}', ']':
+			if depth == 0 {
+				return -1
+			}
+			depth--
+			i++
+		default:
+			if depth > 0 {
+				i++
+				continue
+			}
+			// A number, true, false or null ends at the delimiter that
+			// follows every member value.
+			j := i
+			for j < len(data) && strings.IndexByte(",} \t\r\n", data[j]) < 0 {
+				j++
+			}
+			if j == i || j == len(data) {
+				return -1
+			}
+			return j
+		}
+		if depth == 0 {
+			return i
+		}
+	}
+	return -1
 }
 
 // decodeStoredJob decodes the persisted job data into j, after refusing a
