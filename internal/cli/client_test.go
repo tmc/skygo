@@ -32,10 +32,29 @@ func TestOptionsHTTPClientDefault(t *testing.T) {
 	}
 }
 
+// This example sends a command's RPC through an injected client to a
+// loopback test server. ClientOptions stays empty: a plain HTTP client
+// verifies no infrastructure binding, so it must not claim one.
 func ExampleNewWithClient() {
-	command := NewWithClient(nil, nil, ClientOptions{})
-	fmt.Println(command.Name())
-	// Output: skygo
+	p, h := skyv1connect.NewControlServiceHandler(&testService{})
+	mux := http.NewServeMux()
+	mux.Handle(p, h)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	rt := &recordingTransport{}
+	c := NewWithClient(nil, &http.Client{Transport: rt}, ClientOptions{})
+	var out, errout bytes.Buffer
+	c.SetOut(&out)
+	c.SetErr(&errout)
+	c.SetArgs([]string{"targets", "list", "--endpoint", srv.URL, "--token", "test-token"})
+	err := c.ExecuteContext(context.Background())
+	fmt.Print(out.String())
+	fmt.Println(err, rt.count())
+	// Output:
+	// NAME   KIND
+	// local  local
+	// <nil> 1
 }
 
 func (t *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
