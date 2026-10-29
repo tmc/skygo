@@ -137,6 +137,69 @@ with setup or outputs also needs workdir. Download requires a new destination;
 it verifies the archive and digest before creating that directory. An extraction
 failure can leave the newly created private destination for inspection.
 
+## Synchronize a SkyPilot workdir
+
+`run --sync-workdir` snapshots a supported SkyPilot YAML task's local workdir,
+uploads it, and submits the task. The client may run on macOS or Linux; workspace
+execution still requires a Linux server advertising `workdir-snapshot-v1`.
+The server also needs artifact storage and retained requests enabled.
+
+With the server stopped, enable retention in its existing data directory, then
+restart it with the same storage and authentication configuration:
+
+```sh
+skygo state retention enable --data-dir state
+skygo server --data-dir state --artifact-dir artifacts
+```
+
+See [retention](retention.md) before enabling it on existing state. This is an
+alternative to the explicit upload example above. In a second terminal, start
+in a new private working directory, check the server, and create a task:
+
+```sh
+skygo info --require artifact-begin-requests-v1
+skygo info --target local --require workdir-snapshot-v1
+umask 077
+mkdir input
+printf 'frozen\n' > input/seed.txt
+cat > task.yaml <<'EOF'
+workdir: input
+setup: touch prepared
+run: test "$EXPLICIT" = frozen && test -f prepared && cat seed.txt > result.txt
+EOF
+skygo --json run task.yaml --sync-workdir --workspace-state "$PWD/workspace-state" \
+  --env EXPLICIT=frozen --output result.txt --wait
+```
+
+Keep the workdir quiescent while it is snapshotted. The complete snapshot is
+uploaded; keep credentials and unrelated files outside it. The existing
+[snapshot limits](#expiry-and-limits) apply. Paths must be trusted, and symbolic
+links, hard links and special files are refused. This is not a filesystem sandbox.
+
+`--workspace-state` names the private journal directory, outside the workdir;
+its parent must already exist. If omitted, the client uses its platform user
+cache directory and prints `workspace-state:` to stderr. The journal contains
+the frozen YAML, explicit options, archive and recovery identities. Keep it
+private and preserve it after a timeout or interruption.
+
+Resume with the same HTTP(S) endpoint and the same effective credential:
+
+```sh
+skygo --json run --resume-workspace "$PWD/workspace-state" --wait
+```
+
+Resume uses the saved task and archive even if the original YAML or workdir is
+no longer present. Once submission is accepted, it returns the same job ID;
+it does not create another job. Do not supply a task path or environment,
+output, placement or request overrides when resuming. Interrupting the client
+does not cancel an accepted job.
+
+The initial workflow refuses SSH transports, redirects and credential rotation.
+A changed endpoint or credential, an incomplete journal, unknown journal files,
+or an expired request domain can prevent recovery. Preserve the existing intent
+for inspection; do not delete it or start a new request to resolve an uncertain
+submission. Resume does not recreate missing server storage or extend expiry.
+
 ## Resume or remove a transfer
 
 Upload prints an `upload-id:` recovery hint to stderr. Preserve it if the command
@@ -182,8 +245,9 @@ their existing upload and job request identities.
 This RPC feature requires database schema 14. Opening a schema 13 database
 validates it before adding the empty request table and format marker. Older
 servers refuse the resulting database. The serving storage family remains v1
-and the artifact root format remains 8. Automatic workspace synchronization and
-a client request journal are not implemented by this RPC feature.
+and the artifact root format remains 8. The CLI's
+[workspace synchronization](#synchronize-a-skypilot-workdir) uses this feature to
+recover its persisted Begin request.
 
 ## Expiry and limits
 

@@ -69,8 +69,11 @@ Explicitly install an artifact directory before starting transfers. Upload a
 quiescent input directory, reference it in a task's `workdir`, run optional setup,
 and collect declared outputs. Local workspace execution requires Linux process
 ownership support; transfer and target capabilities are discovered separately.
-The [artifact guide](docs/artifacts.md) includes a complete upload/run/download
-example, resume commands, limits, expiry, and storage cautions.
+For supported SkyPilot YAML, `run --sync-workdir` uploads the local workdir and
+keeps a private recovery journal. `run --resume-workspace DIR` reuses that frozen
+intent with the same endpoint and credential. See [workspace synchronization](docs/artifacts.md#synchronize-a-skypilot-workdir)
+for the required server setup and limits. The [artifact guide](docs/artifacts.md)
+also covers explicit upload/run/download commands, expiry, and storage cautions.
 
 ## Finite retries
 
