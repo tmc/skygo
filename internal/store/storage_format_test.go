@@ -97,6 +97,21 @@ func TestFixturePair(t *testing.T) {
 // must be empty.
 func formatStrip(t *testing.T, buckets []fixtureBucket) ([]fixtureBucket, bool) {
 	t.Helper()
+	for _, b := range buckets {
+		if bytes.Equal(b.Name, workerGroupsBucket) {
+			for _, e := range b.Entries {
+				var ext struct {
+					Barrier json.RawMessage `json:"barrier"`
+				}
+				if err := json.Unmarshal(e.Value, &ext); err != nil {
+					t.Fatal(err)
+				}
+				if len(ext.Barrier) != 0 {
+					t.Fatal("cannot strip populated worker barrier model")
+				}
+			}
+		}
+	}
 	tagged := false
 	out := make([]fixtureBucket, 0, len(buckets))
 	for _, b := range buckets {
@@ -109,6 +124,12 @@ func formatStrip(t *testing.T, buckets []fixtureBucket) ([]fixtureBucket, bool) 
 		case bytes.Equal(b.Name, metadataBucket):
 			var entries []fixtureEntry
 			for _, e := range b.Entries {
+				if bytes.Equal(e.Key, workerBarrierStorageFormatKey) {
+					if string(e.Value) != workerBarrierStorageFormat {
+						t.Fatalf("worker barrier storage format tag %q", e.Value)
+					}
+					continue
+				}
 				if bytes.Equal(e.Key, artifactBeginStorageFormatKey) {
 					if string(e.Value) != artifactBeginStorageFormat {
 						t.Fatalf("artifact Begin storage format tag %q", e.Value)

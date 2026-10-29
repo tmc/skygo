@@ -65,28 +65,30 @@ var workerGen = sync.OnceValue(func() [16]byte {
 })
 
 type workerGroupRecord struct {
-	Job        string                 `json:"job"`
-	Principal  string                 `json:"principal"`
-	Domain     RequestDomain          `json:"domain"`
-	RequestID  string                 `json:"request_id"`
-	Authority  auth.Delegation        `json:"authority"`
-	TaskDigest string                 `json:"task_digest"`
-	Spec       backend.WorkerSpec     `json:"spec"`
-	SpecDigest string                 `json:"spec_digest"`
-	Demand     workeradmission.Demand `json:"demand"`
-	Phase      WorkerGroupPhase       `json:"phase"`
-	Reserved   bool                   `json:"reserved"`
-	Revoked    bool                   `json:"revoked"`
-	Revision   uint64                 `json:"revision"`
-	CreatedAt  time.Time              `json:"created_at"`
+	Job        string                    `json:"job"`
+	Principal  string                    `json:"principal"`
+	Domain     RequestDomain             `json:"domain"`
+	RequestID  string                    `json:"request_id"`
+	Authority  auth.Delegation           `json:"authority"`
+	TaskDigest string                    `json:"task_digest"`
+	Spec       backend.WorkerSpec        `json:"spec"`
+	SpecDigest string                    `json:"spec_digest"`
+	Demand     workeradmission.Demand    `json:"demand"`
+	Phase      WorkerGroupPhase          `json:"phase"`
+	Reserved   bool                      `json:"reserved"`
+	Revoked    bool                      `json:"revoked"`
+	Revision   uint64                    `json:"revision"`
+	CreatedAt  time.Time                 `json:"created_at"`
+	Barrier    *workerBarrierGroupRecord `json:"barrier,omitempty"`
 }
 
 type workerEffectRecord struct {
-	State WorkerIntent `json:"state"`
-	Seq   uint64       `json:"seq"`
-	Gen   string       `json:"gen"`
-	At    time.Time    `json:"at"`
-	Error string       `json:"error"`
+	State     WorkerIntent `json:"state"`
+	Seq       uint64       `json:"seq"`
+	Gen       string       `json:"gen"`
+	At        time.Time    `json:"at"`
+	Error     string       `json:"error"`
+	Unsettled bool         `json:"unsettled,omitempty"`
 }
 
 type workerPodRecord struct {
@@ -106,19 +108,20 @@ type workerObservedRecord struct {
 }
 
 type workerMemberRecord struct {
-	Job        string                `json:"job"`
-	Rank       uint8                 `json:"rank"`
-	Counter    uint64                `json:"counter"`
-	Create     workerEffectRecord    `json:"create"`
-	Release    workerEffectRecord    `json:"release"`
-	Cancel     workerEffectRecord    `json:"cancel"`
-	Remove     workerEffectRecord    `json:"remove"`
-	Pod        workerPodRecord       `json:"pod"`
-	ReleaseAck bool                  `json:"release_ack"`
-	Revision   string                `json:"revision"`
-	CancelAck  bool                  `json:"cancel_ack"`
-	Removed    bool                  `json:"removed"`
-	Observed   *workerObservedRecord `json:"observed"`
+	Job        string                     `json:"job"`
+	Rank       uint8                      `json:"rank"`
+	Counter    uint64                     `json:"counter"`
+	Create     workerEffectRecord         `json:"create"`
+	Release    workerEffectRecord         `json:"release"`
+	Cancel     workerEffectRecord         `json:"cancel"`
+	Remove     workerEffectRecord         `json:"remove"`
+	Pod        workerPodRecord            `json:"pod"`
+	ReleaseAck bool                       `json:"release_ack"`
+	Revision   string                     `json:"revision"`
+	CancelAck  bool                       `json:"cancel_ack"`
+	Removed    bool                       `json:"removed"`
+	Observed   *workerObservedRecord      `json:"observed"`
+	Barrier    *workerBarrierMemberRecord `json:"barrier,omitempty"`
 }
 
 func (m *workerMemberRecord) effect(e WorkerEffect) *workerEffectRecord {
@@ -131,12 +134,24 @@ func (m *workerMemberRecord) effect(e WorkerEffect) *workerEffectRecord {
 		return &m.Cancel
 	case WorkerRemove:
 		return &m.Remove
+	case WorkerStart:
+		if m.Barrier != nil {
+			return &m.Barrier.Start
+		}
+	case WorkerRecover:
+		if m.Barrier != nil {
+			return &m.Barrier.Recover
+		}
 	}
 	return nil
 }
 
 func (m *workerMemberRecord) effects() []*workerEffectRecord {
-	return []*workerEffectRecord{&m.Create, &m.Release, &m.Cancel, &m.Remove}
+	out := []*workerEffectRecord{&m.Create, &m.Release, &m.Cancel, &m.Remove}
+	if m.Barrier != nil {
+		out = append(out, &m.Barrier.Start, &m.Barrier.Recover)
+	}
+	return out
 }
 
 func (m *workerMemberRecord) pod() backend.WorkerResource {
@@ -147,6 +162,9 @@ func (m *workerMemberRecord) pod() backend.WorkerResource {
 // created or retired by UID with stop or never-released proof. A member whose
 // Create is Unknown is never settled, whatever removal evidence it has.
 func (m *workerMemberRecord) settled() bool {
+	if m.Barrier != nil {
+		return workerBarrierMemberSettled(*m)
+	}
 	for _, e := range m.effects() {
 		if e.State == WorkerIntended {
 			return false
@@ -209,17 +227,22 @@ func encodeWorkerGroupRecord(r workerGroupRecord) ([]byte, error) {
 	if !validAttemptID(r.Job) || !validPrincipal([]byte(r.Principal)) || !validRetainedRequestID(r.RequestID) || !validRequestDomain(r.Domain) || !validWorkflowAuthority(r.Authority, r.Principal) || !artifactHex(r.TaskDigest, 64) {
 		return nil, errors.New("invalid worker group identity")
 	}
-	if !workerSpecValid(r.Spec) || r.SpecDigest != workerSpecDigest(r.Spec) || !workerDemandValid(r.Spec, r.Demand) {
+	if !(r.Barrier == nil && workerSpecValid(r.Spec) || r.Barrier != nil && workerBarrierSpecValid(r.Spec)) || r.SpecDigest != workerSpecDigest(r.Spec) || !workerDemandValid(r.Spec, r.Demand) {
 		return nil, errors.New("invalid worker group spec")
 	}
 	if r.Phase > WorkerGroupDone || r.Reserved != (r.Phase == WorkerGroupAdmitted || r.Phase == WorkerGroupActive || r.Phase == WorkerGroupHeld) || r.Revision == 0 || r.CreatedAt.IsZero() || !workerTime(r.CreatedAt) {
 		return nil, errors.New("invalid worker group record")
 	}
+	if r.Barrier != nil {
+		if err := validWorkerBarrierGroupRecord(*r.Barrier); err != nil {
+			return nil, err
+		}
+	}
 	data, err := json.Marshal(r)
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > workerGroupLimit {
+	if len(data) > workerRecordGroupLimit(r) {
 		return nil, errors.New("worker group record exceeds limit")
 	}
 	return data, nil
@@ -247,7 +270,11 @@ func encodeWorkerMemberRecord(m workerMemberRecord) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	if len(data) > workerMemberLimit {
+	limit := workerMemberLimit
+	if m.Barrier != nil {
+		limit = workerBarrierMemberLimit
+	}
+	if len(data) > limit {
 		return nil, errors.New("worker member record exceeds limit")
 	}
 	return data, nil
@@ -302,7 +329,10 @@ func validWorkerMember(m workerMemberRecord) error {
 			}
 			seqs[e.Seq] = true
 		}
-		if e.Error != workerText(e.Error, workerErrorLimit) || e.Error != "" && e.State != WorkerUnknown && !(e == &m.Create && e.State == WorkerRecorded) {
+		if e.Unsettled && (m.Barrier == nil || !m.Barrier.LocalUnsettled || e.State != WorkerRecorded && e.State != WorkerUnknown || e.Error == "") {
+			return errors.New("invalid worker unsettled effect")
+		}
+		if e.Error != workerText(e.Error, workerErrorLimit) || e.Error != "" && e.State != WorkerUnknown && !(e.State == WorkerRecorded && (e == &m.Create || m.Barrier != nil)) {
 			return errors.New("invalid worker effect error")
 		}
 	}
@@ -313,13 +343,13 @@ func validWorkerMember(m workerMemberRecord) error {
 		return errors.New("invalid worker acknowledgement")
 	}
 	pod := m.Pod != (workerPodRecord{})
-	if pod && m.Create.State != WorkerRecorded && m.Create.State != WorkerUnknown || m.Create.State == WorkerRecorded && m.Pod.UID == "" {
+	if pod && m.Create.State != WorkerRecorded && m.Create.State != WorkerUnknown || m.Create.State == WorkerRecorded && m.Pod.UID == "" && m.Barrier == nil {
 		return errors.New("invalid worker pod")
 	}
-	if m.Release.State != WorkerNone && m.Create.State != WorkerRecorded || (m.Cancel.State != WorkerNone || m.Remove.State != WorkerNone) && m.Pod.UID == "" {
+	if m.Release.State != WorkerNone && m.Create.State != WorkerRecorded || m.Cancel.State != WorkerNone && m.Pod.UID == "" || m.Remove.State != WorkerNone && m.Pod.UID == "" && m.Barrier == nil {
 		return errors.New("invalid worker effect order")
 	}
-	if m.Removed && (m.Remove.State != WorkerRecorded || m.Pod.UID == "") {
+	if m.Removed && (m.Pod.UID == "" || m.Remove.State != WorkerRecorded && !(m.Barrier != nil && (m.Remove.State == WorkerUnknown || m.Barrier.Recover.State == WorkerRecorded))) {
 		return errors.New("invalid worker removal")
 	}
 	if o := m.Observed; o != nil {
@@ -329,6 +359,9 @@ func validWorkerMember(m workerMemberRecord) error {
 		if err := validWorkerObserved(*o); err != nil {
 			return err
 		}
+	}
+	if m.Barrier != nil {
+		return validWorkerBarrierMember(m)
 	}
 	return nil
 }
@@ -393,7 +426,7 @@ func workerGroupUsage(tx *bolt.Tx) (n uint64, err error) {
 		if e != nil {
 			return 0, e
 		}
-		if n, e = addChecked(n, workerGroupReserve(g.Spec.Count)); e != nil {
+		if n, e = addChecked(n, workerRecordReserve(g)); e != nil {
 			return 0, e
 		}
 	}
@@ -422,7 +455,7 @@ func (m *retentionMutation) dropWorkerGroup(id string) error {
 	if err := m.coreDelete(workerGroupsBucket, workerGroupKey(id)); err != nil {
 		return err
 	}
-	return m.adjust(MetadataBytesQuota, 0, workerGroupReserve(g.Spec.Count))
+	return m.adjust(MetadataBytesQuota, 0, workerRecordReserve(g))
 }
 
 // migrateWorkerGroupFence validates the genuine schema9 installation before
@@ -556,6 +589,14 @@ func validateWorkerGroup(tx *bolt.Tx, g workerGroupRecord, ms []workerMemberReco
 	}
 	if tx.Bucket(attemptJobsBucket).Get([]byte(g.Job)) != nil || remoteRoute(tx, g.Job) || retentionTable(tx, cleanupHeadersBucket).Get([]byte(g.Job)) != nil {
 		return errors.New("worker group has an ordinary relation")
+	}
+	if g.Barrier != nil {
+		return validateWorkerBarrierGroup(tx, g, ms)
+	}
+	for _, m := range ms {
+		if m.Barrier != nil {
+			return errors.New("mixed worker barrier records")
+		}
 	}
 	ref := workerGroupIdentity(j, g)
 	created, unknown, released := 0, 0, true

@@ -301,7 +301,12 @@ func TestInspectExistingRefuses(t *testing.T) {
 			binary.BigEndian.PutUint64(n[:], schemaVersion-1)
 			modelEdit(t, dir, func(tx *bolt.Tx) error {
 				// This is a MODEL older format, not a genuine old writer.
-				// Its marker must not retain a later serving family.
+				// Its marker must not retain later storage families.
+				if schemaVersion-1 < workerBarrierSchema {
+					if err := workerBarrierStripModel(tx); err != nil {
+						return err
+					}
+				}
 				if schemaVersion-1 < artifactBeginRequestSchema {
 					if err := artifactBeginStripModel(tx); err != nil {
 						return err

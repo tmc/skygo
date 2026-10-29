@@ -10,7 +10,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = artifactBeginRequestSchema
+const schemaVersion = workerBarrierSchema
 
 var schemaKey = []byte("schema_version")
 
@@ -195,6 +195,11 @@ func initialize(tx *bolt.Tx, owner string) error {
 	}
 	if schemaNumber(tx) == servingSchema {
 		if err := migrateArtifactBeginRequests(tx); err != nil {
+			return err
+		}
+	}
+	if schemaNumber(tx) == artifactBeginRequestSchema {
+		if err := migrateWorkerBarrier(tx); err != nil {
 			return err
 		}
 	}

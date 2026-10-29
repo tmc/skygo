@@ -104,6 +104,11 @@ func TestEnvironmentRetirementMigration(t *testing.T) {
 	after := workflowDatabase(t, f.s)
 	// Schema13 adds the serving tag and empty serving family; schema14 adds
 	// the artifact Begin tag and, when installed, an empty request table.
+	// Schema15 adds only the worker barrier tag to this modeled predecessor.
+	if after[string(metadataBucket)+"/"+string(workerBarrierStorageFormatKey)] != workerBarrierStorageFormat {
+		t.Error("migration omitted the worker barrier storage format tag")
+	}
+	delete(after, string(metadataBucket)+"/"+string(workerBarrierStorageFormatKey))
 	if after[string(metadataBucket)+"/"+string(artifactBeginStorageFormatKey)] != artifactBeginStorageFormat {
 		t.Error("migration omitted the artifact Begin storage format tag")
 	}

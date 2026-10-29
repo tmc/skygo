@@ -2105,17 +2105,17 @@ func TestWorkerGroupRecordSizes(t *testing.T) {
 		Job:      strings.Repeat("f", 32),
 		Rank:     backend.MaxWorkers - 1,
 		Counter:  math.MaxUint64,
-		Create:   workerEffectRecord{WorkerRecorded, seq(3), gen, end, text},
-		Release:  workerEffectRecord{WorkerUnknown, seq(2), gen, end, text},
-		Cancel:   workerEffectRecord{WorkerUnknown, seq(1), gen, end, text},
-		Remove:   workerEffectRecord{WorkerUnknown, seq(0), gen, end, text},
+		Create:   workerEffectRecord{State: WorkerRecorded, Seq: seq(3), Gen: gen, At: end, Error: text},
+		Release:  workerEffectRecord{State: WorkerUnknown, Seq: seq(2), Gen: gen, At: end, Error: text},
+		Cancel:   workerEffectRecord{State: WorkerUnknown, Seq: seq(1), Gen: gen, At: end, Error: text},
+		Remove:   workerEffectRecord{State: WorkerUnknown, Seq: seq(0), Gen: gen, At: end, Error: text},
 		Pod:      workerPodRecord{strings.Repeat("p", 63), opaque},
 		Observed: observed,
 	}
 	acked := unknown
-	acked.Release = workerEffectRecord{WorkerRecorded, seq(2), gen, end, ""}
-	acked.Cancel = workerEffectRecord{WorkerRecorded, seq(1), gen, end, ""}
-	acked.Remove = workerEffectRecord{WorkerRecorded, seq(0), gen, end, ""}
+	acked.Release = workerEffectRecord{State: WorkerRecorded, Seq: seq(2), Gen: gen, At: end, Error: ""}
+	acked.Cancel = workerEffectRecord{State: WorkerRecorded, Seq: seq(1), Gen: gen, At: end, Error: ""}
+	acked.Remove = workerEffectRecord{State: WorkerRecorded, Seq: seq(0), Gen: gen, At: end, Error: ""}
 	acked.ReleaseAck, acked.Revision, acked.CancelAck, acked.Removed = true, strings.Repeat("r", workerRevisionLimit), true, true
 	for name, m := range map[string]workerMemberRecord{"unknown": unknown, "acknowledged": acked} {
 		data, err := encodeWorkerMemberRecord(m)

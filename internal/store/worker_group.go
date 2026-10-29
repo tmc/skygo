@@ -73,6 +73,10 @@ const (
 	WorkerRelease
 	WorkerCancel
 	WorkerRemove
+	// WorkerStart delivers a committed barrier token.
+	WorkerStart
+	// WorkerRecover retires an original removal with positive evidence.
+	WorkerRecover
 )
 
 // WorkerToken names one durable intent: one effect of one member at that
@@ -87,8 +91,9 @@ type WorkerToken struct {
 
 // WorkerGroup is a copy of one group's durable state. Job's task requests no
 // workers, and Job keeps an empty Status.Instance; its status is the group aggregate.
-// Stopping is a projection: Phase Active with cancellation, revocation or a
-// terminal aggregate. Revision is the group compare-and-swap token.
+// Stopping projects cancellation, revocation or a terminal aggregate for Active
+// groups and versioned Held groups. Legacy Held groups keep Stopping false.
+// Revision is the group compare-and-swap token.
 type WorkerGroup struct {
 	Job       backend.Job
 	Group     backend.WorkerGroup
@@ -103,16 +108,19 @@ type WorkerGroup struct {
 	Revoked   bool
 	Revision  uint64
 	Members   []WorkerMember
+	Barrier   *WorkerBarrierGroup
 }
 
 // WorkerEffectState is one member effect. Seq, Gen and At are nonzero exactly
 // when State is not WorkerNone. Error is sanitized text.
 type WorkerEffectState struct {
-	State WorkerIntent
-	Seq   uint64
-	Gen   [16]byte
-	At    time.Time
-	Error string
+	// Unsettled retains the original effect's local-owner failure marker.
+	Unsettled bool
+	State     WorkerIntent
+	Seq       uint64
+	Gen       [16]byte
+	At        time.Time
+	Error     string
 }
 
 // WorkerMember is one rank. Pod is the original Create return and never
@@ -130,6 +138,7 @@ type WorkerMember struct {
 	CancelAck  bool
 	Removed    bool
 	Observed   *WorkerObserved
+	Barrier    *WorkerBarrierMember
 }
 
 // WorkerObserved is a rank's last accepted observation. ExitCode is set only
@@ -153,7 +162,11 @@ type WorkerObserved struct {
 // It requires enabled retention and returns ErrFull while 64 groups are not
 // Done. A Done group keeps its rows and reserve until Prune retires it with
 // its job, so reclaiming group storage requires configured pruning.
-func (s *Store) SubmitWorkerGroup(actor auth.Actor, r WorkerGroupRequest) (out WorkerGroup, err error) {
+func (s *Store) SubmitWorkerGroup(actor auth.Actor, r WorkerGroupRequest) (WorkerGroup, error) {
+	return s.submitWorkerGroup(actor, r, false)
+}
+
+func (s *Store) submitWorkerGroup(actor auth.Actor, r WorkerGroupRequest, barrier bool) (out WorkerGroup, err error) {
 	if err = s.authorize(actor, auth.Mutate); err != nil {
 		return
 	}
@@ -176,7 +189,7 @@ func (s *Store) SubmitWorkerGroup(actor auth.Actor, r WorkerGroupRequest) (out W
 	if len(raw) > 256<<10 {
 		return out, errors.New("task exceeds limit")
 	}
-	if !workerSpecValid(r.Spec) {
+	if !workerSpecValid(r.Spec) && !(barrier && workerBarrierSpecValid(r.Spec)) {
 		return out, errors.New("invalid worker group spec")
 	}
 	if r.Demand.Ranks != uint32(r.Spec.Count) || r.Demand.CPUMillis == 0 || r.Demand.MemoryBytes == 0 {
@@ -194,7 +207,19 @@ func (s *Store) SubmitWorkerGroup(actor auth.Actor, r WorkerGroupRequest) (out W
 	}
 	task := backend.CloneTask(r.Task)
 	var result error
-	err = s.db.Update(func(tx *bolt.Tx) error {
+	err = s.db.Update(func(tx *bolt.Tx) (commitErr error) {
+		oldPhase := bytes.Clone(retentionRoot(tx).Get(retentionStateKey))
+		if barrier {
+			if schemaNumber(tx) < workerBarrierSchema {
+				return ErrNotCurrent
+			}
+			check := workerBarrierBudget(tx, id, actor.Principal(), r.Domain, r.RequestID)
+			defer func() {
+				if commitErr == nil {
+					commitErr = check()
+				}
+			}()
+		}
 		now := s.now().UTC()
 		st, res, e := gateDomain(tx, r.Domain, now)
 		if e != nil {
@@ -207,6 +232,9 @@ func (s *Store) SubmitWorkerGroup(actor auth.Actor, r WorkerGroupRequest) (out W
 		var found bool
 		out, found, result = lookupWorkerGroupRecord(tx, actor, r.Domain, r.RequestID, task, r.Spec)
 		if found || result != nil {
+			if barrier && bytes.Equal(oldPhase, retentionRoot(tx).Get(retentionStateKey)) {
+				return errArtifactBeginNoChange
+			}
 			return nil
 		}
 		if r.Domain.Epoch == 0 {
@@ -226,9 +254,12 @@ func (s *Store) SubmitWorkerGroup(actor auth.Actor, r WorkerGroupRequest) (out W
 			result = ErrFull
 			return nil
 		}
-		out, e = acceptWorkerGroup(tx, actor.Principal(), r, task, id, now)
+		out, e = acceptWorkerGroup(tx, actor.Principal(), r, task, id, now, barrier)
 		return e
 	})
+	if errors.Is(err, errArtifactBeginNoChange) {
+		err = nil
+	}
 	if err == nil {
 		err = result
 	}
@@ -288,7 +319,7 @@ func lookupWorkerGroupRecord(tx *bolt.Tx, actor auth.Actor, d RequestDomain, id 
 	return w.view(), true, nil
 }
 
-func acceptWorkerGroup(tx *bolt.Tx, principal string, r WorkerGroupRequest, task backend.Task, id string, now time.Time) (WorkerGroup, error) {
+func acceptWorkerGroup(tx *bolt.Tx, principal string, r WorkerGroupRequest, task backend.Task, id string, now time.Time, barrier bool) (WorkerGroup, error) {
 	b := tx.Bucket(workerGroupsBucket)
 	if b == nil {
 		return WorkerGroup{}, errors.New("missing worker group metadata")
@@ -304,12 +335,23 @@ func acceptWorkerGroup(tx *bolt.Tx, principal string, r WorkerGroupRequest, task
 	if err = trackJob(tx, j, retainedJob{Principal: principal, Domain: r.Domain, RequestID: r.RequestID, Storage: backend.RemoteOutput}, requestRecord{Principal: principal, Domain: r.Domain, RequestID: r.RequestID, JobID: j.ID, TaskDigest: digest}); err != nil {
 		return WorkerGroup{}, err
 	}
-	if err = adjust(tx, MetadataBytesQuota, workerGroupReserve(r.Spec.Count), 0); err != nil {
+	reserve := workerGroupReserve(r.Spec.Count)
+	if barrier {
+		reserve = workerRecordReserve(workerGroupRecord{Job: id, Spec: r.Spec, Barrier: &workerBarrierGroupRecord{Version: 1}})
+	}
+	if err = adjust(tx, MetadataBytesQuota, reserve, 0); err != nil {
 		return WorkerGroup{}, err
 	}
 	w := &workerState{job: j, status: j.Status, g: workerGroupRecord{Job: j.ID, Principal: principal, Domain: r.Domain, RequestID: r.RequestID, Authority: r.Authority, TaskDigest: hex.EncodeToString(digest[:]), Spec: r.Spec, SpecDigest: workerSpecDigest(r.Spec), Demand: r.Demand, Phase: WorkerGroupQueued, CreatedAt: now}}
+	if barrier {
+		w.g.Barrier = &workerBarrierGroupRecord{Version: 1}
+	}
 	for rank := range r.Spec.Count {
-		w.m = append(w.m, workerMemberRecord{Job: j.ID, Rank: rank})
+		m := workerMemberRecord{Job: j.ID, Rank: rank}
+		if barrier {
+			m.Barrier = &workerBarrierMemberRecord{Version: 1}
+		}
+		w.m = append(w.m, m)
 	}
 	if err = w.save(tx, now); err != nil {
 		return WorkerGroup{}, err
@@ -520,6 +562,9 @@ func (s *Store) IntendWorker(id string, rev uint64, rank uint8, e WorkerEffect, 
 		if err != nil {
 			return err
 		}
+		if w.g.Barrier != nil {
+			return errors.New("worker barrier requires typed intent")
+		}
 		if int(rank) >= len(w.m) {
 			return errors.New("worker rank out of range")
 		}
@@ -656,6 +701,9 @@ func (s *Store) RecordWorkerRemoved(tok WorkerToken, got backend.WorkerRemoval, 
 // original call can no longer return. A lost Create holds the group. An
 // intent of this process is refused, since its call may still be in flight.
 func (s *Store) RecordWorkerLost(tok WorkerToken, now time.Time) (WorkerGroup, error) {
+	if g, err := s.WorkerGroup(tok.Job); err == nil && g.Barrier != nil {
+		return s.recordWorkerBarrierLost(tok, now)
+	}
 	return s.recordWorker(tok, tok.Effect, now, func(w *workerState, m *workerMemberRecord, x *workerEffectRecord) error {
 		if x.Gen == workerGenString(workerGen()) {
 			return errWorkerIntentLive
@@ -682,6 +730,9 @@ func (s *Store) recordWorker(tok WorkerToken, e WorkerEffect, now time.Time, fn 
 		w, err := loadWorkerState(tx, tok.Job)
 		if err != nil {
 			return err
+		}
+		if w.g.Barrier != nil {
+			return ErrWorkerGroupStale
 		}
 		if int(tok.Rank) >= len(w.m) || e > WorkerRemove {
 			return ErrWorkerGroupStale
@@ -851,7 +902,15 @@ func loadWorkerRevision(tx *bolt.Tx, id string, rev uint64) (*workerState, error
 
 // save writes the group's rows with the next revision, and the job row if
 // its status changed.
-func (w *workerState) save(tx *bolt.Tx, now time.Time) error {
+func (w *workerState) save(tx *bolt.Tx, now time.Time) (err error) {
+	if w.g.Barrier != nil {
+		check := workerBarrierBudget(tx, w.g.Job, w.g.Principal, w.g.Domain, w.g.RequestID)
+		defer func() {
+			if err == nil {
+				err = check()
+			}
+		}()
+	}
 	w.g.Revision++
 	if w.job.Status != w.status {
 		if now.After(w.job.UpdatedAt) {
@@ -887,6 +946,10 @@ func (w *workerState) save(tx *bolt.Tx, now time.Time) error {
 // exited 0; canceled; a rank exited nonzero; revoked; a rank was seen
 // running; a Create was intended; queued. A terminal status never changes.
 func (w *workerState) aggregate() {
+	if w.g.Barrier != nil {
+		w.aggregateBarrier()
+		return
+	}
 	if w.job.Status.State.Terminal() {
 		return
 	}
@@ -931,6 +994,10 @@ func (w *workerState) aggregate() {
 
 // settle applies the two settling rules. A Held group never settles.
 func (w *workerState) settle() {
+	if w.g.Barrier != nil {
+		w.settleBarrier()
+		return
+	}
 	terminal := w.job.Status.State.Terminal()
 	switch w.g.Phase {
 	case WorkerGroupQueued, WorkerGroupAdmitted:
@@ -962,7 +1029,11 @@ func (w *workerState) view() WorkerGroup {
 		j.Status.ExitCode = &code
 	}
 	out := WorkerGroup{Job: j, Group: workerGroupIdentity(w.job, w.g), Principal: w.g.Principal, Domain: w.g.Domain, RequestID: w.g.RequestID, Authority: w.g.Authority, Demand: w.g.Demand, Phase: w.g.Phase, Reserved: w.g.Reserved, Revoked: w.g.Revoked, Revision: w.g.Revision}
-	out.Stopping = w.g.Phase == WorkerGroupActive && (j.CancelRequested || w.g.Revoked || j.Status.State.Terminal())
+	if w.g.Barrier != nil {
+		b := w.g.Barrier
+		out.Barrier = &WorkerBarrierGroup{Version: b.Version, Decision: b.Decision, DecidedAt: b.DecidedAt}
+	}
+	out.Stopping = (w.g.Phase == WorkerGroupActive || w.g.Barrier != nil && w.g.Phase == WorkerGroupHeld) && (j.CancelRequested || w.g.Revoked || j.Status.State.Terminal())
 	for _, m := range w.m {
 		v := WorkerMember{Rank: m.Rank, Counter: m.Counter, Create: workerEffectView(m.Create), Release: workerEffectView(m.Release), Cancel: workerEffectView(m.Cancel), Remove: workerEffectView(m.Remove), Pod: m.pod(), ReleaseAck: m.ReleaseAck, Revision: m.Revision, CancelAck: m.CancelAck, Removed: m.Removed}
 		if o := m.Observed; o != nil {
@@ -972,13 +1043,14 @@ func (w *workerState) view() WorkerGroup {
 				v.Observed.ExitCode = &code
 			}
 		}
+		v.Barrier = workerBarrierMemberView(m)
 		out.Members = append(out.Members, v)
 	}
 	return out
 }
 
 func workerEffectView(e workerEffectRecord) WorkerEffectState {
-	out := WorkerEffectState{State: e.State, Seq: e.Seq, At: e.At, Error: e.Error}
+	out := WorkerEffectState{Unsettled: e.Unsettled, State: e.State, Seq: e.Seq, At: e.At, Error: e.Error}
 	g, _ := hex.DecodeString(e.Gen)
 	copy(out.Gen[:], g)
 	return out

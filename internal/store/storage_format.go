@@ -25,6 +25,8 @@ const (
 	servingSchema = 13
 	// artifactBeginRequestSchema adds scoped upload-begin request witnesses.
 	artifactBeginRequestSchema = 14
+	// workerBarrierSchema adds the versioned main-start barrier in existing worker rows.
+	workerBarrierSchema = 15
 )
 
 // servingStorageFormatKey names the metadata scalar that the schema13
@@ -120,6 +122,9 @@ func checkFixedStorageFormat(tx *bolt.Tx, n uint64) error {
 		return err
 	}
 	if err := checkArtifactBeginRequestFormat(tx, n); err != nil {
+		return err
+	}
+	if err := checkWorkerBarrierFormat(tx, n); err != nil {
 		return err
 	}
 	// These are the actual family ordinals: published schema9 already

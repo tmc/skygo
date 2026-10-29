@@ -44,7 +44,7 @@ type responseKey struct{}
 // encryption is the caller's responsibility. The control and handler must share
 // one Engine.
 func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
-	return newHandler(c, engine, nil, nil)
+	return newHandler(c, engine, nil, nil, nil)
 }
 
 // NewEnvironmentHandler is NewHandler that also serves EnvironmentService
@@ -62,7 +62,7 @@ func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
 // capacity, readiness or native qualification. NewHandler reports none of
 // them, whatever its targets claim.
 func NewEnvironmentHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller) *HTTPHandler {
-	return newHandler(c, engine, environments, nil)
+	return newHandler(c, engine, environments, nil, nil)
 }
 
 // NewIntegratedHandler is NewEnvironmentHandler that also serves
@@ -76,10 +76,18 @@ func NewEnvironmentHandler(c *control.Control, engine *auth.Engine, environments
 // never reports CAPABILITY_SERVICE_DATA_V1 or
 // CAPABILITY_SERVICE_CPU_AUTOSCALING_V1: this endpoint refuses those specs.
 func NewIntegratedHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller, services *servingcontrol.Controller) *HTTPHandler {
-	return newHandler(c, engine, environments, services)
+	return newHandler(c, engine, environments, services, nil)
 }
 
-func newHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller, services *servingcontrol.Controller) *HTTPHandler {
+// NewWorkerHandler serves the dedicated WorkerGroupService over workers, which
+// must share c and engine. A nil workers is NewHandler. Mounting the service
+// advertises no worker capability or native qualification. The caller owns
+// workers and must stop admission and join its calls before closing Control.
+func NewWorkerHandler(c *control.Control, engine *auth.Engine, workers *control.Workers) *HTTPHandler {
+	return newHandler(c, engine, nil, nil, workers)
+}
+
+func newHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller, services *servingcontrol.Controller, workers *control.Workers) *HTTPHandler {
 	h := &handler{control: c, engine: engine, environments: environments, services: services, streams: make(chan struct{}, 32)}
 	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10), connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
 		if artifactProcedure(info.Procedure) && info.Procedure != skyv1connect.ControlServiceSubmitWorkspaceJobProcedure {
@@ -106,6 +114,9 @@ func newHandler(c *control.Control, engine *auth.Engine, environments *environme
 	mux := http.NewServeMux()
 	mux.Handle(path, service)
 	mux.Handle(workflowPath, workflowService)
+	if workers != nil {
+		mux.Handle(newWorkerService(h, workers))
+	}
 	if environments != nil {
 		mux.Handle(newEnvironmentService(environments))
 	}

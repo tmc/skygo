@@ -91,3 +91,13 @@ type EffectStopper interface {
 	Integration
 	StopEffects()
 }
+
+// A WorkerProvider is an Integration that owns dedicated worker groups sharing
+// the server's Control and authentication Engine. After BindControl the server
+// obtains a non-nil Workers and mounts its dedicated RPC service. The integration
+// runs, stops admission and joins the Workers; serving its RPC advertises no
+// worker capability. A WorkerProvider cannot also provide environments or services.
+type WorkerProvider interface {
+	Integration
+	WorkerController() *control.Workers
+}

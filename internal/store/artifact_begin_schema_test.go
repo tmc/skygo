@@ -13,6 +13,9 @@ import (
 // artifactBeginStripModel projects an empty current request family to the
 // predecessor layout. It is only a MODEL helper, never a genuine13 writer.
 func artifactBeginStripModel(tx *bolt.Tx) error {
+	if err := workerBarrierStripModel(tx); err != nil {
+		return err
+	}
 	m := tx.Bucket(metadataBucket)
 	if hasKey(m, artifactBeginStorageFormatKey) && (m.Bucket(artifactBeginStorageFormatKey) != nil || string(m.Get(artifactBeginStorageFormatKey)) != artifactBeginStorageFormat) {
 		return errors.New("model cannot strip unknown artifact Begin format")
@@ -38,10 +41,10 @@ func TestArtifactBeginSchemaLayout(t *testing.T) {
 				artifactTestInstall(t, s)
 			}
 			if err := s.db.View(func(tx *bolt.Tx) error {
-				if schemaNumber(tx) != artifactBeginRequestSchema || string(tx.Bucket(metadataBucket).Get(artifactBeginStorageFormatKey)) != artifactBeginStorageFormat {
-					t.Fatal("new installation lacks exact14 marker/format")
+				if schemaNumber(tx) != schemaVersion || string(tx.Bucket(metadataBucket).Get(artifactBeginStorageFormatKey)) != artifactBeginStorageFormat {
+					t.Fatal("new installation lacks current marker/artifact14 format")
 				}
-				if err := checkStorageFormat(tx, artifactBeginRequestSchema); err != nil {
+				if err := checkStorageFormat(tx, schemaVersion); err != nil {
 					return err
 				}
 				if companion {

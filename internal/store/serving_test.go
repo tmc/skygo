@@ -161,6 +161,7 @@ func TestServingMigrationFromSchema12(t *testing.T) {
 	}
 	marker := string(metadataBucket) + "/" + string(schemaKey)
 	added := map[string]string{
+		string(metadataBucket) + "/" + string(workerBarrierStorageFormatKey): workerBarrierStorageFormat,
 		string(metadataBucket) + "/" + string(servingStorageFormatKey):       servingStorageFormat,
 		string(servingServicesBucket) + "\x00sequence":                       "0",
 		string(metadataBucket) + "/" + string(artifactBeginStorageFormatKey): artifactBeginStorageFormat,

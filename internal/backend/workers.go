@@ -76,6 +76,14 @@ func ExecutionUnits(w *WorkerSpec) (int, error) {
 	return int(n.Count), nil
 }
 
+// ErrWorkerUnsettled reports that an original worker call, response body or
+// reader still has unsettled local ownership. The error chain must retain the
+// actual original owner and cause. Use errors.Is; the error text is not a
+// classifier. A durable Store acknowledgment does not discharge that owner.
+// The caller must retain the error and block all further effects and refunds;
+// it must not retry Close or repeat the original native effect.
+var ErrWorkerUnsettled = errors.New("worker call ownership unsettled")
+
 // WorkerBackend is the optional per-member worker group contract. It
 // supplements Backend; a configured route must assert both interfaces before
 // accepting worker work. Each method is one original operation on one member;
@@ -84,6 +92,15 @@ func ExecutionUnits(w *WorkerSpec) (int, error) {
 // return, and canceling a method's context never erases an original result or
 // the cleanup duty it creates. No method infers termination or cleanup from a
 // missing object, Unknown, a Delete acknowledgement or a gate update.
+//
+// Returned errors wrapping ErrWorkerUnsettled retain unsettled local call,
+// response-body or reader ownership and block every later effect and refund,
+// even after the original result is durably recorded. Every other returned
+// error certifies that these local owners positively settled; it may still
+// mean the native effect is unknown. Such an effect requires exact-intent
+// recovery, never blind repetition. Until every error path is qualified, a
+// producer or adapter must conservatively wrap all errors in ErrWorkerUnsettled
+// while preserving the original owner and cause.
 //
 // The caller creates each member after its durable creating intent, at most
 // once: an unknown Create never becomes a new Create or an adoption by name.
@@ -204,11 +221,18 @@ type WorkerCanceled struct {
 }
 
 // WorkerRemoval echoes each recorded original identity independently. Each
-// true flag requires actual UID-qualified retirement after its ownership
+// Removed flag requires actual UID-qualified retirement after its ownership
 // prerequisites; only rank 0 of a WorkerTCP group owns the Service.
+//
+// PodDispatched and ServiceDispatched attest dispatch of the same original
+// UID-qualified removal request for their respective resource. A durable intent,
+// entering a client call, or a timeout is not dispatch evidence. Dispatch alone
+// proves neither application nor retirement. Unqualified producers leave these
+// fields false.
 type WorkerRemoval struct {
-	Pod, Service               WorkerResource
-	PodRemoved, ServiceRemoved bool
+	Pod, Service                     WorkerResource
+	PodRemoved, ServiceRemoved       bool
+	PodDispatched, ServiceDispatched bool
 }
 
 // ValidateWorkerCreated validates original receipt shape. allowPartial is only
@@ -280,6 +304,9 @@ func ValidateWorkerRemoval(r WorkerReference, got WorkerRemoval) error {
 	}
 	if got.PodRemoved && r.Pod == (WorkerResource{}) || got.ServiceRemoved && service == (WorkerResource{}) {
 		return errors.New("worker removal acknowledges unknown resource")
+	}
+	if got.PodDispatched && r.Pod == (WorkerResource{}) || got.ServiceDispatched && service == (WorkerResource{}) {
+		return errors.New("worker removal dispatches unknown resource")
 	}
 	return nil
 }

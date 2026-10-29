@@ -287,12 +287,26 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		return err
 	}
 	f.control = c
+	if _, workers := f.integration.(WorkerProvider); workers {
+		_, environments := f.integration.(EnvironmentProvider)
+		_, services := f.integration.(ServingProvider)
+		if environments || services {
+			return errors.New("install integration: workers conflict with environments and services")
+		}
+	}
 	if binder, ok := f.integration.(ControlBinder); ok {
 		if err := binder.BindControl(c); err != nil {
 			return fmt.Errorf("bind integration: %w", err)
 		}
 	}
 	// The integration keeps owning the Controller; the handler only serves it.
+	var workers *control.Workers
+	if provider, ok := f.integration.(WorkerProvider); ok {
+		workers = provider.WorkerController()
+		if workers == nil {
+			return errors.New("install integration: worker integration has no controller")
+		}
+	}
 	var environments *environmentcontrol.Controller
 	var services *servingcontrol.Controller
 	if provider, ok := f.integration.(ServingProvider); ok {
@@ -352,6 +366,8 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	})
 	rpcHTTP := rpc.NewHandler(c, engine)
 	switch {
+	case workers != nil:
+		rpcHTTP = rpc.NewWorkerHandler(c, engine, workers)
 	case services != nil:
 		rpcHTTP = rpc.NewIntegratedHandler(c, engine, environments, services)
 	case environments != nil:
