@@ -8,7 +8,8 @@
 // authorized GetServerInfo for the expected target. The SSH host key is
 // checked against a dedicated known_hosts file and the agent against its
 // own pinned TLS certificate. Each RPC uses its own SSH connection and is
-// never retried.
+// never retried. As in the skygo command, the artifact methods refuse a
+// response message over 128 KiB; other methods have no such limit.
 //
 //	s, err := sshagent.Open(ctx, cfg)
 //	if err != nil {

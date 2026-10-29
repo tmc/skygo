@@ -110,6 +110,15 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 // uses its own SSH connection and is never retried; if one fails after it
 // was sent, its outcome at the agent is unknown.
 //
+// The artifact methods, BeginArtifactUpload through RemoveArtifact, refuse
+// a response message larger than 128 KiB, decompressed or not, with a
+// Connect error of code ResourceExhausted, as the skygo command does. The
+// limit is Connect's WithReadMaxBytes: it bounds each response message as
+// received and as decompressed, not the bytes read from the connection,
+// which Connect may read to its end past the limit, nor headers, requests
+// or whole artifacts. Other methods read messages of any size. The
+// session owns and settles an artifact request like any other.
+//
 // A unary request returns its result once each response body it received
 // was closed once, through the session, with a nil result. If a frame of
 // it was still running, a body's first Close failed, or its transport
@@ -221,14 +230,19 @@ func (e *OpenError) Unwrap() error { return e.err }
 // sends token on every request it admits. It sends through a copy of hc
 // whose transport records each request's frames in l and then uses hc's
 // transport, unchanged; hc itself is not modified. If hc has no transport,
-// every request is refused.
+// every request is refused. Its artifact methods reject response messages
+// exceeding artifactReadMaxBytes under Connect's decode bound; see control.
 func newControl(l *ledger, hc *http.Client, endpoint, token string) skyv1connect.ControlServiceClient {
 	var c http.Client
 	if hc != nil {
 		c = *hc
 	}
 	c.Transport = &recorder{l: l, next: c.Transport}
-	return skyv1connect.NewControlServiceClient(&c, endpoint, connect.WithInterceptors(l, bearer(token)))
+	intercept := connect.WithInterceptors(l, bearer(token))
+	return &control{
+		ordinary: skyv1connect.NewControlServiceClient(&c, endpoint, intercept),
+		artifact: skyv1connect.NewControlServiceClient(&c, endpoint, intercept, connect.WithReadMaxBytes(artifactReadMaxBytes)),
+	}
 }
 
 // A bearer sets the Authorization header of every request it intercepts.
