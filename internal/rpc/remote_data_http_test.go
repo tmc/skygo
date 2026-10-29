@@ -9,12 +9,14 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
 	v1 "github.com/tmc/skygo/gen/skygo/v1"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/internal/control"
 )
 
 // These are actual canonical HTTP/admission refusal tests with real Files and
@@ -52,31 +54,41 @@ func TestRemoteHTTPAdmissionPrecedesWorkerDecode(t *testing.T) {
 }
 
 func TestRemoteHTTPMalformedCredentialReleasesOriginalAdmission(t *testing.T) {
-	f := artifactRPC(t, nil)
-	client := skyv1connect.NewRemoteDataServiceClient(f.server.Client(), f.server.URL)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	for i := 1; i <= 5; i++ {
-		request := connect.NewRequest(&v1.ReadInputRequest{Limit: 1})
-		request.Header().Set("Authorization", "Bearer malformed-secret")
-		_, err := client.ReadInput(ctx, request)
-		if connect.CodeOf(err) != connect.CodeUnauthenticated || strings.Contains(err.Error(), "malformed-secret") {
-			t.Fatalf("fixed worker refusal %d: %v", i, err)
-		}
-		f.awaitReturned(t, skyv1connect.RemoteDataServiceReadInputProcedure, 1)
-	}
-	var calls []interface{ Done() }
-	defer func() {
-		for _, call := range calls {
-			call.Done()
-		}
-	}()
-	for i := 0; i < 4; i++ {
-		call, err := f.control.TryArtifactCall()
-		if err != nil {
-			t.Fatalf("original refusal owner leaked slot %d: %v", i, err)
-		}
-		calls = append(calls, call)
+	for _, tc := range []struct {
+		name, credential string
+		code             connect.Code
+	}{
+		{"header", "malformed-secret", connect.CodeUnauthenticated},
+		{"token", strings.Repeat("x", 114), connect.CodeUnavailable},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := artifactRPC(t, nil)
+			client := skyv1connect.NewRemoteDataServiceClient(f.server.Client(), f.server.URL)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			for i := 1; i <= 5; i++ {
+				request := connect.NewRequest(&v1.ReadInputRequest{Limit: 1})
+				request.Header().Set("Authorization", "Bearer "+tc.credential)
+				_, err := client.ReadInput(ctx, request)
+				if connect.CodeOf(err) != tc.code || strings.Contains(err.Error(), tc.credential) {
+					t.Fatalf("fixed worker refusal%d: %v", i, err)
+				}
+				f.awaitReturned(t, skyv1connect.RemoteDataServiceReadInputProcedure, 1)
+			}
+			var calls []interface{ Done() }
+			defer func() {
+				for _, call := range calls {
+					call.Done()
+				}
+			}()
+			for i := 0; i < 4; i++ {
+				call, err := f.control.TryArtifactCall()
+				if err != nil {
+					t.Fatalf("original refusal owner leaked slot%d: %v", i, err)
+				}
+				calls = append(calls, call)
+			}
+		})
 	}
 }
 
@@ -196,5 +208,67 @@ func TestRemoteHTTPMethodBodyBoundsPreserveWriteRange(t *testing.T) {
 			t.Fatalf("%s size=%d status=%s", tc.path, tc.size, response.Status)
 		}
 		f.awaitReturned(t, tc.path, 1)
+	}
+}
+
+// The body bytes and enclosing handler are real. Only the replacement body's
+// Close error is MODELED: even EOF is uncertainty, not a positive Close receipt.
+func TestRemoteHTTPOriginalCloseErrorRetainsAdmission(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		failure error
+	}{
+		{"eof", io.EOF},
+		{"sentinel", errors.New("modeled original remote body closure uncertainty")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var closes atomic.Int32
+			f := artifactRPC(t, func(next http.Handler) http.Handler {
+				return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == skyv1connect.RemoteDataServiceReadInputProcedure {
+						r.Body = &artifactHTTPBodyCloseError{ReadCloser: r.Body, calls: &closes, err: tc.failure}
+					}
+					next.ServeHTTP(w, r)
+				})
+			})
+			// This same concrete HTTP owner remains deliberately retained through
+			// test-process exit. No cleanup retries its Close or removes its roots.
+			f.held, f.wantHeld = tc.failure, tc.failure
+			client := skyv1connect.NewRemoteDataServiceClient(f.server.Client(), f.server.URL)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			req := connect.NewRequest(&v1.ReadInputRequest{Limit: 1})
+			req.Header().Set("Authorization", "Bearer malformed-secret")
+			_, err := client.ReadInput(ctx, req)
+			if connect.CodeOf(err) != connect.CodeUnauthenticated {
+				t.Fatalf("refusal=%v", err)
+			}
+			f.awaitReturned(t, skyv1connect.RemoteDataServiceReadInputProcedure, 1)
+			if n := closes.Load(); n != 1 {
+				t.Fatalf("original Close calls=%d, want1", n)
+			}
+			var calls []interface{ Done() }
+			defer func() {
+				for _, call := range calls {
+					call.Done()
+				}
+			}()
+			for i := 0; i < 3; i++ {
+				call, err := f.control.TryArtifactCall()
+				if err != nil {
+					t.Fatalf("free slot%d: %v", i, err)
+				}
+				calls = append(calls, call)
+			}
+			if call, err := f.control.TryArtifactCall(); !errors.Is(err, control.ErrArtifactBusy) {
+				if call != nil {
+					call.Done()
+				}
+				t.Fatalf("failed original Close released admission: %v", err)
+			}
+			if n := closes.Load(); n != 1 {
+				t.Fatalf("original Close retried: %d calls", n)
+			}
+		})
 	}
 }

@@ -3,6 +3,7 @@ package rpc
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -76,6 +77,10 @@ func (h *handler) serveRemoteHTTP(lifetime *HTTPHandler, prefix string, service 
 	header, single := remoteProfileHeader(r.Header, "Authorization")
 	if !single || len(header) != 121 || !strings.HasPrefix(header, "Bearer ") {
 		http.Error(w, "remote authorization unavailable", http.StatusUnauthorized)
+		// Bound the unread refusal body before its first Close. A transport
+		// Close may report EOF while draining unread input; consuming it here
+		// avoids that path without normalizing any actual Close failure.
+		_, _ = io.CopyN(io.Discard, owner.body, limit+1)
 		owner.finish()
 		return true
 	}
@@ -90,6 +95,7 @@ func (h *handler) serveRemoteHTTP(lifetime *HTTPHandler, prefix string, service 
 			code = http.StatusTooManyRequests
 		}
 		http.Error(w, "remote authorization unavailable", code)
+		_, _ = io.CopyN(io.Discard, owner.body, limit+1)
 		owner.finish()
 		return true
 	}
