@@ -1,0 +1,47 @@
+# OIDC sign-in validates its configuration before it touches the output,
+# listens, opens a browser or contacts a provider, and never echoes flag
+# values. Output publication is tested in oidc_output_test.go.
+
+skygo oidc login --help
+stdout 'authorization-endpoint'
+stdout 'token-endpoint'
+! stdout 'password'
+
+# Every endpoint is explicit; nothing is discovered from the issuer.
+! skygo oidc login --issuer https://idp.example --client-id skygo --token-endpoint https://idp.example/token --output $WORK/id.token
+stderr 'required flag\(s\) "authorization-endpoint" not set'
+! exists id.token
+
+! skygo oidc login --issuer http://idp.example --client-id skygo --authorization-endpoint https://idp.example/auth --token-endpoint https://idp.example/token --output $WORK/id.token
+stderr 'issuer must be an HTTPS URL'
+
+! skygo oidc login --issuer https://idp.example/?RECOGNIZABLE_SECRET --client-id skygo --authorization-endpoint https://idp.example/auth --token-endpoint https://idp.example/token --output $WORK/id.token
+stderr 'issuer must be an HTTPS URL'
+! stderr 'RECOGNIZABLE_SECRET'
+
+! skygo oidc login --issuer https://idp.example --client-id 'RECOGNIZABLE SECRET' --authorization-endpoint https://idp.example/auth --token-endpoint https://idp.example/token --output $WORK/id.token
+stderr 'client ID must be printable ASCII'
+! stderr 'RECOGNIZABLE'
+
+# The redirect is always the exact loopback callback; a configured endpoint
+# cannot supply its own redirect or state.
+! skygo oidc login --issuer https://idp.example --client-id skygo --authorization-endpoint https://idp.example/auth?redirect_uri=https://evil.example --token-endpoint https://idp.example/token --output $WORK/id.token
+stderr 'authorization endpoint must not set redirect_uri'
+
+! skygo oidc login --issuer https://idp.example --client-id skygo --authorization-endpoint https://idp.example/auth --token-endpoint http://idp.example/token --output $WORK/id.token
+stderr 'token endpoint: must be an HTTPS URL'
+
+! skygo oidc login --issuer https://idp.example --client-id skygo --authorization-endpoint https://idp.example/auth --token-endpoint https://idp.example/token --output $WORK/id.token --login-timeout 16m
+stderr 'login timeout must be positive and at most 15m'
+
+! skygo oidc login --issuer https://idp.example --client-id skygo --authorization-endpoint https://idp.example/auth --token-endpoint https://idp.example/token --output $WORK/id.token --redirect-port 70000
+stderr 'redirect port must be between 0 and 65535'
+! exists id.token
+
+# Obtaining a credential does not try to load an older API credential.
+env SKYGO_TOKEN=ambient-token
+! skygo --token-file $WORK/missing --timeout 0s oidc login --issuer http://idp.example --client-id skygo --authorization-endpoint https://idp.example/auth --token-endpoint https://idp.example/token --output $WORK/id.token
+stderr 'issuer must be an HTTPS URL'
+! stderr 'choose only one credential'
+! stderr 'token file must'
+! exists id.token

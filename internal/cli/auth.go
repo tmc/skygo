@@ -17,7 +17,7 @@ import (
 
 func localCommand(cmd *cobra.Command) bool {
 	for p := cmd; p != nil; p = p.Parent() {
-		if p.Name() == "auth" || p.Name() == "state" {
+		if p.Name() == "auth" || p.Name() == "state" || p.Name() == "oidc" {
 			return true
 		}
 	}
