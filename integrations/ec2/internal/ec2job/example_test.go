@@ -87,3 +87,19 @@ func ExampleRemoteError() {
 	// Output:
 	// ec2job: SubmitWorkspaceJob: failed_precondition: request epoch expired
 }
+
+func ExampleConfig_Session_prebuilt() {
+	prebuilt := `"prebuilt":{"path":"/home/op/bin/skygo-ssh","commit":"1111111111111111111111111111111111111111","sha256":"2222222222222222222222222222222222222222222222222222222222222222"}`
+	input := strings.Replace(exampleConfig, `"source": "/home/op/src/skygo"`, prebuilt, 1)
+	c, err := ec2job.ParseConfig(strings.NewReader(input))
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	session := c.Session(c.IP, nil)
+	fmt.Println(session.Source == "", session.Prebuilt == c.Prebuilt)
+	fmt.Println(session.Prebuilt.Path)
+	// Output:
+	// true true
+	// /home/op/bin/skygo-ssh
+}

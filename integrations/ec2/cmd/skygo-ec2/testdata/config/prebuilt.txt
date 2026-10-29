@@ -1,0 +1,21 @@
+# These actual CLI refusals precede credentials, state, snapshot and SSH.
+config '{"prebuilt":{"path":"/missing/agent"}}'
+! skygo-ec2 -job $WORK/job -task $WORK/missing-task -workdir $WORK/missing-workdir
+stderr 'agent prebuilt'
+effects
+
+config '{"prebuilt":null}'
+! skygo-ec2 -job $WORK/job -task $WORK/missing-task -workdir $WORK/missing-workdir
+stderr 'agent prebuilt'
+effects
+
+config '{"source":"/src","prebuilt":{"path":"/missing/agent","commit":"1111111111111111111111111111111111111111","sha256":"2222222222222222222222222222222222222222222222222222222222222222"}}'
+! skygo-ec2 -job $WORK/job -task $WORK/missing-task -workdir $WORK/missing-workdir
+stderr 'exclusive'
+effects
+
+config '{"prebuilt":{"path":"/missing/agent","token":"DO_NOT_ECHO"}}'
+! skygo-ec2 -job $WORK/job -task $WORK/missing-task -workdir $WORK/missing-workdir
+stderr 'agent prebuilt'
+! stderr DO_NOT_ECHO
+effects

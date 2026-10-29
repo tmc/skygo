@@ -84,6 +84,11 @@ type Config struct {
 	Fingerprint    string
 	Source         string
 	AllowDirty     bool
+
+	// Prebuilt selects a local Linux arm64 agent instead of Source. All three
+	// fields must be set, Source empty and AllowDirty false. ParseConfig checks
+	// its shape; sshagent.Open verifies the binary before connecting.
+	Prebuilt       sshagent.Binary
 	IdentityDir    string
 	CacheDir       string
 	Target         string
@@ -128,13 +133,14 @@ type wireConfig struct {
 		Fingerprint    string `json:"fingerprint"`
 	} `json:"ssh"`
 	Agent struct {
-		Source         string `json:"source"`
-		AllowDirty     bool   `json:"allow_dirty"`
-		IdentityDir    string `json:"identity_dir"`
-		CacheDir       string `json:"cache_dir"`
-		Target         string `json:"target"`
-		Port           int    `json:"port"`
-		RestartStopped bool   `json:"restart_stopped"`
+		Source         string          `json:"source"`
+		AllowDirty     bool            `json:"allow_dirty"`
+		IdentityDir    string          `json:"identity_dir"`
+		CacheDir       string          `json:"cache_dir"`
+		Target         string          `json:"target"`
+		Port           int             `json:"port"`
+		RestartStopped bool            `json:"restart_stopped"`
+		Prebuilt       json.RawMessage `json:"prebuilt,omitempty"`
 	} `json:"agent"`
 	Installation struct {
 		DataDir         string `json:"data_dir"`
@@ -166,6 +172,10 @@ type wireConfig struct {
 //			"scoped_token_file": ...},
 //		"task": {"shell": ..., "infra": ..., "max_timeout_seconds": ...}
 //	}
+//
+// In agent, a prebuilt object with path, commit and sha256 replaces source.
+// All three strings are required; source must be empty and allow_dirty false.
+// Commit is the operator's assertion, not an attestation of source provenance.
 //
 // It refuses unknown fields, trailing data, any architecture but arm64,
 // and an installation that is not complete: every job is a workspace job
@@ -224,6 +234,17 @@ func ParseConfig(r io.Reader) (*Config, error) {
 		Infra:           w.Task.Infra,
 		MaxTimeout:      time.Duration(w.Task.MaxTimeoutSeconds) * time.Second,
 		Digest:          hex.EncodeToString(sum[:]),
+	}
+	if len(w.Agent.Prebuilt) != 0 {
+		var p struct {
+			Path   string `json:"path"`
+			Commit string `json:"commit"`
+			SHA256 string `json:"sha256"`
+		}
+		if err := decodeStrict(w.Agent.Prebuilt, &p); err != nil || p.Path == "" || p.Commit == "" || p.SHA256 == "" {
+			return nil, errors.New("job config: agent prebuilt requires path, commit and sha256")
+		}
+		c.Prebuilt = sshagent.Binary{Path: p.Path, Commit: p.Commit, Digest: p.SHA256}
 	}
 	switch w.VM.Address {
 	case "public":
@@ -295,7 +316,19 @@ func (c *Config) check() error {
 	case c.MaxTimeout < time.Second:
 		return errors.New("job config: task max_timeout_seconds must be positive")
 	}
-	for _, p := range []string{c.KnownHostsFile, c.Source, c.IdentityDir, c.CacheDir, c.ScopedTokenFile} {
+	if c.Prebuilt == (sshagent.Binary{}) {
+		if !cleanAbs(c.Source) {
+			return errors.New("job config: agent source must be clean and absolute")
+		}
+	} else {
+		if c.Source != "" || c.AllowDirty {
+			return errors.New("job config: agent prebuilt and source build options are exclusive")
+		}
+		if !cleanAbs(c.Prebuilt.Path) || !commitRE.MatchString(c.Prebuilt.Commit) || !hex64.MatchString(c.Prebuilt.Digest) {
+			return errors.New("job config: agent prebuilt needs a clean absolute path, full lowercase commit and sha256")
+		}
+	}
+	for _, p := range []string{c.KnownHostsFile, c.IdentityDir, c.CacheDir, c.ScopedTokenFile} {
 		if !cleanAbs(p) {
 			return errors.New("job config: every local path must be clean and absolute")
 		}
@@ -318,6 +351,7 @@ func (c *Config) Session(addr netip.Addr, log io.Writer) sshagent.Config {
 		Fingerprint:     c.Fingerprint,
 		Source:          c.Source,
 		AllowDirty:      c.AllowDirty,
+		Prebuilt:        c.Prebuilt,
 		IdentityDir:     c.IdentityDir,
 		CacheDir:        c.CacheDir,
 		Target:          c.Target,

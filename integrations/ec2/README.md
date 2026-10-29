@@ -289,6 +289,30 @@ journal binds, before any effect, the configuration digest, the verified
 VM, the task, the snapshot, the request ID, method and finite timeout, and
 the desired state. It holds no credential, server message or log cursor.
 
+A job configuration may replace `agent.source` with a prebuilt agent:
+
+```json
+"agent": {
+  "prebuilt": {
+    "path": "/home/op/bin/skygo-ssh",
+    "commit": "1111111111111111111111111111111111111111",
+    "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
+  },
+  "identity_dir": "/home/op/ec2/identity",
+  "cache_dir": "/home/op/ec2/cache",
+  "target": "ec2vm"
+}
+```
+
+Use the actual binary hash and its operator-asserted clean source commit.
+All three prebuilt fields are required; omit `source` and `allow_dirty`.
+Parsing checks their shape without reading files. The existing SSH importer
+verifies the static Linux arm64 Go executable and its bytes before any
+connection. It does not attest the operator's source assertion. The exact
+configuration bytes bind the job journal, so another prebuilt identity is
+refused on resume. Source-build configurations remain supported through the
+same `-job-config` flag.
+
 Ambiguity rules:
 
 - The retention mode and, if enabled, the request domain are recorded once

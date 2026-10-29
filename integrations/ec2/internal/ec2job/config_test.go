@@ -411,3 +411,133 @@ func TestSameTask(t *testing.T) {
 		}
 	}
 }
+
+func prebuiltConfigWire() wireConfig {
+	w := testWire("/d", testInstanceID)
+	w.Agent.Source = ""
+	w.Agent.Prebuilt = json.RawMessage(`{"path":"/missing/skygo-ssh","commit":"1111111111111111111111111111111111111111","sha256":"2222222222222222222222222222222222222222222222222222222222222222"}`)
+	return w
+}
+
+// Parsing checks only configuration shape. None of these named files exists;
+// actual executable/hash verification belongs to sshagent.Open.
+func TestPrebuiltConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		change func(*wireConfig)
+		ok     bool
+	}{
+		{"valid", func(*wireConfig) {}, true},
+		{"source remains supported", func(w *wireConfig) { w.Agent.Prebuilt = nil; w.Agent.Source = "/src"; w.Agent.AllowDirty = true }, true},
+		{"missing selection", func(w *wireConfig) { w.Agent.Prebuilt = nil }, false},
+		{"null", func(w *wireConfig) { w.Agent.Prebuilt = json.RawMessage(`null`) }, false},
+		{"empty", func(w *wireConfig) { w.Agent.Prebuilt = json.RawMessage(`{}`) }, false},
+		{"array", func(w *wireConfig) { w.Agent.Prebuilt = json.RawMessage(`[]`) }, false},
+		{"partial", func(w *wireConfig) { w.Agent.Prebuilt = json.RawMessage(`{"path":"/missing/skygo-ssh"}`) }, false},
+		{"unknown", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(`"path":`), []byte(`"secret":"do-not-echo","path":`), 1)
+		}, false},
+		{"mixed source", func(w *wireConfig) { w.Agent.Source = "/src" }, false},
+		{"mixed dirty", func(w *wireConfig) { w.Agent.AllowDirty = true }, false},
+		{"relative path", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(`/missing/skygo-ssh`), []byte(`relative`), 1)
+		}, false},
+		{"unclean path", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(`/missing/skygo-ssh`), []byte(`/missing/../skygo-ssh`), 1)
+		}, false},
+		{"short commit", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(strings.Repeat("1", 40)), []byte("abcdef"), 1)
+		}, false},
+		{"uppercase commit", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(strings.Repeat("1", 40)), []byte(strings.Repeat("A", 40)), 1)
+		}, false},
+		{"sha256 commit", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(strings.Repeat("1", 40)), []byte(strings.Repeat("a", 64)), 1)
+		}, true},
+		{"short digest", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(strings.Repeat("2", 64)), []byte("abc"), 1)
+		}, false},
+		{"uppercase digest", func(w *wireConfig) {
+			w.Agent.Prebuilt = bytes.Replace(w.Agent.Prebuilt, []byte(strings.Repeat("2", 64)), []byte(strings.Repeat("A", 64)), 1)
+		}, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			w := prebuiltConfigWire()
+			tt.change(&w)
+			c, err := ParseConfig(bytes.NewReader(encodeWire(t, w)))
+			if (err == nil) != tt.ok {
+				t.Fatalf("ParseConfig = %v, want success %v", err, tt.ok)
+			}
+			if err != nil {
+				if strings.Contains(err.Error(), "do-not-echo") {
+					t.Fatal("error echoed input")
+				}
+				return
+			}
+			s := c.Session(c.IP, nil)
+			if s.Prebuilt != c.Prebuilt || s.Source != c.Source || s.AllowDirty != c.AllowDirty {
+				t.Fatalf("Session lost selection: %+v", s)
+			}
+			if len(w.Agent.Prebuilt) != 0 && (c.Prebuilt.Path != "/missing/skygo-ssh" || c.Prebuilt.Commit == "" || c.Prebuilt.Digest != strings.Repeat("2", 64) || s.Source != "" || s.AllowDirty) {
+				t.Fatal("prebuilt selection changed")
+			}
+		})
+	}
+}
+
+func TestPrebuiltConfigDigestBinding(t *testing.T) {
+	w := prebuiltConfigWire()
+	c, err := ParseConfig(bytes.NewReader(encodeWire(t, w)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	archive, digest, err := Snapshot(newWorkdir(t, map[string]string{"input.txt": "input\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	task, err := c.Task(TaskInput{JSON: []byte(testTaskJSON)}, digest, int64(len(archive)), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir() + "/job"
+	j, err := Create(dir, c, testVM(c), task, archive)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
+	if err := j.Bind(c, testVM(c)); err != nil {
+		t.Fatal(err)
+	}
+	before := readJournal(t, dir)
+	for _, field := range []string{"path", "commit", "sha256"} {
+		t.Run(field, func(t *testing.T) {
+			var p map[string]string
+			if err := json.Unmarshal(w.Agent.Prebuilt, &p); err != nil {
+				t.Fatal(err)
+			}
+			switch field {
+			case "path":
+				p[field] = "/another/binary"
+			case "commit":
+				p[field] = strings.Repeat("3", 40)
+			case "sha256":
+				p[field] = strings.Repeat("4", 64)
+			}
+			changed := w
+			changed.Agent.Prebuilt, _ = json.Marshal(p)
+			other, err := ParseConfig(bytes.NewReader(encodeWire(t, changed)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if other.Digest == c.Digest {
+				t.Fatal("digest omitted prebuilt identity")
+			}
+			if err := j.Bind(other, testVM(other)); !errors.Is(err, ErrMismatch) {
+				t.Fatalf("Bind = %v, want mismatch", err)
+			}
+			if !bytes.Equal(before, readJournal(t, dir)) {
+				t.Fatal("refused rebind changed durable state")
+			}
+		})
+	}
+}
