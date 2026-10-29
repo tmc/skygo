@@ -1,0 +1,45 @@
+workspace-canonical
+
+# None of these refused flag/input forms may even discover the endpoint.
+! skygo plan sky.yaml --sync-workdir
+stderr 'unknown flag|run'
+! stdout .
+! skygo run sky.yaml --sync-workdir=false --workspace-state state
+stderr .
+! stdout .
+! skygo run sky.yaml --sync-workdir --remote-data --workspace-state state
+stderr .
+! stdout .
+! skygo run sky.yaml --sync-workdir --workdir-ref= --workspace-state state
+stderr .
+! stdout .
+! skygo run sky.yaml --workspace-state state
+stderr .
+! stdout .
+! skygo run sky.yaml --workspace-state=
+stderr .
+! stdout .
+! skygo run native.yaml --sync-workdir --workspace-state state
+stderr .
+! stdout .
+! skygo run missing.yaml --sync-workdir --workspace-state state
+stderr .
+! stdout .
+! skygo run null.yaml --sync-workdir --workspace-state state
+stderr .
+! stdout .
+! skygo run sky.yaml --sync-workdir --request-domain= --workspace-state state
+stderr .
+! stdout .
+workspace-requests 0
+
+-- sky.yaml --
+workdir: input
+run: echo secret-value
+-- native.yaml --
+argv: [echo, value]
+-- missing.yaml --
+run: echo value
+-- null.yaml --
+workdir: null
+run: echo value

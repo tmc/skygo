@@ -1,0 +1,13 @@
+workspace-canonical
+mkdir input
+! skygo --json run task.yaml --sync-workdir --workspace-state state
+stderr 'endpoint does not advertise artifact-begin-requests-v1'
+! stdout .
+workspace-requests 1
+exists state/intent.json
+exists state/archive.tar
+exists state/state.json
+
+-- task.yaml --
+workdir: input
+run: echo safe

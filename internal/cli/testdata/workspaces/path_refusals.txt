@@ -1,0 +1,21 @@
+workspace-canonical
+mkdir input
+symlink linked -> input
+
+# The path opener observes a real root symlink before any network request.
+! skygo run linked.yaml --sync-workdir --workspace-state linked-state
+stderr 'symlink|workspace|snapshot'
+! stdout .
+
+# An intent cannot place its own private journal inside the uploaded workdir.
+! skygo run task.yaml --sync-workdir --workspace-state input/state
+stderr 'workspace|journal|snapshot'
+! stdout .
+workspace-requests 0
+
+-- task.yaml --
+workdir: input
+run: echo safe
+-- linked.yaml --
+workdir: linked
+run: echo safe

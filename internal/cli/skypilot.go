@@ -68,12 +68,19 @@ func lowerTaskEnv(w io.Writer, b []byte, opts tasklower.Options, env map[string]
 	if err != nil {
 		return nil, err
 	}
+	if err := writeLowerNotes(w, notes); err != nil {
+		return nil, err
+	}
+	return task, nil
+}
+
+func writeLowerNotes(w io.Writer, notes []tasklower.Note) error {
 	for _, n := range notes {
 		if n.Status == tasklower.Dropped {
 			if _, err := fmt.Fprintf(w, "task yaml: dropped %s: %s\n", n.Path, n.Detail); err != nil {
-				return nil, fmt.Errorf("write task metadata: %w", err)
+				return fmt.Errorf("write task metadata: %w", err)
 			}
 		}
 	}
-	return task, nil
+	return nil
 }

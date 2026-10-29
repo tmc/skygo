@@ -1,0 +1,43 @@
+workspace-canonical
+workspace-private unknown
+workspace-private partial
+
+# A released lock never makes an uncommitted file or unknown entry authoritative.
+! skygo run --resume-workspace unknown
+stderr 'workspace|journal|unknown'
+! stdout .
+! skygo run --resume-workspace partial
+stderr 'workspace|journal|partial|staging'
+! stdout .
+
+# Resume cannot change any frozen input or placement through explicit flags.
+! skygo run task.yaml --resume-workspace unknown
+stderr .
+! stdout .
+! skygo run --resume-workspace unknown -f task.yaml
+stderr .
+! stdout .
+! skygo run --resume-workspace unknown --env TOKEN=other
+stderr .
+! stdout .
+! skygo run --resume-workspace unknown --output other
+stderr .
+! stdout .
+! skygo run --resume-workspace unknown --target other
+stderr .
+! stdout .
+! skygo run --resume-workspace unknown --request-id other
+stderr .
+! stdout .
+! skygo run --resume-workspace unknown --workdir-ref=
+stderr .
+! stdout .
+workspace-requests 0
+
+-- unknown/extra --
+unknown entry
+-- partial/.state.tmp --
+partial write
+-- task.yaml --
+workdir: input
+run: echo safe

@@ -18,16 +18,9 @@ type skypilotInputs struct {
 }
 
 func (in skypilotInputs) lower(w io.Writer, b []byte, opts tasklower.Options) (*skyv1.Task, error) {
-	env := make(map[string]string, len(in.env))
-	for _, entry := range in.env {
-		name, value, ok := strings.Cut(entry, "=")
-		if !ok {
-			return nil, errors.New("--env requires KEY=VALUE")
-		}
-		if _, exists := env[name]; exists {
-			return nil, errors.New("--env contains a duplicate key")
-		}
-		env[name] = value
+	opts, env, err := in.options(opts)
+	if err != nil {
+		return nil, err
 	}
 	if in.workdirRef != "" {
 		ref, err := readArtifactRef(in.workdirRef)
@@ -36,8 +29,28 @@ func (in skypilotInputs) lower(w io.Writer, b []byte, opts tasklower.Options) (*
 		}
 		opts.Workdir = wireArtifactRef(ref)
 	}
+	return lowerTaskEnv(w, b, opts, env)
+}
+
+// options validates the same explicit inputs before workspace preparation.
+func (in skypilotInputs) options(opts tasklower.Options) (tasklower.Options, map[string]string, error) {
+	env := make(map[string]string, len(in.env))
+	for _, entry := range in.env {
+		name, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			return opts, nil, errors.New("--env requires KEY=VALUE")
+		}
+		if _, exists := env[name]; exists {
+			return opts, nil, errors.New("--env contains a duplicate key")
+		}
+		env[name] = value
+	}
 	if in.outputs != nil {
 		opts.Outputs = in.outputs
 	}
-	return lowerTaskEnv(w, b, opts, env)
+	if opts.Shell == "" {
+		opts.Shell = defaultShell
+	}
+	opts.AllowDrop = metadataFields
+	return opts, env, nil
 }

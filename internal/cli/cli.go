@@ -41,6 +41,8 @@ type options struct {
 	json                       bool
 	timeout                    time.Duration
 	http                       *http.Client // used by every generated client
+	workspaceHTTP              *http.Client // private no-redirect copy for one workspace invocation
+	workspaceOwner             *workspaceRun
 	clientOptions              ClientOptions
 }
 
@@ -146,7 +148,8 @@ func NewWithClient(server func(context.Context, ServerOptions) error, client *ht
 }
 
 func (o *options) client() skyv1connect.ControlServiceClient {
-	return skyv1connect.NewControlServiceClient(o.httpClient(), o.endpoint)
+	client, opts := o.workspaceClient()
+	return skyv1connect.NewControlServiceClient(client, o.endpoint, opts...)
 }
 
 func (o *options) httpClient() *http.Client {
@@ -193,6 +196,7 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 	var quote quoteFlags
 	var lower tasklower.Options
 	var inputs skypilotInputs
+	var workspace workspaceFlags
 	if b := o.clientOptions; b.Infra != "" || b.Target != "" {
 		lower.InfraBinding = &tasklower.InfraBinding{Infra: b.Infra, Target: b.Target}
 	}
@@ -208,6 +212,9 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		}
 		if len(args) == 1 {
 			file = args[0]
+		}
+		if run && workspace.changed(cmd) {
+			return o.runWorkspaceCommand(cmd, file, lower, inputs, workspace, id, domain, wait)
 		}
 		task, err := readTaskInputs(cmd, file, lower, inputs)
 		if err != nil {
@@ -284,6 +291,7 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		quote.flags(c)
 	}
 	if run {
+		workspace.flags(c)
 		c.Flags().StringVar(&id, "request-id", "", "Stable request ID to reuse when retrying submission")
 		c.Flags().StringVar(&domain, "request-domain", "", "Explicit retained request domain LINEAGE:EPOCH; reuse with the request ID")
 		c.Flags().BoolVar(&wait, "wait", false, "Wait for terminal status; unsuccessful jobs exit 2")
@@ -304,6 +312,10 @@ func taskArgs(cmd *cobra.Command, args []string) error {
 }
 
 func (o *options) wait(ctx context.Context, c skyv1connect.ControlServiceClient, j *skyv1.Job) (*skyv1.Job, error) {
+	return o.waitState(ctx, c, j, nil)
+}
+
+func (o *options) waitState(ctx context.Context, c skyv1connect.ControlServiceClient, j *skyv1.Job, run *workspaceRun) (*skyv1.Job, error) {
 	for !terminal(j.State) {
 		t := time.NewTimer(250 * time.Millisecond)
 		select {
@@ -311,6 +323,11 @@ func (o *options) wait(ctx context.Context, c skyv1connect.ControlServiceClient,
 			t.Stop()
 			return nil, ctx.Err()
 		case <-t.C:
+		}
+		if run != nil {
+			if err := o.workspaceContinuity(run); err != nil {
+				return nil, err
+			}
 		}
 		rpcctx, cancel := context.WithTimeout(ctx, o.timeout)
 		r, err := c.GetJob(rpcctx, request(o, &skyv1.GetJobRequest{Id: j.Id}))
@@ -422,24 +439,9 @@ func readTask(cmd *cobra.Command, path string, lower tasklower.Options) (*skyv1.
 }
 
 func readTaskInputs(cmd *cobra.Command, path string, lower tasklower.Options, inputs skypilotInputs) (*skyv1.Task, error) {
-	if path == "" {
-		return nil, errors.New("task requires --file or a path argument")
-	}
-	r := cmd.InOrStdin()
-	if path != "-" {
-		f, err := os.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		defer f.Close()
-		r = f
-	}
-	b, err := io.ReadAll(io.LimitReader(r, (1<<20)+1))
+	b, err := readTaskBytes(cmd, path)
 	if err != nil {
 		return nil, err
-	}
-	if len(b) > 1<<20 {
-		return nil, errors.New("task exceeds 1 MiB")
 	}
 	sky, err := skypilotTask(b)
 	if err != nil {
@@ -495,3 +497,42 @@ func readTaskInputs(cmd *cobra.Command, path string, lower tasklower.Options, in
 	}
 	return &skyv1.Task{DataMounts: mounts, Workdir: workdir, Setup: f.Setup, Outputs: f.Outputs, Retry: retry, Argv: f.Argv, Env: f.Env, Directory: f.Directory, Image: f.Image, CpuMillis: f.CPUMillis, MemoryBytes: f.MemoryBytes, Accelerator: f.Accelerator, AcceleratorCount: f.AcceleratorCount, Target: f.Target, TimeoutSeconds: f.TimeoutSeconds, CpuLimitMillis: f.CPULimitMillis, MemoryLimitBytes: f.MemoryLimitBytes, TargetLabels: f.TargetLabels, NodeSelector: f.NodeSelector}, nil
 }
+
+// readTaskBytes is the shared bounded input reader for both task forms.
+func readTaskBytes(cmd *cobra.Command, path string) (data []byte, err error) {
+	if path == "" {
+		return nil, errors.New("task requires --file or a path argument")
+	}
+	r := cmd.InOrStdin()
+	if path != "-" {
+		f, err := os.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		defer func() {
+			if closeErr := f.Close(); closeErr != nil {
+				data = nil
+				err = errors.Join(err, &taskInputCloseError{file: f, err: closeErr})
+			}
+		}()
+		r = f
+	}
+	b, err := io.ReadAll(io.LimitReader(r, (1<<20)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(b) > 1<<20 {
+		return nil, errors.New("task exceeds 1 MiB")
+	}
+	return b, nil
+}
+
+// taskInputCloseError retains the original input descriptor after a failed
+// Close; no bytes from that unresolved read can authorize a later RPC.
+type taskInputCloseError struct {
+	file *os.File
+	err  error
+}
+
+func (e *taskInputCloseError) Error() string { return e.err.Error() }
+func (e *taskInputCloseError) Unwrap() error { return e.err }
