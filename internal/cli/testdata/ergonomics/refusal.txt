@@ -1,0 +1,18 @@
+! skygo plan task.yaml --env SECRET
+stderr 'requires KEY=VALUE'
+! skygo run task.yaml --env A=x --env A=y
+stderr 'duplicate key'
+! skygo plan native.yaml --env=
+stderr 'apply only to SkyPilot'
+! skygo run native.yaml --workdir-ref=
+stderr 'apply only to SkyPilot'
+! skygo plan task.yaml --workdir-ref unknown.json
+stderr 'invalid --workdir-ref'
+! stderr 'sensitive-field'
+
+-- task.yaml --
+run: echo hi
+-- native.yaml --
+argv: [echo, hi]
+-- unknown.json --
+{"sensitive-field":"do-not-print"}

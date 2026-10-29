@@ -1,0 +1,17 @@
+skygo plan task.yaml --workdir-ref ref.json --output out --env 'REQUIRED=a,b=c'
+stdout '^local$'
+skygo run -f task.yaml --workdir-ref ref-string.json --output out --env 'REQUIRED='
+stdout 'succeeded'
+stdin task.yaml
+skygo plan - --workdir-ref ref.json --output out --env 'REQUIRED=x'
+stdout '^local$'
+
+-- task.yaml --
+workdir: .
+setup: echo setup
+envs: {REQUIRED: null}
+run: echo "$REQUIRED"
+-- ref.json --
+{"id":"00112233445566778899aabbccddeeff","sha256":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","size":4096}
+-- ref-string.json --
+{"id":"00112233445566778899aabbccddeeff","sha256":"000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f","size":"4096"}

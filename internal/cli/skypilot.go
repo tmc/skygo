@@ -52,7 +52,11 @@ func skypilotTask(b []byte) (bool, error) {
 // Parse and Lower errors are returned unchanged; they are *taskyaml.Error
 // values for every refused field. Dropped metadata is reported to w.
 func lowerTask(w io.Writer, b []byte, opts tasklower.Options) (*skyv1.Task, error) {
-	d, err := taskyaml.Parse(bytes.NewReader(b), taskyaml.Options{})
+	return lowerTaskEnv(w, b, opts, nil)
+}
+
+func lowerTaskEnv(w io.Writer, b []byte, opts tasklower.Options, env map[string]string) (*skyv1.Task, error) {
+	d, err := taskyaml.Parse(bytes.NewReader(b), taskyaml.Options{EnvOverrides: env})
 	if err != nil {
 		return nil, err
 	}

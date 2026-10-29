@@ -188,6 +188,7 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 	var wait, remoteData bool
 	var quote quoteFlags
 	var lower tasklower.Options
+	var inputs skypilotInputs
 	if b := o.clientOptions; b.Infra != "" || b.Target != "" {
 		lower.InfraBinding = &tasklower.InfraBinding{Infra: b.Infra, Target: b.Target}
 	}
@@ -204,7 +205,7 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 		if len(args) == 1 {
 			file = args[0]
 		}
-		task, err := readTask(cmd, file, lower)
+		task, err := readTaskInputs(cmd, file, lower, inputs)
 		if err != nil {
 			return err
 		}
@@ -271,6 +272,9 @@ func (o *options) taskCommand(run bool) *cobra.Command {
 	c.Flags().StringVarP(&file, "file", "f", "", "Task YAML path, or - for stdin")
 	c.Flags().StringVar(&lower.Shell, "shell", "", "Clean absolute shell that runs SkyPilot run text as SHELL -c TEXT (default "+defaultShell+")")
 	c.Flags().StringVar(&lower.Target, "target", "", "Target for a SkyPilot task; skygo task files declare their own target")
+	c.Flags().StringVar(&inputs.workdirRef, "workdir-ref", "", "Uploaded workdir reference JSON for a SkyPilot task")
+	c.Flags().StringArrayVar(&inputs.outputs, "output", nil, "Workdir output root for a SkyPilot task (repeatable)")
+	c.Flags().StringArrayVar(&inputs.env, "env", nil, "Explicit KEY=VALUE for a SkyPilot task (repeatable)")
 	c.Flags().BoolVar(&remoteData, "remote-data", false, "Use the explicit target's qualified remote data route")
 	if !run {
 		quote.flags(c)
@@ -410,6 +414,10 @@ type taskFile struct {
 // readTask reads a skygo task file or SkyPilot task YAML from path.
 // Lower supplies semantics for SkyPilot tasks only.
 func readTask(cmd *cobra.Command, path string, lower tasklower.Options) (*skyv1.Task, error) {
+	return readTaskInputs(cmd, path, lower, skypilotInputs{})
+}
+
+func readTaskInputs(cmd *cobra.Command, path string, lower tasklower.Options, inputs skypilotInputs) (*skyv1.Task, error) {
 	if path == "" {
 		return nil, errors.New("task requires --file or a path argument")
 	}
@@ -434,7 +442,13 @@ func readTask(cmd *cobra.Command, path string, lower tasklower.Options) (*skyv1.
 		return nil, err
 	}
 	if sky {
-		return lowerTask(cmd.ErrOrStderr(), b, lower)
+		if cmd.Flags().Changed("workdir-ref") && inputs.workdirRef == "" {
+			return nil, errors.New("invalid --workdir-ref")
+		}
+		return inputs.lower(cmd.ErrOrStderr(), b, lower)
+	}
+	if cmd.Flags().Changed("env") || cmd.Flags().Changed("output") || cmd.Flags().Changed("workdir-ref") {
+		return nil, errors.New("--env, --output and --workdir-ref apply only to SkyPilot task YAML")
 	}
 	if lower.Shell != "" || lower.Target != "" {
 		return nil, errors.New("--shell and --target apply only to SkyPilot task YAML")
