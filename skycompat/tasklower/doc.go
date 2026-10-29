@@ -6,6 +6,11 @@
 // refused, never ignored. [Marshal] encodes the result as a skygo task file,
 // which `skygo plan -f` and `skygo run -f` read.
 //
+// [CheckWorkspace] validates a declared workdir task before an artifact
+// reference exists. It checks the same fields without returning an executable
+// task. The caller obtains a real reference, then calls Lower; neither function
+// reads a local directory or uploads its contents.
+//
 // Run and setup text become the argv [Options.Shell, "-c", TEXT]. Lowering
 // never splits, interprets or executes the text, and it never reads the
 // process environment or the filesystem. Planning, capability checks and

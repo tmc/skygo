@@ -134,13 +134,38 @@ var (
 // It refuses invalid Options with another error. Neither contains source
 // or option values.
 func Lower(d *taskyaml.Document, opts Options) (*skyv1.Task, []Note, error) {
+	return lower(d, opts, false)
+}
+
+// CheckWorkspace validates a task before its local workdir is uploaded. The
+// document must declare a workdir and opts.Workdir must be nil. All other
+// fields and options are checked as in Lower. No task or placeholder reference
+// is returned, and neither the environment nor the filesystem is read.
+//
+// After obtaining an actual artifact reference, set opts.Workdir and call
+// Lower on the same document and options to construct the executable task.
+func CheckWorkspace(d *taskyaml.Document, opts Options) error {
+	if d == nil {
+		return errors.New("tasklower: no document")
+	}
+	if d.Task.Workdir == nil {
+		return errors.New("tasklower: workspace check requires a task workdir")
+	}
+	if opts.Workdir != nil {
+		return errors.New("tasklower: workspace check requires no workdir reference")
+	}
+	_, _, err := lower(d, opts, true)
+	return err
+}
+
+func lower(d *taskyaml.Document, opts Options, checkWorkspace bool) (*skyv1.Task, []Note, error) {
 	if d == nil {
 		return nil, nil, errors.New("tasklower: no document")
 	}
 	if err := opts.check(); err != nil {
 		return nil, nil, err
 	}
-	l := &lowering{d: d, opts: opts, task: &skyv1.Task{
+	l := &lowering{d: d, opts: opts, checkWorkspace: checkWorkspace, task: &skyv1.Task{
 		Target:         opts.Target,
 		TimeoutSeconds: opts.TimeoutSeconds,
 		Outputs:        slices.Clone(opts.Outputs),
@@ -197,10 +222,11 @@ func runtimeEnv(user map[string]string, accel string, count int32) map[string]st
 }
 
 type lowering struct {
-	d     *taskyaml.Document
-	opts  Options
-	task  *skyv1.Task
-	notes []Note
+	d              *taskyaml.Document
+	opts           Options
+	task           *skyv1.Task
+	notes          []Note
+	checkWorkspace bool
 }
 
 // set reports whether the typed document holds a non-default value at p,
@@ -323,6 +349,9 @@ func (l *lowering) field(p string) error {
 			return l.refuse(taskyaml.Unsupported, p, "environment substitution")
 		}
 		if l.opts.Workdir == nil {
+			if l.checkWorkspace {
+				return l.note(p, Lowered, "workdir binding deferred")
+			}
 			return l.refuse(taskyaml.Unsupported, p, "requires a workdir reference")
 		}
 		w := l.opts.Workdir

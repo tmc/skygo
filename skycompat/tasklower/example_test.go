@@ -48,6 +48,16 @@ func ExampleLower_runtimeEnvironment() {
 	// Output: 0 1 0
 }
 
+func ExampleCheckWorkspace() {
+	d, err := taskyaml.Parse(strings.NewReader("workdir: .\nsetup: make\nrun: ./train\n"), taskyaml.Options{})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(tasklower.CheckWorkspace(d, tasklower.Options{Shell: "/bin/sh"}))
+	// Output: <nil>
+}
+
 func ExampleLower_refused() {
 	d, err := taskyaml.Parse(strings.NewReader("run: echo hello\nnum_nodes: 2\n"), taskyaml.Options{})
 	if err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"time"
 
@@ -27,28 +28,74 @@ func (b *archiveBuffer) Write(p []byte) (int, error) {
 }
 
 func (o *options) uploadArtifact(cmd *cobra.Command, directory, resume string) error {
-	root, err := os.OpenRoot(directory)
+	archive, _, err := snapshotDirectory(directory)
 	if err != nil {
-		return fmt.Errorf("open snapshot directory: %w", err)
-	}
-	var archive archiveBuffer
-	err = artifact.Snapshot(root, &archive)
-	closeErr := root.Close()
-	if err != nil {
-		return fmt.Errorf("snapshot directory: %w", err)
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	size := int64(archive.Len())
-	digest, err := artifact.Validate(bytes.NewReader(archive.Bytes()), size)
-	if err != nil {
-		return fmt.Errorf("validate snapshot: %w", err)
+		return err
 	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)
 	defer cancel()
-	if _, err := o.requireEndpointCapabilities(ctx, v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1); err != nil {
+	ref, err := o.uploadSnapshot(ctx, archive, resume, cmd.ErrOrStderr())
+	if err != nil {
 		return err
+	}
+	return writeArtifactRef(cmd.OutOrStdout(), ref)
+}
+
+// snapshotDirectory owns the opened root until snapshotRoot closes it.
+func snapshotDirectory(directory string) ([]byte, string, error) {
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, "", fmt.Errorf("open snapshot directory: %w", err)
+	}
+	return snapshotRoot(root)
+}
+
+// snapshotRoot consumes root. On error every archive byte is discarded; a
+// failed Close is returned with the snapshot error and retains the same root.
+func snapshotRoot(root *os.Root) ([]byte, string, error) {
+	if root == nil {
+		return nil, "", errors.New("nil snapshot root")
+	}
+	var archive archiveBuffer
+	snapshotErr := artifact.Snapshot(root, &archive)
+	closeErr := root.Close()
+	if closeErr != nil {
+		closeErr = &snapshotCloseError{root: root, err: closeErr}
+	}
+	if err := errors.Join(snapshotErr, closeErr); err != nil {
+		return nil, "", fmt.Errorf("snapshot directory: %w", err)
+	}
+	digest, err := artifact.Validate(bytes.NewReader(archive.Bytes()), int64(archive.Len()))
+	if err != nil {
+		return nil, "", fmt.Errorf("validate snapshot: %w", err)
+	}
+	return archive.Bytes(), digest, nil
+}
+
+// snapshotCloseError keeps the actual failed owner with its cause. It does not
+// assert that Close joined the root or permit a second close on a reused handle.
+type snapshotCloseError struct {
+	root *os.Root
+	err  error
+}
+
+func (e *snapshotCloseError) Error() string { return e.err.Error() }
+func (e *snapshotCloseError) Unwrap() error { return e.err }
+
+// uploadSnapshot returns the server's exact finalized Ref without rendering it.
+// The caller keeps archive immutable through the call. Nil progress discards
+// hints; the shared retry budget and original upload identity remain unchanged.
+func (o *options) uploadSnapshot(ctx context.Context, archive []byte, resume string, progress io.Writer) (artifact.Ref, error) {
+	size := int64(len(archive))
+	digest, err := artifact.Validate(bytes.NewReader(archive), size)
+	if err != nil {
+		return artifact.Ref{}, fmt.Errorf("validate snapshot: %w", err)
+	}
+	if progress == nil {
+		progress = io.Discard
+	}
+	if _, err := o.requireEndpointCapabilities(ctx, v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1); err != nil {
+		return artifact.Ref{}, err
 	}
 	client := o.artifactClient()
 	retries := new(artifactUploadRetries)
@@ -56,7 +103,7 @@ func (o *options) uploadArtifact(cmd *cobra.Command, directory, resume string) e
 	if resume == "" {
 		r, err := o.beginArtifactUpload(ctx, client, digest, size, retries)
 		if err != nil {
-			return err
+			return artifact.Ref{}, err
 		}
 		if r != nil && r.Msg != nil {
 			u = r.Msg.Upload
@@ -64,25 +111,25 @@ func (o *options) uploadArtifact(cmd *cobra.Command, directory, resume string) e
 	} else {
 		r, err := client.GetArtifactUpload(ctx, request(o, &v1.GetArtifactUploadRequest{Id: resume}))
 		if err != nil {
-			return err
+			return artifact.Ref{}, err
 		}
 		if r != nil && r.Msg != nil {
 			u = r.Msg.Upload
 		}
 	}
 	if err := checkUpload(u, resume, nil); err != nil {
-		return err
+		return artifact.Ref{}, err
 	}
 	ref, _ := checkedArtifactRef(u.Reference)
 	if ref.SHA256 != digest || ref.Size != size {
-		return errors.New("upload reference does not match the snapshot")
+		return artifact.Ref{}, errors.New("upload reference does not match the snapshot")
 	}
-	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "upload-id: %s\n", u.Id); err != nil {
-		return err
+	if _, err := fmt.Fprintf(progress, "upload-id: %s\n", u.Id); err != nil {
+		return artifact.Ref{}, err
 	}
 	finalizing := resume != "" && u.State == v1.ArtifactUploadState_ARTIFACT_UPLOAD_STATE_FINALIZING
 	if u.State != v1.ArtifactUploadState_ARTIFACT_UPLOAD_STATE_WRITABLE && u.State != v1.ArtifactUploadState_ARTIFACT_UPLOAD_STATE_COMPLETE && !finalizing {
-		return fmt.Errorf("upload is not writable: %s", u.State)
+		return artifact.Ref{}, fmt.Errorf("upload is not writable: %s", u.State)
 	}
 	// checkUpload requires a full acknowledgment for FINALIZING. Explicit
 	// resume retries Finalize on the same upload without beginning or writing
@@ -90,28 +137,28 @@ func (o *options) uploadArtifact(cmd *cobra.Command, directory, resume string) e
 	for u.Acknowledged < size {
 		offset := u.Acknowledged
 		end := min(size, offset+artifactChunkSize)
-		p := archive.Bytes()[offset:end]
+		p := archive[offset:end]
 		id := u.Id
 		u, err = o.writeArtifactChunk(ctx, client, u.Id, ref, offset, p, retries)
 		if err != nil {
-			return fmt.Errorf("upload chunk at %d (resume with --resume %s): %w", offset, id, err)
+			return artifact.Ref{}, fmt.Errorf("upload chunk at %d (resume with --resume %s): %w", offset, id, err)
 		}
 	}
 	r, err := o.finalizeArtifactUpload(ctx, client, u.Id, retries)
 	if err != nil {
-		return fmt.Errorf("finalize upload (resume with --resume %s): %w", u.Id, err)
+		return artifact.Ref{}, fmt.Errorf("finalize upload (resume with --resume %s): %w", u.Id, err)
 	}
 	if r == nil || r.Msg == nil {
-		return errors.New("server returned no finalized reference")
+		return artifact.Ref{}, errors.New("server returned no finalized reference")
 	}
 	got, err := checkedArtifactRef(r.Msg.Reference)
 	if err != nil {
-		return err
+		return artifact.Ref{}, err
 	}
 	if got != ref {
-		return errors.New("finalized artifact reference changed")
+		return artifact.Ref{}, errors.New("finalized artifact reference changed")
 	}
-	return writeArtifactRef(cmd.OutOrStdout(), got)
+	return got, nil
 }
 
 func checkUpload(u *v1.ArtifactUpload, id string, expected *artifact.Ref) error {
