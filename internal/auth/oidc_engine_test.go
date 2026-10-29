@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -446,18 +447,33 @@ func waitAdvance(t *testing.T, e *Engine, oidc bool, prev time.Time) time.Time {
 	}
 }
 
-// startRun runs the original e.Run on a goroutine. Its cleanup releases any
-// blocked OIDC read, cancels Run and waits up to ten seconds for it to
-// return, so neither Run nor a read outlives the test, even after a failed
-// assertion.
-func startRun(t *testing.T, e *Engine, release func()) (context.CancelFunc, <-chan struct{}) {
+// cleanupT is the part of testing.TB that startOriginal uses. The
+// cleanup-order control replaces it to run that cleanup itself.
+type cleanupT interface {
+	Helper()
+	Cleanup(func())
+	Errorf(format string, args ...any)
+}
+
+// originalJoinDiagnostic is how long an original's cleanup waits before
+// reporting the original still pending. It is only a diagnostic: the cleanup
+// then keeps waiting for the same original.
+var originalJoinDiagnostic = 10 * time.Second
+
+// startOriginal runs run, the original, on a goroutine and returns the
+// cancel of run's context and the original's done channel. Its cleanup is
+// registered before the original starts; it calls release, if not nil,
+// cancels run's context and then waits for that same original to return,
+// without limit. If the original is still pending originalJoinDiagnostic
+// after the cleanup began, the cleanup reports it and keeps waiting. So no
+// cleanup registered earlier, such as a seam reset or the removal of a
+// fixture, runs while the original lives, even after a failed assertion. An
+// original that never returns leaves the test to the process timeout with
+// its fixture and seams in place.
+func startOriginal(t cleanupT, release func(), run func(context.Context)) (context.CancelFunc, <-chan struct{}) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		e.Run(ctx)
-	}()
 	t.Cleanup(func() {
 		if release != nil {
 			release()
@@ -465,11 +481,171 @@ func startRun(t *testing.T, e *Engine, release func()) (context.CancelFunc, <-ch
 		cancel()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
-			t.Error("Run did not return within 10s of cleanup")
+			return
+		case <-time.After(originalJoinDiagnostic):
+			t.Errorf("original did not return within %v of cleanup; still waiting for it", originalJoinDiagnostic)
 		}
+		<-done
 	})
+	go func() {
+		defer close(done)
+		run(ctx)
+	}()
 	return cancel, done
+}
+
+// startRun runs the original e.Run with startOriginal, whose cleanup
+// releases any blocked OIDC read, cancels Run and joins that same Run before
+// any earlier cleanup runs.
+func startRun(t *testing.T, e *Engine, release func()) (context.CancelFunc, <-chan struct{}) {
+	t.Helper()
+	return startOriginal(t, release, func(ctx context.Context) { e.Run(ctx) })
+}
+
+// recordCleanup is a cleanupT that records cleanups and diagnostics, so a
+// control can run the cleanups, last registered first as testing does, and
+// observe them.
+type recordCleanup struct {
+	mu       sync.Mutex
+	cleanups []func()
+	errs     []string
+}
+
+func (*recordCleanup) Helper() {}
+
+func (c *recordCleanup) Cleanup(f func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cleanups = append(c.cleanups, f)
+}
+
+func (c *recordCleanup) Errorf(format string, args ...any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.errs = append(c.errs, fmt.Sprintf(format, args...))
+}
+
+func (c *recordCleanup) run() {
+	c.mu.Lock()
+	cleanups := c.cleanups
+	c.mu.Unlock()
+	for i := len(cleanups) - 1; i >= 0; i-- {
+		cleanups[i]()
+	}
+}
+
+func (c *recordCleanup) diagnostics() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.errs)
+}
+
+// TestStartOriginalCleanupOrder runs startOriginal's cleanup on a MODELED
+// original. Two cleanups registered before it stand for a seam reset and the
+// removal of a fixture. In the held case, once its first hold is released
+// and its context cancelled, the original waits in a second hold that only
+// the control releases: past the diagnostic, which is reported once, neither
+// earlier cleanup has run and the cleanup has not finished; after the
+// control releases the second hold, the same original returns and each
+// earlier cleanup then runs once. In the clean case the cleanup joins the
+// original with no diagnostic and each earlier cleanup runs once after it.
+func TestStartOriginalCleanupOrder(t *testing.T) {
+	diag := originalJoinDiagnostic
+	t.Cleanup(func() { originalJoinDiagnostic = diag })
+	originalJoinDiagnostic = 50 * time.Millisecond
+	for _, held := range []bool{false, true} {
+		name := "clean"
+		if held {
+			name = "second hold"
+		}
+		t.Run(name, func(t *testing.T) {
+			c := new(recordCleanup)
+			var returned, reset, removed, early atomic.Int32
+			c.Cleanup(func() {
+				if returned.Load() == 0 {
+					early.Add(1)
+				}
+				removed.Add(1)
+			})
+			c.Cleanup(func() {
+				if returned.Load() == 0 {
+					early.Add(1)
+				}
+				reset.Add(1)
+			})
+			first, second, inSecond := make(chan struct{}), make(chan struct{}), make(chan struct{})
+			var firstOnce, secondOnce sync.Once
+			release := func() { firstOnce.Do(func() { close(first) }) }
+			releaseSecond := func() { secondOnce.Do(func() { close(second) }) }
+			if !held {
+				releaseSecond()
+			}
+			// Registered before anything starts: on every path the control
+			// releases both holds, then joins the cleanup it runs and the
+			// same original.
+			var done <-chan struct{}
+			cleaned := make(chan struct{})
+			started := false
+			t.Cleanup(func() {
+				release()
+				releaseSecond()
+				if started {
+					<-cleaned
+				}
+				if done != nil {
+					<-done
+				}
+			})
+			_, done = startOriginal(c, release, func(ctx context.Context) {
+				defer returned.Add(1)
+				<-first
+				<-ctx.Done()
+				close(inSecond)
+				<-second
+			})
+			started = true
+			go func() {
+				defer close(cleaned)
+				c.run()
+			}()
+			if held {
+				select {
+				case <-inSecond:
+				case <-time.After(10 * time.Second):
+					t.Fatal("cleanup did not release the first hold and cancel the original within 10s")
+				}
+				time.Sleep(10 * originalJoinDiagnostic)
+				select {
+				case <-cleaned:
+					t.Fatal("cleanup finished while the original was held")
+				case <-done:
+					t.Fatal("the original returned while held")
+				default:
+				}
+				if n := c.diagnostics(); n != 1 || reset.Load() != 0 || removed.Load() != 0 {
+					t.Fatalf("while held: %d diagnostics, %d seam resets, %d removals; want 1, 0, 0", n, reset.Load(), removed.Load())
+				}
+				releaseSecond()
+			}
+			select {
+			case <-cleaned:
+			case <-time.After(10 * time.Second):
+				t.Fatal("cleanup did not finish within 10s of the original's release")
+			}
+			select {
+			case <-done:
+			default:
+				t.Fatal("cleanup finished before the original returned")
+			}
+			want := 0
+			if held {
+				want = 1
+			}
+			if n := c.diagnostics(); n != want || returned.Load() != 1 || reset.Load() != 1 || removed.Load() != 1 || early.Load() != 0 {
+				t.Fatalf("%d diagnostics, %d returns, %d seam resets, %d removals, %d before the original returned; want %d, 1, 1, 1, 0", n, returned.Load(), reset.Load(), removed.Load(), early.Load(), want)
+			}
+		})
+	}
 }
 
 // TestOIDCEngineStalledRead blocks an OIDC read, as a FIFO or hung mount
@@ -480,19 +656,7 @@ func TestOIDCEngineStalledRead(t *testing.T) {
 	token := f.idToken(t, nil)
 	a := f.authenticate(t, token)
 	entered, release, _ := stallOIDCRead(t, f.e, 0)
-	stalled := make(chan struct{})
-	go func() {
-		defer close(stalled)
-		f.e.refreshOIDC()
-	}()
-	t.Cleanup(func() {
-		release()
-		select {
-		case <-stalled:
-		case <-time.After(10 * time.Second):
-			t.Error("stalled OIDC read did not return within 10s of release")
-		}
-	})
+	_, stalled := startOriginal(t, release, func(context.Context) { f.e.refreshOIDC() })
 	<-entered
 	for i := 0; i < 3; i++ {
 		f.clock.add(time.Second)

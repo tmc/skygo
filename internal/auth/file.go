@@ -336,14 +336,16 @@ func principalID(s string) bool {
 }
 func validRole(r Role) bool { return r == Reader || r == Operator || r == Admin }
 
-// ErrCloseUncertain means a read of the credential file attempted to close its
-// original descriptor and did not prove closure. No configuration from that
+// ErrCloseUncertain means a read of the credential file, or of an OIDC, key
+// set or CA file or a fetched key set response, attempted to close its
+// original descriptor or body and did not prove closure. Nothing from that
 // read is accepted. The caller must keep the error and stop; it must not
 // reopen or retry the read in its place. Use errors.Is.
 var ErrCloseUncertain = errors.New("authentication file closure is uncertain")
 
-// fileCloseError retains the original credential file whose one Close failed.
-// Its text omits the path; Unwrap exposes the read and Close errors.
+// fileCloseError retains the original credential, OIDC, key set or CA file
+// whose one Close failed. Its text omits the path; Unwrap exposes the read
+// and Close errors.
 type fileCloseError struct {
 	file *os.File
 	err  error

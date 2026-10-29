@@ -61,7 +61,8 @@ func (a Actor) TokenID() string { return a.tokenID }
 func (a Actor) Role() Role { return a.role }
 
 // Engine authenticates one explicit legacy authority or private credential file.
-// Construct it with NewLegacy or NewFile; the zero value is not usable.
+// Construct it with NewLegacy, NewFile or NewFileOIDC; the zero value is not
+// usable.
 type Engine struct {
 	mu                 sync.RWMutex
 	legacy             bool
@@ -72,11 +73,12 @@ type Engine struct {
 	hash               [32]byte
 	lastRead           time.Time
 	available          bool
-	held               error // sticky ErrCloseUncertain from a credential file read
+	held               error // sticky ErrCloseUncertain; retains each original file or body
 	changed            chan struct{}
 	now                func() time.Time
 	oidcPath           string                        // empty: no OIDC authentication
 	oidcRead           func() (*oidcSnapshot, error) // reads the OIDC files without e.mu
+	oidcKeys           *jwksFetcher                  // nil: no jwks_uri allowed
 	oidc               *oidcSnapshot                 // last published OIDC snapshot
 	oidcAvailable      bool
 	oidcLastRead       time.Time
@@ -186,7 +188,7 @@ func (e *Engine) Ready() bool {
 	return e.readyLocked()
 }
 func (e *Engine) readyLocked() bool {
-	return e.available && e.now != nil && (e.legacy || e.snapshot != nil && e.now().Sub(e.lastRead) <= 2*time.Second)
+	return e.held == nil && e.available && e.now != nil && (e.legacy || e.snapshot != nil && e.now().Sub(e.lastRead) <= 2*time.Second)
 }
 
 // Changed returns a notification closed on snapshot or availability change.
@@ -196,10 +198,14 @@ func (e *Engine) Changed() <-chan struct{} { e.mu.RLock(); defer e.mu.RUnlock();
 // Run refreshes a file authority until cancellation. Invalid snapshots deny
 // requests while the loop keeps attempting recovery. Legacy engines need no Run.
 // With OIDC configured, Run also starts one OIDC reader goroutine, which has
-// at most one OIDC read outstanding. A blocked OIDC read never delays the
-// credential file refresh; it only leaves OIDC unavailable. A file read cannot
-// be cancelled, so after cancellation Run returns only once a pending OIDC
-// read has returned and the reader has stopped.
+// at most one OIDC read outstanding, and, with a jwks_uri allowed, one key set
+// fetcher goroutine, which has at most one fetch outstanding. A blocked OIDC
+// read or fetch never delays the credential file refresh; it only leaves OIDC
+// unavailable. Cancellation cancels a pending fetch, but neither a file read
+// nor a response body read and Close is known to have returned until it does,
+// so after cancellation Run returns only once each pending read, fetch and
+// Close has returned and both goroutines have stopped. A fetch that returns
+// after cancellation publishes no keys.
 func (e *Engine) Run(ctx context.Context) {
 	if e == nil || e.legacy {
 		return
@@ -224,9 +230,13 @@ func (e *Engine) Run(ctx context.Context) {
 	}
 }
 
-// Err returns the retained error of a credential file read whose original
-// Close failed, or nil. Such an Engine is unavailable from then on and never
-// reads the file again; the caller must keep the error and stop.
+// Err returns the retained error of a read whose original Close failed, or
+// nil. The read is of the credential file or, with OIDC configured, of the
+// OIDC, key set or CA file or a fetched key set response. Such an Engine is
+// unavailable from then on, for scoped tokens and OIDC alike, and never reads
+// or fetches again; the caller must keep the Engine and error and stop. An
+// ordinary OIDC failure, such as an issuer outage, is not retained here: it
+// leaves only OIDC unavailable.
 func (e *Engine) Err() error {
 	if e == nil {
 		return nil
@@ -234,6 +244,18 @@ func (e *Engine) Err() error {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.held
+}
+
+// holdLocked retains err, from a read whose original Close failed; readyLocked
+// then makes the Engine unavailable for good. A second such error, from the
+// other reader racing the first, is joined rather than dropped, so each
+// original file or body stays retained.
+func (e *Engine) holdLocked(err error) {
+	if e.held == nil {
+		e.held = err
+	} else {
+		e.held = errors.Join(e.held, err)
+	}
 }
 
 // refresh reads and publishes the credential file. Freshness dates from the
@@ -252,7 +274,7 @@ func (e *Engine) refresh() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if errors.Is(err, ErrCloseUncertain) {
-		e.held = err
+		e.holdLocked(err)
 	}
 	if err == nil && e.snapshot != nil && (c.Generation < e.snapshot.Generation || c.Generation == e.snapshot.Generation && hash != e.hash) {
 		err = ErrConflict
