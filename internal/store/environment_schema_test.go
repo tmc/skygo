@@ -500,10 +500,19 @@ func TestEnvironmentGenuineSchemaEightMigration(t *testing.T) {
 }
 
 // TestEnvironmentSchemaEightBinaryRefusesSchemaNine runs the accepted schema8
-// binary against a current (schema12) installation. It must refuse before any
-// write.
+// binary against a current installation. Its server error text hides the
+// underlying cause, so use the same binary's structured inspection to establish
+// the schema refusal, with a genuine supported predecessor as a positive control.
 func TestEnvironmentSchemaEightBinaryRefusesSchemaNine(t *testing.T) {
 	exe, _ := genuineFixture(t, "SKYGO_SCHEMA8_BINARY")
+	if os.Getenv("SKYGO_SCHEMA8_DB") == "" || os.Getenv("SKYGO_SCHEMA8_DB_SHA256") == "" {
+		t.Fatal("a schema8 binary requires the paired genuine SKYGO_SCHEMA8_DB fixture")
+	}
+	_, predecessor := genuineFixture(t, "SKYGO_SCHEMA8_DB")
+	oldDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(oldDir, "jobs.db"), predecessor, 0600); err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	s, err := Open(dir)
 	if err != nil {
@@ -512,21 +521,69 @@ func TestEnvironmentSchemaEightBinaryRefusesSchemaNine(t *testing.T) {
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}
-	path := filepath.Join(dir, "jobs.db")
-	before, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
+	run := func(t *testing.T, dir string, args ...string) ([]byte, error) {
+		t.Helper()
+		path := filepath.Join(dir, "jobs.db")
+		before, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, exe, args...)
+		cmd.Env = append(os.Environ(), "SKYGO_TOKEN=")
+		out, runErr := cmd.Output()
+		// Check bytes even if the command failed or its refusal is unexpected.
+		after, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatalf("schema8 binary changed database: %v", err)
+		}
+		if ctx.Err() != nil {
+			t.Fatalf("schema8 command did not finish promptly: %v", ctx.Err())
+		}
+		return out, runErr
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, exe, "server", "--listen", "127.0.0.1:0", "--data-dir", dir)
-	cmd.Env = append(os.Environ(), "SKYGO_TOKEN=")
-	out, err := cmd.CombinedOutput()
-	if err == nil || ctx.Err() != nil || !bytes.Contains(out, []byte("unsupported database schema")) {
-		t.Fatalf("schema8 binary did not promptly refuse schema9: %v %s", err, out)
+	for _, tt := range []struct {
+		name, dir string
+		version   uint64
+		supported bool
+	}{
+		{"predecessor", oldDir, 8, true},
+		{"current", dir, uint64(schemaVersion), false},
+	} {
+		if !t.Run(tt.name, func(t *testing.T) {
+			out, err := run(t, tt.dir, "--json", "state", "retention", "inspect", "--data-dir", tt.dir)
+			if tt.supported {
+				if err != nil {
+					t.Fatalf("schema8 inspection refused its predecessor: %v", err)
+				}
+			} else {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) || exit.ExitCode() != 1 {
+					t.Fatalf("schema8 inspection did not refuse current state: %v", err)
+				}
+			}
+			var info struct {
+				Version   *uint64 `json:"schema_version"`
+				Supported *bool   `json:"schema_supported"`
+				Reason    string  `json:"reason"`
+			}
+			if err := json.Unmarshal(out, &info); err != nil {
+				t.Fatal(err)
+			}
+			if info.Version == nil || *info.Version != tt.version || info.Supported == nil || *info.Supported != tt.supported {
+				t.Fatalf("inspection = %s; want schema %d supported %v", out, tt.version, tt.supported)
+			}
+			if !tt.supported && info.Reason != "unsupported_schema" {
+				t.Fatalf("inspection reason = %q; want unsupported_schema", info.Reason)
+			}
+		}) {
+			return
+		}
 	}
-	after, err := os.ReadFile(path)
-	if err != nil || !bytes.Equal(before, after) {
-		t.Fatalf("schema8 binary modified schema9: %v", err)
+	_, err = run(t, dir, "server", "--listen", "127.0.0.1:0", "--data-dir", dir)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != 1 || strings.TrimSpace(string(exit.Stderr)) != "server lifetime: state acquisition failed" {
+		t.Fatalf("schema8 server did not refuse current state at acquisition: %v", err)
 	}
 }
