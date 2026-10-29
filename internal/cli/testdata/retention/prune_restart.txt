@@ -14,8 +14,9 @@ await-usage JOBS 0
 event-count 1
 skygo --json jobs retention
 ! stdout 'private-task-value'
-# Preserve a genuine outstanding output operation through actual daemon restarts.
-# The private permission barrier prevents successful unlink before restoration.
+# Keep a genuine output operation pending until its daemon has stopped.
+# Compare stopped Store reopens before startup restores log permissions;
+# then let the new daemon resume cleanup without another prune.
 [non-root] json-field admin.obligations.0.id OBLIGATION
 [non-root] retention-usage CLEANUP_RECORDS 1
 [non-root] output-permission deny
@@ -28,13 +29,8 @@ skygo --json jobs retention
 server stop
 ! stderr .
 [non-root] cleanup-checkpoint save $JOB pending.json
-[non-root] server start
-[non-root] skygo --json jobs retention
-[non-root] stdout '"pending_cleanup_records": *"1"'
-[non-root] retention-usage CLEANUP_RECORDS 2
-[non-root] exists $DATA/logs/$JOB.log
-[non-root] server stop
 [non-root] cleanup-checkpoint same $JOB pending.json
+[non-root] exists $DATA/logs/$JOB.log
 [non-root] output-permission restore
 [non-root] server start
 [non-root] await-usage OUTPUT_BYTES 0

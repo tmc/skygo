@@ -777,7 +777,7 @@ func retentionOldStateRefusal(old string, p *serverProcess) script.Cmd {
 // production daemon has released its database. Open may perform bookkeeping;
 // this is logical immutable-record/charge comparison, not DB byte immutability.
 func retentionCleanupCheckpoint(p *serverProcess) script.Cmd {
-	return script.Command(script.CmdUsage{Summary: "compare actual pending cleanup identity and charges across daemon restart", Args: "save|same job snapshot"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
+	return script.Command(script.CmdUsage{Summary: "compare actual pending cleanup identity and charges across stopped Store reopens", Args: "save|same job snapshot"}, func(s *script.State, args ...string) (script.WaitFunc, error) {
 		if len(args) != 3 || (args[0] != "save" && args[0] != "same") {
 			return nil, script.ErrUsage
 		}
@@ -830,7 +830,7 @@ func retentionCleanupCheckpoint(p *serverProcess) script.Cmd {
 			return nil, err
 		}
 		if !bytes.Equal(before, data) {
-			return nil, errors.New("actual pending cleanup identity or quota charges changed across restart")
+			return nil, errors.New("actual pending cleanup identity or quota charges changed across stopped Store reopens")
 		}
 		return nil, nil
 	})
