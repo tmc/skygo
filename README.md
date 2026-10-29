@@ -7,6 +7,9 @@ module builds `skygo` without Kubernetes dependencies. The separate
 `skygo-kubernetes`, with native Jobs and directly owned Pods for finite retries.
 The optional [`ssh`](integrations/ssh/README.md) module builds `skygo-ssh`,
 which bootstraps remote execution on Linux arm64 hosts.
+The optional [EC2](integrations/ec2/README.md) and
+[Compute Engine](integrations/gcp/README.md) modules provide separate VM
+lifecycle commands; neither is a skygo execution target.
 
 This independent implementation covers selected SkyPilot concerns: task
 validation, target selection, submission, status, logs, cancellation, finite
@@ -103,8 +106,8 @@ cooperating workload programs and provides no device isolation.
 
 Not yet supported:
 
-- Cloud provisioning. The [`ec2`](integrations/ec2/README.md) module has no
-  command or target and has not been run against AWS.
+- Cloud execution targets. The EC2 and Compute Engine lifecycle commands
+  do not submit jobs and have not been qualified against their cloud services.
 - Multi-node jobs. The worker-group API is defined but not served.
 - Model serving. Only portable serving types exist.
 - Pools, autostop and autodown.

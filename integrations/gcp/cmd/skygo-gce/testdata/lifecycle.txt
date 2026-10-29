@@ -1,0 +1,99 @@
+# Usage, help and offline paths create no state and read no credentials.
+# NOT_RUN by author.
+
+! skygo-gce
+stderr 'usage: skygo-gce'
+
+! skygo-gce launch -config config.json -state st
+stderr 'unknown command "launch"'
+
+skygo-gce start -h
+stderr 'Commands:'
+! exists st
+
+! skygo-gce start -config config.json -state st
+stderr '-credentials is required'
+! exists st
+
+! skygo-gce status -config config.json -state st -credentials token.json
+stderr 'status reads no credentials'
+
+! skygo-gce status -config config.json -state st -refresh
+stderr '-credentials is required'
+
+! skygo-gce start -config config.json -state st -credentials token.json -refresh
+stderr 'usage: skygo-gce'
+! exists st
+
+# The config must be private.
+chmod 0644 config.json
+! skygo-gce start -config config.json -state st -credentials token.json
+stderr 'group and other must have no access'
+! exists st
+chmod 0600 config.json
+
+# A token file with a refresh token is refused before any state exists.
+chmod 0600 refresh.json
+! skygo-gce start -config config.json -state st -credentials refresh.json
+stderr 'credentials: not a token file'
+! stderr 'secret-refresh'
+! exists st
+
+# A token file with a duplicate field is refused before any state exists.
+chmod 0600 dup.json
+! skygo-gce start -config config.json -state st -credentials dup.json
+stderr 'credentials: duplicate expiry'
+! stderr 'ya29'
+! exists st
+
+# An expired token creates the state, then holds before any request.
+chmod 0600 token.json
+! skygo-gce start -config config.json -state st -credentials token.json
+stdout 'exit=3'
+stderr 'goal not reached: token-expiring'
+! stderr 'ya29'
+exists st/state.json
+! grep 'ya29' st/state.json
+
+skygo-gce status -config config.json -state st -json
+stdout '"version": 1'
+stdout '"desired": "running"'
+stdout '"reached": false'
+! stdout 'ya29'
+
+# Refresh observes with GET requests only. Nothing was created, so it
+# reports that without any request, even with the expired token, and
+# leaves the goal as it was.
+skygo-gce status -config config.json -state st -credentials token.json -refresh
+stdout 'held +not-created'
+stdout 'desired +running'
+stdout 'exit=0'
+
+# Nothing was ever sent, so down is reached without a request. Down is
+# latched; start is then refused.
+skygo-gce down -config config.json -state st -credentials token.json
+stdout 'exit=0'
+stdout 'goal reached +true'
+! skygo-gce start -config config.json -state st -credentials token.json
+stderr 'latched'
+
+# After down, refresh confirms nothing owned exists, still with no request.
+skygo-gce status -config config.json -state st -credentials token.json -refresh -json
+stdout '"desired": "absent"'
+stdout '"reached": true'
+
+# A changed config does not open the state.
+chmod 0600 other.json
+! skygo-gce stop -config other.json -state st -credentials token.json
+stderr 'config differs'
+
+-- config.json --
+{"project":"skygo-test","compute_project_id":"123456789012","zone":"us-central1-a","machine_type":"zones/us-central1-a/machineTypes/t2a-standard-1","subnet":"projects/skygo-net/regions/us-central1/subnetworks/default","image":{"project":"debian-cloud","name":"debian-12-arm64-v20261001","id":"4242"},"disk_type":"zones/us-central1-a/diskTypes/pd-balanced","disk_gib":20,"ssh_user":"skygo","authorized_key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"}
+-- other.json --
+{"project":"skygo-test","compute_project_id":"123456789012","zone":"us-central1-a","machine_type":"zones/us-central1-a/machineTypes/t2a-standard-1","subnet":"projects/skygo-net/regions/us-central1/subnetworks/default","image":{"project":"debian-cloud","name":"debian-12-arm64-v20261001","id":"4242"},"disk_type":"zones/us-central1-a/diskTypes/pd-balanced","disk_gib":30,"ssh_user":"skygo","authorized_key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"}
+-- token.json --
+{"access_token":"ya29.expired-test-token","token_type":"Bearer","expiry":"2020-01-01T00:00:00Z"}
+-- dup.json --
+{"access_token":"ya29.x","token_type":"Bearer","expiry":"2099-01-01T00:00:00Z","expiry":"2000-01-01T00:00:00Z"}
+-- refresh.json --
+{"access_token":"ya29.x","token_type":"Bearer","expiry":"2099-01-01T00:00:00Z","refresh_token":"secret-refresh"}
