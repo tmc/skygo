@@ -48,19 +48,20 @@ func artifactRootUsage(root artifactRoot) artifactUsage {
 }
 
 type artifactState struct {
-	Root         artifactRoot
-	Uploads      map[string]artifactUploadRecord
-	Objects      map[string]artifactObject
-	Grants       map[string]artifactGrant
-	Reads        map[string]artifactRead
-	JobInputs    map[string]artifactPin
-	ManualInputs map[string]artifactPin
-	Results      map[string]artifactResult
-	Expired      map[string]artifactExpiredResult
-	Workspaces   map[string]artifactWorkspace
-	Completions  map[string]artifactCompletion
-	Remote       map[string]remoteRecord
-	Deletes      map[string]artifactDelete
+	Root          artifactRoot
+	Uploads       map[string]artifactUploadRecord
+	BeginRequests map[string]artifactBeginRequest
+	Objects       map[string]artifactObject
+	Grants        map[string]artifactGrant
+	Reads         map[string]artifactRead
+	JobInputs     map[string]artifactPin
+	ManualInputs  map[string]artifactPin
+	Results       map[string]artifactResult
+	Expired       map[string]artifactExpiredResult
+	Workspaces    map[string]artifactWorkspace
+	Completions   map[string]artifactCompletion
+	Remote        map[string]remoteRecord
+	Deletes       map[string]artifactDelete
 	// WorkflowInputs are input edges prepaid at graph acceptance.
 	WorkflowInputs map[string]workflowInput
 	// EnvironmentPins hold the artifacts of undeleted version 2
@@ -72,7 +73,8 @@ type artifactRows map[string]map[string][]byte
 
 // artifactTables is in installation order: schema6 has the tables before
 // remote_attempts, schema7 adds remote_attempts, schema8 through schema10
-// add workflow_inputs and schema11 adds environment_pins.
+// add workflow_inputs, schema11 adds environment_pins and schema14 adds
+// artifact_begin_requests. The counts below pin genuine predecessor layouts.
 var artifactTables = []struct {
 	name string
 	max  uint64
@@ -81,7 +83,15 @@ var artifactTables = []struct {
 	{"job_inputs", 1024}, {"manual_inputs", 1024}, {"results", 1536},
 	{"result_expired", 512}, {"workspaces", 4096}, {"completions", 1024}, {"gc", 2048}, {"owners", 80}, {"remote_attempts", 4096},
 	{"workflow_inputs", 1024}, {"environment_pins", 768},
+	{"artifact_begin_requests", 1024},
 }
+
+const (
+	artifactSchema6Tables  = 12
+	artifactSchema7Tables  = 13
+	artifactSchema8Tables  = 14
+	artifactSchema11Tables = 15
+)
 
 // artifactTablesFor returns the artifact tables and root floor of schema n.
 func artifactTablesFor(n uint64) (tables []struct {
@@ -90,12 +100,14 @@ func artifactTablesFor(n uint64) (tables []struct {
 }, floor uint64, err error) {
 	switch n {
 	case 6:
-		return artifactTables[:len(artifactTables)-3], 6, nil
+		return artifactTables[:artifactSchema6Tables], 6, nil
 	case 7:
-		return artifactTables[:len(artifactTables)-2], 7, nil
+		return artifactTables[:artifactSchema7Tables], 7, nil
 	case artifactFormat, 9, 10:
-		return artifactTables[:len(artifactTables)-1], artifactFormat, nil
+		return artifactTables[:artifactSchema8Tables], artifactFormat, nil
 	case environmentArtifactSchema, environmentRetirementSchema, servingSchema:
+		return artifactTables[:artifactSchema11Tables], artifactFormat, nil
+	case artifactBeginRequestSchema:
 		return artifactTables, artifactFormat, nil
 	}
 	return nil, 0, ErrUnsupportedSchema
@@ -255,6 +267,13 @@ func artifactLoad(tx *bolt.Tx) (*artifactState, error) {
 	} else {
 		s.EnvironmentPins = make(map[string]artifactEnvironmentPin)
 	}
+	if schemaNumber(tx) >= artifactBeginRequestSchema {
+		if s.BeginRequests, err = artifactReadMap[artifactBeginRequest](b.Bucket(artifactBeginRequestsTable)); err != nil {
+			return nil, err
+		}
+	} else {
+		s.BeginRequests = make(map[string]artifactBeginRequest)
+	}
 	rows, usage, owners, err := s.encode()
 	if err != nil {
 		return nil, err
@@ -389,6 +408,14 @@ func (s *artifactState) encode() (artifactRows, artifactUsage, map[string]artifa
 			return err
 		}
 		return charge(owner, aFiles, 1)
+	}
+	if err := validateArtifactBeginRequests(s); err != nil {
+		return nil, usage, nil, err
+	}
+	for id, r := range s.BeginRequests {
+		if err := put(string(artifactBeginRequestsTable), id, r.Owner, r); err != nil {
+			return nil, usage, nil, err
+		}
 	}
 	if len(s.Remote) > 1024 {
 		return nil, usage, nil, artifactCorrupt()

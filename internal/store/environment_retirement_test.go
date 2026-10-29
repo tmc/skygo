@@ -102,8 +102,21 @@ func TestEnvironmentRetirementMigration(t *testing.T) {
 	f.reopen(t)
 	f.valid(t)
 	after := workflowDatabase(t, f.s)
-	// The schema13 step that follows adds only the serving tag and the
-	// empty serving family.
+	// Schema13 adds the serving tag and empty serving family; schema14 adds
+	// the artifact Begin tag and, when installed, an empty request table.
+	if after[string(metadataBucket)+"/"+string(artifactBeginStorageFormatKey)] != artifactBeginStorageFormat {
+		t.Error("migration omitted the artifact Begin storage format tag")
+	}
+	delete(after, string(metadataBucket)+"/"+string(artifactBeginStorageFormatKey))
+	table := string(artifactsBucket) + "/" + string(artifactBeginRequestsTable) + "\x00sequence"
+	if _, installed := before[string(artifactsBucket)+"\x00sequence"]; installed {
+		if after[table] != "0" {
+			t.Error("migration omitted the empty artifact Begin request table")
+		}
+		delete(after, table)
+	} else if _, installed := after[table]; installed {
+		t.Error("migration installed an artifact Begin table without artifacts")
+	}
 	if after[string(metadataBucket)+"/"+string(servingStorageFormatKey)] != servingStorageFormat {
 		t.Error("migration omitted the serving storage format tag")
 	}

@@ -34,3 +34,8 @@ skygo --endpoint http://127.0.0.1:1 info --help
 stdout '--target'
 stdout '--require'
 ! stderr .
+
+# The new feature is an endpoint fact; old advertisements cannot satisfy it.
+! skygo info --require artifact-begin-requests-v1
+stderr 'endpoint does not advertise artifact-begin-requests-v1'
+! stdout .

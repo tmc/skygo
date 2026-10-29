@@ -33,6 +33,8 @@ func (o *options) infoCommand() *cobra.Command {
 				capability = v1.Capability_CAPABILITY_TARGET_LABELS_V1
 			case "artifact-snapshot-service-v1":
 				capability = v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1
+			case "artifact-begin-requests-v1":
+				capability = v1.Capability_CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1
 			case "remote-data-transfer-v1":
 				capability = v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1
 			case "remote-data-v1":
@@ -133,6 +135,8 @@ func capabilityName(capability v1.Capability) string {
 		return "target-labels-v1"
 	case v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1:
 		return "artifact-snapshot-service-v1"
+	case v1.Capability_CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1:
+		return "artifact-begin-requests-v1"
 	case v1.Capability_CAPABILITY_WORKDIR_SNAPSHOT_V1:
 		return "workdir-snapshot-v1"
 	case v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1:
@@ -248,7 +252,7 @@ func (o *options) planTask(ctx context.Context, client skyv1connect.ControlServi
 
 // Endpoint facts describe protocol semantics, independently of target placement.
 func endpointCapability(capability v1.Capability) bool {
-	return capability == v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1 || capability == v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1
+	return capability == v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1 || capability == v1.Capability_CAPABILITY_REMOTE_DATA_TRANSFER_V1 || capability == v1.Capability_CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1
 }
 
 func checkEndpointCapabilities(info *v1.GetServerInfoResponse, required ...v1.Capability) error {

@@ -53,6 +53,9 @@ func (s *Store) BeginArtifactUpload(actor auth.Actor, sha string, size uint64) (
 		if _, ok := st.Objects[id]; ok {
 			return ErrArtifactConflict
 		}
+		if _, ok := st.BeginRequests[id]; ok {
+			return ErrArtifactConflict
+		}
 		u := artifactUploadRecord{Owner: actor.Principal(), Ref: ArtifactRef{ID: id, SHA256: sha, Size: size}, Revision: 1, State: "creating", Created: now, Expires: now.Add(time.Hour)}
 		st.Uploads[id] = u
 		out = artifactUploadDTO(u)

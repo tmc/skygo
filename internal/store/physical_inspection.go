@@ -385,6 +385,11 @@ func readPhysicalFormat(tx *bolt.Tx, b *physicalBudget, version uint64) error {
 			return err
 		}
 	}
+	if tag := tx.Bucket(metadataBucket).Get(artifactBeginStorageFormatKey); len(tag) <= len(artifactBeginStorageFormat) {
+		if err := b.account(uint64(len(tag))); err != nil {
+			return err
+		}
+	}
 	if err := checkFixedStorageFormat(tx, version); err != nil {
 		return unsupported()
 	}

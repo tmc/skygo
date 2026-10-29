@@ -234,6 +234,23 @@ func (c *Control) FinalizeArtifactUpload(ctx context.Context, actor auth.Actor, 
 // BeginArtifactUpload reserves durable ownership before exclusive part creation.
 // Any uncertain create remains charged; an existing file is never adopted.
 func (c *Control) BeginArtifactUpload(ctx context.Context, actor auth.Actor, call *ArtifactCall, sha256 string, size int64) (store.ArtifactUpload, error) {
+	return c.beginArtifactUpload(ctx, actor, call, nil, "", sha256, size)
+}
+
+// ArtifactBeginRequestsEnabled reports configured support for principal-scoped
+// keyed upload admission. It does not grant file or replay authority.
+func (c *Control) ArtifactBeginRequestsEnabled() bool {
+	return c != nil && c.artifacts != nil && c.retention.enabled
+}
+
+// BeginArtifactUploadRequest reserves an upload once for the principal, domain
+// and request ID. Replays return the original status, including creating when
+// its original owner is unresolved; they never create or adopt a part file.
+func (c *Control) BeginArtifactUploadRequest(ctx context.Context, actor auth.Actor, call *ArtifactCall, domain store.RequestDomain, requestID, sha256 string, size int64) (store.ArtifactUpload, error) {
+	return c.beginArtifactUpload(ctx, actor, call, &domain, requestID, sha256, size)
+}
+
+func (c *Control) beginArtifactUpload(ctx context.Context, actor auth.Actor, call *ArtifactCall, domain *store.RequestDomain, requestID, sha256 string, size int64) (store.ArtifactUpload, error) {
 	actor, err := c.artifactActor(ctx, actor, auth.Mutate)
 	if err != nil {
 		return store.ArtifactUpload{}, err
@@ -244,11 +261,31 @@ func (c *Control) BeginArtifactUpload(ctx context.Context, actor auth.Actor, cal
 	if size < 1 || size > 32<<20 || len(sha256) != 64 || strings.Trim(sha256, "0123456789abcdef") != "" {
 		return store.ArtifactUpload{}, ErrInvalid
 	}
+	if domain != nil {
+		if !requestName.MatchString(requestID) || !jobName.MatchString(domain.Lineage) || domain.Epoch == 0 {
+			return store.ArtifactUpload{}, ErrInvalid
+		}
+		if !c.ArtifactBeginRequestsEnabled() {
+			return store.ArtifactUpload{}, ErrUnsupported
+		}
+	}
 	end, err := c.beginArtifactCall(call, "")
 	if err != nil {
 		return store.ArtifactUpload{}, err
 	}
 	defer end()
+	if domain != nil {
+		upload, found, err := c.store.LookupArtifactUploadRequest(actor, *domain, requestID, sha256, uint64(size))
+		if err != nil {
+			return store.ArtifactUpload{}, err
+		}
+		if found {
+			if _, err := c.artifactActor(ctx, actor, auth.Mutate); err != nil {
+				return store.ArtifactUpload{}, err
+			}
+			return upload, nil
+		}
+	}
 	// ControlBeginGuardOnly: this is the ONLY non-admission wrapper constructor.
 	// No Store Begin, exclusive create, or structural mutation has been entered.
 	if err = c.cachedLinkGrowthCheck(); err != nil {
@@ -256,9 +293,21 @@ func (c *Control) BeginArtifactUpload(ctx context.Context, actor auth.Actor, cal
 	}
 	finish := c.beginUploadStructure(call)
 	defer finish()
-	upload, err := c.store.BeginArtifactUpload(actor, sha256, uint64(size))
+	var upload store.ArtifactUpload
+	created := true
+	if domain == nil {
+		upload, err = c.store.BeginArtifactUpload(actor, sha256, uint64(size))
+	} else {
+		upload, created, err = c.store.BeginArtifactUploadRequest(actor, *domain, requestID, sha256, uint64(size))
+	}
 	if err != nil {
 		return store.ArtifactUpload{}, err
+	}
+	if !created {
+		if _, err := c.artifactActor(ctx, actor, auth.Mutate); err != nil {
+			return store.ArtifactUpload{}, err
+		}
+		return upload, nil
 	}
 	service := c.artifacts
 	service.mu.Lock()

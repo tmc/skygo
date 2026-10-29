@@ -30,9 +30,9 @@ func (c *Control) dispatchArtifactExpiry(m *maintenanceState, now time.Time) (bo
 	if closing {
 		return false, nil
 	}
-	families := uint8(3)
+	families := uint8(4)
 	if c.recoverStoppedReaders {
-		families = 4
+		families = 5
 	}
 	first := m.expiryFamily % families
 	m.expiryFamily = (first + 1) % families
@@ -47,6 +47,10 @@ func (c *Control) dispatchArtifactExpiry(m *maintenanceState, now time.Time) (bo
 		case 2:
 			admitted, err = c.dispatchRemoteInputFinish(m, now)
 		case 3:
+			var retired int
+			retired, err = c.store.RetireArtifactUploadRequests()
+			admitted = retired != 0
+		case 4:
 			admitted, err = c.dispatchArtifactReaderRecovery(m)
 		}
 		if err != nil || admitted {

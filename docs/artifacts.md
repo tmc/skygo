@@ -164,6 +164,27 @@ Removal refuses while an accepted job or read still needs the object, and
 also waits for its deletion deadline and any release grace.
 Do not remove files directly from the server's artifact directory.
 
+## Recoverable Begin requests
+
+RPC clients may require `artifact-begin-requests-v1` before supplying both
+`request_id` and `domain` to `BeginArtifactUpload`. Persist the domain, request
+ID, archive digest and size before sending the first request. Repeating that
+principal/domain/ID with the same digest and size returns the original upload;
+changing either value refuses the request. Omitting both fields preserves the
+legacy Begin operation. An empty or partial pair refuses the request.
+
+Replay does not extend upload expiry, recreate a part, or adopt an unfinished
+creator. A returned `creating` upload can require operator recovery; it is not
+permission to start another Begin. The request domain's existing acceptance,
+retry and retirement deadlines still apply. Finalize and Submit continue using
+their existing upload and job request identities.
+
+This RPC feature requires database schema 14. Opening a schema 13 database
+validates it before adding the empty request table and format marker. Older
+servers refuse the resulting database. The serving storage family remains v1
+and the artifact root format remains 8. Automatic workspace synchronization and
+a client request journal are not implemented by this RPC feature.
+
 ## Expiry and limits
 
 Upload sessions expire one hour after Begin. Completed upload grants and

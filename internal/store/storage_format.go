@@ -23,6 +23,8 @@ const (
 	// servingSchema adds the empty serving_services bucket and the serving
 	// storage format tag.
 	servingSchema = 13
+	// artifactBeginRequestSchema adds scoped upload-begin request witnesses.
+	artifactBeginRequestSchema = 14
 )
 
 // servingStorageFormatKey names the metadata scalar that the schema13
@@ -115,6 +117,9 @@ func checkFixedStorageFormat(tx *bolt.Tx, n uint64) error {
 		return foreignFormat("missing storage format tag")
 	}
 	if err := checkServingFormat(tx, n); err != nil {
+		return err
+	}
+	if err := checkArtifactBeginRequestFormat(tx, n); err != nil {
 		return err
 	}
 	// These are the actual family ordinals: published schema9 already

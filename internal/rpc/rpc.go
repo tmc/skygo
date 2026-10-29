@@ -414,6 +414,9 @@ func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetSe
 	if h.control.ArtifactsEnabled() {
 		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_ARTIFACT_SNAPSHOT_SERVICE_V1)
 	}
+	if h.control.ArtifactBeginRequestsEnabled() {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1)
+	}
 	targets, err := h.control.Targets(requestActor(ctx))
 	h.record(ctx, "info", "", err)
 	if err != nil {

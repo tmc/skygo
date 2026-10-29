@@ -149,6 +149,17 @@ type artifactUploadRecord struct {
 	LastSHA256      string
 }
 
+// artifactBeginRequest fixes a scoped Begin's original upload identity. The
+// witness survives upload collection until its domain is permanently retired.
+type artifactBeginRequest struct {
+	Owner      string
+	Domain     RequestDomain
+	RequestID  string
+	Ref        ArtifactRef
+	Created    time.Time
+	RetryUntil time.Time
+}
+
 type artifactObject struct {
 	Owner    string
 	JobID    string

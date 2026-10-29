@@ -192,6 +192,9 @@ enum Capability {
   // requires PERSISTENT_ENVIRONMENTS_V1. Not advertised until the target
   // materializes every mount read-only into each incarnation.
   CAPABILITY_ENVIRONMENT_ARTIFACTS_V1 = 21;
+  // Endpoint support for principal-scoped, retained BeginArtifactUpload request
+  // identities. Requires installed artifacts and active request domains.
+  CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1 = 22;
 }
 message Target {
   string name = 1;
@@ -563,6 +566,10 @@ message ArtifactUpload {
 message BeginArtifactUploadRequest {
   string sha256 = 1;
   int64 size = 2;
+  // Both absent keeps the original unkeyed admission. A keyed Begin must
+  // supply both fields and require ARTIFACT_BEGIN_REQUESTS_V1 before dispatch.
+  optional string request_id = 3;
+  RequestDomain domain = 4;
 }
 message BeginArtifactUploadResponse { ArtifactUpload upload = 1; }
 message GetArtifactUploadRequest { string id = 1; }

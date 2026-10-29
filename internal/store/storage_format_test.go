@@ -109,6 +109,12 @@ func formatStrip(t *testing.T, buckets []fixtureBucket) ([]fixtureBucket, bool) 
 		case bytes.Equal(b.Name, metadataBucket):
 			var entries []fixtureEntry
 			for _, e := range b.Entries {
+				if bytes.Equal(e.Key, artifactBeginStorageFormatKey) {
+					if string(e.Value) != artifactBeginStorageFormat {
+						t.Fatalf("artifact Begin storage format tag %q", e.Value)
+					}
+					continue
+				}
 				if bytes.Equal(e.Key, servingStorageFormatKey) {
 					if string(e.Value) != servingStorageFormat {
 						t.Fatalf("serving storage format tag %q", e.Value)
@@ -128,6 +134,12 @@ func formatStrip(t *testing.T, buckets []fixtureBucket) ([]fixtureBucket, bool) 
 		case bytes.Equal(b.Name, artifactsBucket):
 			var tables []fixtureBucket
 			for _, c := range b.Buckets {
+				if bytes.Equal(c.Name, artifactBeginRequestsTable) {
+					if c.Sequence != 0 || len(c.Entries) != 0 || len(c.Buckets) != 0 {
+						t.Fatal("migration added artifact Begin requests")
+					}
+					continue
+				}
 				if bytes.Equal(c.Name, []byte("environment_pins")) {
 					if c.Sequence != 0 || len(c.Entries) != 0 || len(c.Buckets) != 0 {
 						t.Fatal("migration added environment pins")
@@ -172,6 +184,9 @@ func environmentArtifactStripModel(tx *bolt.Tx) error {
 // serving_services family. It refuses a populated family. The caller sets
 // the marker.
 func servingStripModel(tx *bolt.Tx) error {
+	if err := artifactBeginStripModel(tx); err != nil {
+		return err
+	}
 	if err := tx.Bucket(metadataBucket).Delete(servingStorageFormatKey); err != nil {
 		return err
 	}
@@ -314,7 +329,7 @@ func TestStorageFormatRefusedEverywhere(t *testing.T) {
 		{"read escaped", readRow(escaped), true, "unsupported_storage_format"},
 		{"read folded", readRow(folded), true, "unsupported_storage_format"},
 		{"future", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion+1)) }, false, "unsupported_schema"},
-		{"future fourteen", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(14)) }, false, "unsupported_schema"},
+		{"future schema", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion+1)) }, false, "unsupported_schema"},
 		{"future max", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(math.MaxUint64)) }, false, "unsupported_schema"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -872,7 +887,7 @@ func TestStorageFormatFamilyMatrix(t *testing.T) {
 		{"tag before nine", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(8)) }},
 		{"tag at nine", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(9)) }},
 		{"tag at ten", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(10)) }},
-		{"future fourteen", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(14)) }},
+		{"future schema", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(schemaVersion+1)) }},
 		{"future max", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(math.MaxUint64)) }},
 		{"serving tag absent", true, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Delete(servingStorageFormatKey) }},
 		{"serving tag unknown", true, func(tx *bolt.Tx) error {
@@ -957,10 +972,20 @@ func TestStorageFormatFamilyMatrix(t *testing.T) {
 
 func formatFamilyFixture(t *testing.T, artifacts bool) string {
 	t.Helper()
+	var dir string
 	if artifacts {
-		return formatArtifactPopulated(t)
+		dir = formatArtifactPopulated(t)
+	} else {
+		dir, _, _ = environmentPopulated(t)
 	}
-	dir, _, _ := environmentPopulated(t)
+	// MODEL: these format-family cases predate schema14. Remove only the
+	// empty successor facts before projecting their requested older ordinal.
+	editFixture(t, dir, false, func(tx *bolt.Tx) error {
+		if err := artifactBeginStripModel(tx); err != nil {
+			return err
+		}
+		return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(servingSchema))
+	})
 	return dir
 }
 

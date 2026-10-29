@@ -95,11 +95,30 @@ func (h *handler) BeginArtifactUpload(ctx context.Context, request *connect.Requ
 	if request.Msg == nil || request.Msg.Size < 1 || request.Msg.Size > 32<<20 || !artifactDigest(request.Msg.Sha256) {
 		return nil, artifactError(control.ErrInvalid)
 	}
+	keyed := request.Msg.RequestId != nil || request.Msg.Domain != nil
+	var domain store.RequestDomain
+	if keyed {
+		if !retentionRequestID(request.Msg.GetRequestId()) || request.Msg.Domain == nil {
+			return nil, artifactError(control.ErrInvalid)
+		}
+		domain, err = requestDomain(request.Msg.Domain)
+		if err != nil {
+			return nil, artifactError(err)
+		}
+		if !h.control.ArtifactBeginRequestsEnabled() {
+			return nil, artifactError(control.ErrUnsupported)
+		}
+	}
 	call, err := h.artifactCall(ctx, auth.Mutate)
 	if err != nil {
 		return nil, artifactError(err)
 	}
-	upload, err := h.control.BeginArtifactUpload(ctx, actor, call, request.Msg.Sha256, request.Msg.Size)
+	var upload store.ArtifactUpload
+	if keyed {
+		upload, err = h.control.BeginArtifactUploadRequest(ctx, actor, call, domain, request.Msg.GetRequestId(), request.Msg.Sha256, request.Msg.Size)
+	} else {
+		upload, err = h.control.BeginArtifactUpload(ctx, actor, call, request.Msg.Sha256, request.Msg.Size)
+	}
 	if err != nil {
 		return nil, artifactBeginError(err)
 	}

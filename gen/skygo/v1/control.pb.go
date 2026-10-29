@@ -197,6 +197,9 @@ const (
 	// requires PERSISTENT_ENVIRONMENTS_V1. Not advertised until the target
 	// materializes every mount read-only into each incarnation.
 	Capability_CAPABILITY_ENVIRONMENT_ARTIFACTS_V1 Capability = 21
+	// Endpoint support for principal-scoped, retained BeginArtifactUpload request
+	// identities. Requires installed artifacts and active request domains.
+	Capability_CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1 Capability = 22
 )
 
 // Enum value maps for Capability.
@@ -224,6 +227,7 @@ var (
 		19: "CAPABILITY_ENVIRONMENTS_V1",
 		20: "CAPABILITY_PERSISTENT_ENVIRONMENTS_V1",
 		21: "CAPABILITY_ENVIRONMENT_ARTIFACTS_V1",
+		22: "CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1",
 	}
 	Capability_value = map[string]int32{
 		"CAPABILITY_UNSPECIFIED":                  0,
@@ -248,6 +252,7 @@ var (
 		"CAPABILITY_ENVIRONMENTS_V1":              19,
 		"CAPABILITY_PERSISTENT_ENVIRONMENTS_V1":   20,
 		"CAPABILITY_ENVIRONMENT_ARTIFACTS_V1":     21,
+		"CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1":   22,
 	}
 )
 
@@ -4692,9 +4697,13 @@ func (x *ArtifactUpload) GetState() ArtifactUploadState {
 }
 
 type BeginArtifactUploadRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sha256        string                 `protobuf:"bytes,1,opt,name=sha256,proto3" json:"sha256,omitempty"`
-	Size          int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	state  protoimpl.MessageState `protogen:"open.v1"`
+	Sha256 string                 `protobuf:"bytes,1,opt,name=sha256,proto3" json:"sha256,omitempty"`
+	Size   int64                  `protobuf:"varint,2,opt,name=size,proto3" json:"size,omitempty"`
+	// Both absent keeps the original unkeyed admission. A keyed Begin must
+	// supply both fields and require ARTIFACT_BEGIN_REQUESTS_V1 before dispatch.
+	RequestId     *string        `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3,oneof" json:"request_id,omitempty"`
+	Domain        *RequestDomain `protobuf:"bytes,4,opt,name=domain,proto3" json:"domain,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4741,6 +4750,20 @@ func (x *BeginArtifactUploadRequest) GetSize() int64 {
 		return x.Size
 	}
 	return 0
+}
+
+func (x *BeginArtifactUploadRequest) GetRequestId() string {
+	if x != nil && x.RequestId != nil {
+		return *x.RequestId
+	}
+	return ""
+}
+
+func (x *BeginArtifactUploadRequest) GetDomain() *RequestDomain {
+	if x != nil {
+		return x.Domain
+	}
+	return nil
 }
 
 type BeginArtifactUploadResponse struct {
@@ -6143,10 +6166,14 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"\facknowledged\x18\x03 \x01(\x03R\facknowledged\x129\n" +
 	"\n" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\x123\n" +
-	"\x05state\x18\x05 \x01(\x0e2\x1d.skygo.v1.ArtifactUploadStateR\x05state\"H\n" +
+	"\x05state\x18\x05 \x01(\x0e2\x1d.skygo.v1.ArtifactUploadStateR\x05state\"\xac\x01\n" +
 	"\x1aBeginArtifactUploadRequest\x12\x16\n" +
 	"\x06sha256\x18\x01 \x01(\tR\x06sha256\x12\x12\n" +
-	"\x04size\x18\x02 \x01(\x03R\x04size\"O\n" +
+	"\x04size\x18\x02 \x01(\x03R\x04size\x12\"\n" +
+	"\n" +
+	"request_id\x18\x03 \x01(\tH\x00R\trequestId\x88\x01\x01\x12/\n" +
+	"\x06domain\x18\x04 \x01(\v2\x17.skygo.v1.RequestDomainR\x06domainB\r\n" +
+	"\v_request_id\"O\n" +
 	"\x1bBeginArtifactUploadResponse\x120\n" +
 	"\x06upload\x18\x01 \x01(\v2\x18.skygo.v1.ArtifactUploadR\x06upload\"*\n" +
 	"\x18GetArtifactUploadRequest\x12\x0e\n" +
@@ -6223,7 +6250,7 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"WorkerMode\x12\x1b\n" +
 	"\x17WORKER_MODE_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17WORKER_MODE_INDEPENDENT\x10\x01\x12\x1e\n" +
-	"\x1aWORKER_MODE_TCP_RENDEZVOUS\x10\x02*\x92\x06\n" +
+	"\x1aWORKER_MODE_TCP_RENDEZVOUS\x10\x02*\xbd\x06\n" +
 	"\n" +
 	"Capability\x12\x1a\n" +
 	"\x16CAPABILITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
@@ -6248,7 +6275,8 @@ const file_skygo_v1_control_proto_rawDesc = "" +
 	"%CAPABILITY_SERVICE_CPU_AUTOSCALING_V1\x10\x12\x12\x1e\n" +
 	"\x1aCAPABILITY_ENVIRONMENTS_V1\x10\x13\x12)\n" +
 	"%CAPABILITY_PERSISTENT_ENVIRONMENTS_V1\x10\x14\x12'\n" +
-	"#CAPABILITY_ENVIRONMENT_ARTIFACTS_V1\x10\x15*d\n" +
+	"#CAPABILITY_ENVIRONMENT_ARTIFACTS_V1\x10\x15\x12)\n" +
+	"%CAPABILITY_ARTIFACT_BEGIN_REQUESTS_V1\x10\x16*d\n" +
 	"\rOutputStorage\x12\x1e\n" +
 	"\x1aOUTPUT_STORAGE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14OUTPUT_STORAGE_LOCAL\x10\x01\x12\x19\n" +
@@ -6564,77 +6592,78 @@ var file_skygo_v1_control_proto_depIdxs = []int32{
 	66,  // 78: skygo.v1.ArtifactUpload.reference:type_name -> skygo.v1.ArtifactRef
 	95,  // 79: skygo.v1.ArtifactUpload.expires_at:type_name -> google.protobuf.Timestamp
 	16,  // 80: skygo.v1.ArtifactUpload.state:type_name -> skygo.v1.ArtifactUploadState
-	67,  // 81: skygo.v1.BeginArtifactUploadResponse.upload:type_name -> skygo.v1.ArtifactUpload
-	67,  // 82: skygo.v1.GetArtifactUploadResponse.upload:type_name -> skygo.v1.ArtifactUpload
-	67,  // 83: skygo.v1.WriteArtifactChunkResponse.upload:type_name -> skygo.v1.ArtifactUpload
-	66,  // 84: skygo.v1.FinalizeArtifactUploadResponse.reference:type_name -> skygo.v1.ArtifactRef
-	66,  // 85: skygo.v1.BeginArtifactDownloadRequest.reference:type_name -> skygo.v1.ArtifactRef
-	66,  // 86: skygo.v1.BeginArtifactDownloadResponse.reference:type_name -> skygo.v1.ArtifactRef
-	95,  // 87: skygo.v1.BeginArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
-	66,  // 88: skygo.v1.RemoveArtifactRequest.reference:type_name -> skygo.v1.ArtifactRef
-	18,  // 89: skygo.v1.SubmitWorkspaceJobRequest.task:type_name -> skygo.v1.Task
-	43,  // 90: skygo.v1.SubmitWorkspaceJobRequest.domain:type_name -> skygo.v1.RequestDomain
-	21,  // 91: skygo.v1.SubmitWorkspaceJobResponse.job:type_name -> skygo.v1.Job
-	18,  // 92: skygo.v1.SubmitDataJobRequest.task:type_name -> skygo.v1.Task
-	43,  // 93: skygo.v1.SubmitDataJobRequest.domain:type_name -> skygo.v1.RequestDomain
-	21,  // 94: skygo.v1.SubmitDataJobResponse.job:type_name -> skygo.v1.Job
-	17,  // 95: skygo.v1.ArtifactResult.state:type_name -> skygo.v1.ArtifactResultState
-	66,  // 96: skygo.v1.ArtifactResult.reference:type_name -> skygo.v1.ArtifactRef
-	64,  // 97: skygo.v1.ControlService.QuoteTask:input_type -> skygo.v1.QuoteTaskRequest
-	27,  // 98: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
-	29,  // 99: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
-	29,  // 100: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
-	31,  // 101: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
-	33,  // 102: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
-	35,  // 103: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
-	37,  // 104: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
-	39,  // 105: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
-	41,  // 106: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
-	44,  // 107: skygo.v1.ControlService.GetRetention:input_type -> skygo.v1.GetRetentionRequest
-	50,  // 108: skygo.v1.ControlService.SubmitRetainedJob:input_type -> skygo.v1.SubmitRetainedJobRequest
-	52,  // 109: skygo.v1.ControlService.PruneJobs:input_type -> skygo.v1.PruneJobsRequest
-	56,  // 110: skygo.v1.ControlService.StreamRetainedJobLogs:input_type -> skygo.v1.StreamRetainedJobLogsRequest
-	86,  // 111: skygo.v1.ControlService.SubmitWorkspaceJob:input_type -> skygo.v1.SubmitWorkspaceJobRequest
-	88,  // 112: skygo.v1.ControlService.SubmitDataJob:input_type -> skygo.v1.SubmitDataJobRequest
-	68,  // 113: skygo.v1.ControlService.BeginArtifactUpload:input_type -> skygo.v1.BeginArtifactUploadRequest
-	70,  // 114: skygo.v1.ControlService.GetArtifactUpload:input_type -> skygo.v1.GetArtifactUploadRequest
-	72,  // 115: skygo.v1.ControlService.WriteArtifactChunk:input_type -> skygo.v1.WriteArtifactChunkRequest
-	74,  // 116: skygo.v1.ControlService.FinalizeArtifactUpload:input_type -> skygo.v1.FinalizeArtifactUploadRequest
-	76,  // 117: skygo.v1.ControlService.CancelArtifactUpload:input_type -> skygo.v1.CancelArtifactUploadRequest
-	78,  // 118: skygo.v1.ControlService.BeginArtifactDownload:input_type -> skygo.v1.BeginArtifactDownloadRequest
-	80,  // 119: skygo.v1.ControlService.ReadArtifactChunk:input_type -> skygo.v1.ReadArtifactChunkRequest
-	82,  // 120: skygo.v1.ControlService.CloseArtifactDownload:input_type -> skygo.v1.CloseArtifactDownloadRequest
-	84,  // 121: skygo.v1.ControlService.RemoveArtifact:input_type -> skygo.v1.RemoveArtifactRequest
-	65,  // 122: skygo.v1.ControlService.QuoteTask:output_type -> skygo.v1.QuoteTaskResponse
-	28,  // 123: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
-	30,  // 124: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
-	30,  // 125: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
-	32,  // 126: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
-	34,  // 127: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
-	36,  // 128: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
-	38,  // 129: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
-	40,  // 130: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
-	42,  // 131: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
-	45,  // 132: skygo.v1.ControlService.GetRetention:output_type -> skygo.v1.GetRetentionResponse
-	51,  // 133: skygo.v1.ControlService.SubmitRetainedJob:output_type -> skygo.v1.SubmitRetainedJobResponse
-	53,  // 134: skygo.v1.ControlService.PruneJobs:output_type -> skygo.v1.PruneJobsResponse
-	57,  // 135: skygo.v1.ControlService.StreamRetainedJobLogs:output_type -> skygo.v1.StreamRetainedJobLogsResponse
-	87,  // 136: skygo.v1.ControlService.SubmitWorkspaceJob:output_type -> skygo.v1.SubmitWorkspaceJobResponse
-	89,  // 137: skygo.v1.ControlService.SubmitDataJob:output_type -> skygo.v1.SubmitDataJobResponse
-	69,  // 138: skygo.v1.ControlService.BeginArtifactUpload:output_type -> skygo.v1.BeginArtifactUploadResponse
-	71,  // 139: skygo.v1.ControlService.GetArtifactUpload:output_type -> skygo.v1.GetArtifactUploadResponse
-	73,  // 140: skygo.v1.ControlService.WriteArtifactChunk:output_type -> skygo.v1.WriteArtifactChunkResponse
-	75,  // 141: skygo.v1.ControlService.FinalizeArtifactUpload:output_type -> skygo.v1.FinalizeArtifactUploadResponse
-	77,  // 142: skygo.v1.ControlService.CancelArtifactUpload:output_type -> skygo.v1.CancelArtifactUploadResponse
-	79,  // 143: skygo.v1.ControlService.BeginArtifactDownload:output_type -> skygo.v1.BeginArtifactDownloadResponse
-	81,  // 144: skygo.v1.ControlService.ReadArtifactChunk:output_type -> skygo.v1.ReadArtifactChunkResponse
-	83,  // 145: skygo.v1.ControlService.CloseArtifactDownload:output_type -> skygo.v1.CloseArtifactDownloadResponse
-	85,  // 146: skygo.v1.ControlService.RemoveArtifact:output_type -> skygo.v1.RemoveArtifactResponse
-	122, // [122:147] is the sub-list for method output_type
-	97,  // [97:122] is the sub-list for method input_type
-	97,  // [97:97] is the sub-list for extension type_name
-	97,  // [97:97] is the sub-list for extension extendee
-	0,   // [0:97] is the sub-list for field type_name
+	43,  // 81: skygo.v1.BeginArtifactUploadRequest.domain:type_name -> skygo.v1.RequestDomain
+	67,  // 82: skygo.v1.BeginArtifactUploadResponse.upload:type_name -> skygo.v1.ArtifactUpload
+	67,  // 83: skygo.v1.GetArtifactUploadResponse.upload:type_name -> skygo.v1.ArtifactUpload
+	67,  // 84: skygo.v1.WriteArtifactChunkResponse.upload:type_name -> skygo.v1.ArtifactUpload
+	66,  // 85: skygo.v1.FinalizeArtifactUploadResponse.reference:type_name -> skygo.v1.ArtifactRef
+	66,  // 86: skygo.v1.BeginArtifactDownloadRequest.reference:type_name -> skygo.v1.ArtifactRef
+	66,  // 87: skygo.v1.BeginArtifactDownloadResponse.reference:type_name -> skygo.v1.ArtifactRef
+	95,  // 88: skygo.v1.BeginArtifactDownloadResponse.expires_at:type_name -> google.protobuf.Timestamp
+	66,  // 89: skygo.v1.RemoveArtifactRequest.reference:type_name -> skygo.v1.ArtifactRef
+	18,  // 90: skygo.v1.SubmitWorkspaceJobRequest.task:type_name -> skygo.v1.Task
+	43,  // 91: skygo.v1.SubmitWorkspaceJobRequest.domain:type_name -> skygo.v1.RequestDomain
+	21,  // 92: skygo.v1.SubmitWorkspaceJobResponse.job:type_name -> skygo.v1.Job
+	18,  // 93: skygo.v1.SubmitDataJobRequest.task:type_name -> skygo.v1.Task
+	43,  // 94: skygo.v1.SubmitDataJobRequest.domain:type_name -> skygo.v1.RequestDomain
+	21,  // 95: skygo.v1.SubmitDataJobResponse.job:type_name -> skygo.v1.Job
+	17,  // 96: skygo.v1.ArtifactResult.state:type_name -> skygo.v1.ArtifactResultState
+	66,  // 97: skygo.v1.ArtifactResult.reference:type_name -> skygo.v1.ArtifactRef
+	64,  // 98: skygo.v1.ControlService.QuoteTask:input_type -> skygo.v1.QuoteTaskRequest
+	27,  // 99: skygo.v1.ControlService.PlanTask:input_type -> skygo.v1.PlanTaskRequest
+	29,  // 100: skygo.v1.ControlService.SubmitJob:input_type -> skygo.v1.SubmitJobRequest
+	29,  // 101: skygo.v1.ControlService.SubmitRetryJob:input_type -> skygo.v1.SubmitJobRequest
+	31,  // 102: skygo.v1.ControlService.GetJob:input_type -> skygo.v1.GetJobRequest
+	33,  // 103: skygo.v1.ControlService.ListJobs:input_type -> skygo.v1.ListJobsRequest
+	35,  // 104: skygo.v1.ControlService.CancelJob:input_type -> skygo.v1.CancelJobRequest
+	37,  // 105: skygo.v1.ControlService.StreamJobLogs:input_type -> skygo.v1.StreamJobLogsRequest
+	39,  // 106: skygo.v1.ControlService.ListTargets:input_type -> skygo.v1.ListTargetsRequest
+	41,  // 107: skygo.v1.ControlService.GetServerInfo:input_type -> skygo.v1.GetServerInfoRequest
+	44,  // 108: skygo.v1.ControlService.GetRetention:input_type -> skygo.v1.GetRetentionRequest
+	50,  // 109: skygo.v1.ControlService.SubmitRetainedJob:input_type -> skygo.v1.SubmitRetainedJobRequest
+	52,  // 110: skygo.v1.ControlService.PruneJobs:input_type -> skygo.v1.PruneJobsRequest
+	56,  // 111: skygo.v1.ControlService.StreamRetainedJobLogs:input_type -> skygo.v1.StreamRetainedJobLogsRequest
+	86,  // 112: skygo.v1.ControlService.SubmitWorkspaceJob:input_type -> skygo.v1.SubmitWorkspaceJobRequest
+	88,  // 113: skygo.v1.ControlService.SubmitDataJob:input_type -> skygo.v1.SubmitDataJobRequest
+	68,  // 114: skygo.v1.ControlService.BeginArtifactUpload:input_type -> skygo.v1.BeginArtifactUploadRequest
+	70,  // 115: skygo.v1.ControlService.GetArtifactUpload:input_type -> skygo.v1.GetArtifactUploadRequest
+	72,  // 116: skygo.v1.ControlService.WriteArtifactChunk:input_type -> skygo.v1.WriteArtifactChunkRequest
+	74,  // 117: skygo.v1.ControlService.FinalizeArtifactUpload:input_type -> skygo.v1.FinalizeArtifactUploadRequest
+	76,  // 118: skygo.v1.ControlService.CancelArtifactUpload:input_type -> skygo.v1.CancelArtifactUploadRequest
+	78,  // 119: skygo.v1.ControlService.BeginArtifactDownload:input_type -> skygo.v1.BeginArtifactDownloadRequest
+	80,  // 120: skygo.v1.ControlService.ReadArtifactChunk:input_type -> skygo.v1.ReadArtifactChunkRequest
+	82,  // 121: skygo.v1.ControlService.CloseArtifactDownload:input_type -> skygo.v1.CloseArtifactDownloadRequest
+	84,  // 122: skygo.v1.ControlService.RemoveArtifact:input_type -> skygo.v1.RemoveArtifactRequest
+	65,  // 123: skygo.v1.ControlService.QuoteTask:output_type -> skygo.v1.QuoteTaskResponse
+	28,  // 124: skygo.v1.ControlService.PlanTask:output_type -> skygo.v1.PlanTaskResponse
+	30,  // 125: skygo.v1.ControlService.SubmitJob:output_type -> skygo.v1.SubmitJobResponse
+	30,  // 126: skygo.v1.ControlService.SubmitRetryJob:output_type -> skygo.v1.SubmitJobResponse
+	32,  // 127: skygo.v1.ControlService.GetJob:output_type -> skygo.v1.GetJobResponse
+	34,  // 128: skygo.v1.ControlService.ListJobs:output_type -> skygo.v1.ListJobsResponse
+	36,  // 129: skygo.v1.ControlService.CancelJob:output_type -> skygo.v1.CancelJobResponse
+	38,  // 130: skygo.v1.ControlService.StreamJobLogs:output_type -> skygo.v1.StreamJobLogsResponse
+	40,  // 131: skygo.v1.ControlService.ListTargets:output_type -> skygo.v1.ListTargetsResponse
+	42,  // 132: skygo.v1.ControlService.GetServerInfo:output_type -> skygo.v1.GetServerInfoResponse
+	45,  // 133: skygo.v1.ControlService.GetRetention:output_type -> skygo.v1.GetRetentionResponse
+	51,  // 134: skygo.v1.ControlService.SubmitRetainedJob:output_type -> skygo.v1.SubmitRetainedJobResponse
+	53,  // 135: skygo.v1.ControlService.PruneJobs:output_type -> skygo.v1.PruneJobsResponse
+	57,  // 136: skygo.v1.ControlService.StreamRetainedJobLogs:output_type -> skygo.v1.StreamRetainedJobLogsResponse
+	87,  // 137: skygo.v1.ControlService.SubmitWorkspaceJob:output_type -> skygo.v1.SubmitWorkspaceJobResponse
+	89,  // 138: skygo.v1.ControlService.SubmitDataJob:output_type -> skygo.v1.SubmitDataJobResponse
+	69,  // 139: skygo.v1.ControlService.BeginArtifactUpload:output_type -> skygo.v1.BeginArtifactUploadResponse
+	71,  // 140: skygo.v1.ControlService.GetArtifactUpload:output_type -> skygo.v1.GetArtifactUploadResponse
+	73,  // 141: skygo.v1.ControlService.WriteArtifactChunk:output_type -> skygo.v1.WriteArtifactChunkResponse
+	75,  // 142: skygo.v1.ControlService.FinalizeArtifactUpload:output_type -> skygo.v1.FinalizeArtifactUploadResponse
+	77,  // 143: skygo.v1.ControlService.CancelArtifactUpload:output_type -> skygo.v1.CancelArtifactUploadResponse
+	79,  // 144: skygo.v1.ControlService.BeginArtifactDownload:output_type -> skygo.v1.BeginArtifactDownloadResponse
+	81,  // 145: skygo.v1.ControlService.ReadArtifactChunk:output_type -> skygo.v1.ReadArtifactChunkResponse
+	83,  // 146: skygo.v1.ControlService.CloseArtifactDownload:output_type -> skygo.v1.CloseArtifactDownloadResponse
+	85,  // 147: skygo.v1.ControlService.RemoveArtifact:output_type -> skygo.v1.RemoveArtifactResponse
+	123, // [123:148] is the sub-list for method output_type
+	98,  // [98:123] is the sub-list for method input_type
+	98,  // [98:98] is the sub-list for extension type_name
+	98,  // [98:98] is the sub-list for extension extendee
+	0,   // [0:98] is the sub-list for field type_name
 }
 
 func init() { file_skygo_v1_control_proto_init() }
@@ -6649,6 +6678,7 @@ func file_skygo_v1_control_proto_init() {
 	file_skygo_v1_control_proto_msgTypes[44].OneofWrappers = []any{}
 	file_skygo_v1_control_proto_msgTypes[46].OneofWrappers = []any{}
 	file_skygo_v1_control_proto_msgTypes[47].OneofWrappers = []any{}
+	file_skygo_v1_control_proto_msgTypes[50].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

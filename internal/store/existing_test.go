@@ -299,9 +299,35 @@ func TestInspectExistingRefuses(t *testing.T) {
 		{"modeled older marker", func(t *testing.T, base, dir string) string {
 			var n [8]byte
 			binary.BigEndian.PutUint64(n[:], schemaVersion-1)
-			modelEdit(t, dir, modelMetadata(schemaKey, n[:]))
+			modelEdit(t, dir, func(tx *bolt.Tx) error {
+				// This is a MODEL older format, not a genuine old writer.
+				// Its marker must not retain a later serving family.
+				if schemaVersion-1 < artifactBeginRequestSchema {
+					if err := artifactBeginStripModel(tx); err != nil {
+						return err
+					}
+				}
+				if schemaVersion-1 < servingSchema {
+					if err := servingStripModel(tx); err != nil {
+						return err
+					}
+				}
+				return modelMetadata(schemaKey, n[:])(tx)
+			})
 			return dir
 		}, ErrNotCurrent},
+		{"modeled older marker with newer serving facts", func(t *testing.T, base, dir string) string {
+			var n [8]byte
+			binary.BigEndian.PutUint64(n[:], servingSchema-1)
+			modelEdit(t, dir, func(tx *bolt.Tx) error {
+				// Keep the newer serving facts, but omit the later Begin family.
+				if err := artifactBeginStripModel(tx); err != nil {
+					return err
+				}
+				return modelMetadata(schemaKey, n[:])(tx)
+			})
+			return dir
+		}, ErrUnsupportedSchema},
 		{"modeled newer marker", func(t *testing.T, base, dir string) string {
 			var n [8]byte
 			binary.BigEndian.PutUint64(n[:], schemaVersion+1)
