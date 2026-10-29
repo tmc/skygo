@@ -1,0 +1,50 @@
+# A SkyPilot task YAML runs through the existing lowerer with the
+# configuration's infra binding. The workdir is frozen at run: a replay
+# uploads nothing new and runs the frozen snapshot, not the directory as
+# it is later.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+lose SubmitWorkspaceJob 1
+! job run -job $WORK/job -yaml $WORK/task.yaml -workdir $WORK/src -outputs out -task-timeout 60s -poll 100ms
+code 1
+stdout '"submit": "sent"'
+
+cp $WORK/changed.txt $WORK/src/input.txt
+job resume -job $WORK/job -poll 100ms
+code 0
+stdout '"state": "SUCCEEDED"'
+accepted BeginArtifactUpload 1
+accepted WriteArtifactChunk 1
+output $WORK/job out/result.txt frozen
+output $WORK/job out/prepared.txt prepared
+
+# The frozen snapshot is checked before it is uploaded: a job whose
+# session never opened, and whose snapshot then changed, sends no Begin.
+openfail
+! job run -job $WORK/tampered -yaml $WORK/task.yaml -workdir $WORK/src -outputs out -task-timeout 60s
+code 1
+stdout '"upload": "none"'
+cp $WORK/changed.txt $WORK/tampered/workdir.tar
+! job resume -job $WORK/tampered
+code 1
+stderr 'frozen workdir snapshot changed'
+accepted BeginArtifactUpload 1
+calls SubmitWorkspaceJob 2
+
+mutations 1
+
+-- task.yaml --
+workdir: .
+resources:
+  infra: aws/us-west-2
+  cpus: 1
+setup: |
+  mkdir out && echo prepared >out/prepared.txt
+run: |
+  cat input.txt >out/result.txt
+-- src/input.txt --
+frozen
+-- changed.txt --
+changed

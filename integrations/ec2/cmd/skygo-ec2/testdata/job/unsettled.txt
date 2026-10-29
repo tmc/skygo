@@ -1,0 +1,52 @@
+# A session open whose cleanup did not settle leaves the command owning
+# its open error and the job directory, which stays locked. No later
+# command in the process reopens that job or opens a session for it, and
+# a successful command for another job does not settle the owner.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+openunsettled
+! job run -job $WORK/job -task $WORK/task.json -workdir $WORK/src
+code 1
+stdout '"submit": "none"'
+stderr 'cleanup did not settle'
+stderr 'keeping the job directory locked'
+opens 1
+unsettled 1
+
+ec2mark
+! job resume -job $WORK/job
+code 1
+stderr 'locked by another process'
+! job cancel -job $WORK/job
+code 1
+stderr 'locked by another process'
+ec2since 0
+opens 1
+calls BeginArtifactUpload 0
+jobs 0
+
+job run -job $WORK/other -task $WORK/task.json -workdir $WORK/src -poll 100ms
+code 0
+stdout '"state": "SUCCEEDED"'
+unsettled 1
+opens 2
+
+# The MODEL open held no connection, so the script settles the command.
+release
+unsettled 0
+job resume -job $WORK/job -poll 100ms
+code 0
+stdout '"state": "SUCCEEDED"'
+accepted BeginArtifactUpload 2
+calls SubmitWorkspaceJob 2
+opens 3
+jobs 2
+
+mutations 1
+
+-- task.json --
+{"argv":["/bin/true"],"timeoutSeconds":"60"}
+-- src/input.txt --
+input

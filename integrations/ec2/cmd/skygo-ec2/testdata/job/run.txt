@@ -1,0 +1,84 @@
+# A workspace job runs on the owned, running VM: the workdir is frozen
+# and uploaded, setup and command run, and the declared output is saved
+# and verified. Only the lifecycle start mutates the VM.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+mutations 1
+
+job run -job $WORK/job -task $WORK/task.json -workdir $WORK/src -poll 100ms
+code 0
+stdout '"command": "run"'
+stdout '"submit": "accepted"'
+stdout '"job_id": "[0-9a-f]{32}"'
+stdout '"state": "SUCCEEDED"'
+stdout '"exit_code": 0'
+stdout '"output": "saved"'
+stdout '"instance_id": "i-000000000000a0001"'
+stdout '"address": "10.0.0.5"'
+stdout '"durable": true'
+! stdout 'hold'
+opens 1
+closes 1
+jobs 1
+accepted BeginArtifactUpload 1
+accepted FinalizeArtifactUpload 1
+calls SubmitWorkspaceJob 1
+calls BeginArtifactDownload 1
+calls CloseArtifactDownload 1
+output $WORK/job out/result.txt input
+output $WORK/job out/setup.txt setup-ran
+
+# job-status observes once and never submits.
+job job-status -job $WORK/job
+code 0
+stdout '"state": "SUCCEEDED"'
+calls SubmitWorkspaceJob 1
+opens 2
+closes 2
+
+# logs copies the log as the server sends it, from the log checkpoint,
+# and moves the checkpoint once the copy is written.
+job logs -job $WORK/job
+code 0
+stdout '^hello$'
+stderr 'complete true'
+job job-status -job $WORK/job
+code 0
+stdout '"log_offset": [1-9][0-9]*'
+
+# The next copy starts where that one ended: nothing is copied again.
+job logs -job $WORK/job -json
+code 0
+stdout '"job_id":"[0-9a-f]{32}"'
+stdout '"complete":true'
+stdout '"offset":[1-9]'
+! stdout 'aGVsbG8K'
+
+# An explicit -offset seeks: the whole log again.
+job logs -job $WORK/job -offset 0
+code 0
+stdout '^hello$'
+! job logs -job $WORK/job -offset -1
+code 1
+
+# resume of an ended job observes it and never uploads or submits.
+job resume -job $WORK/job -poll 0
+code 0
+stdout '"state": "SUCCEEDED"'
+accepted BeginArtifactUpload 1
+calls SubmitWorkspaceJob 1
+jobs 1
+
+# run never reuses a job directory.
+! job run -job $WORK/job -task $WORK/task.json -workdir $WORK/src
+code 1
+calls SubmitWorkspaceJob 1
+jobs 1
+
+mutations 1
+
+-- task.json --
+{"argv":["/bin/sh","-c","cat input.txt >out/result.txt; echo hello"],"setup":["/bin/sh","-c","mkdir out && echo setup-ran >out/setup.txt"],"outputs":["out"],"timeoutSeconds":"60"}
+-- src/input.txt --
+input

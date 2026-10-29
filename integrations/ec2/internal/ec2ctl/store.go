@@ -22,7 +22,8 @@ const (
 // Every save writes a new temporary file, syncs it, renames it over the
 // state file and syncs the directory. A save is one self-contained file
 // operation: no file is left open for writing while the caller makes a
-// provider call.
+// provider call. A failed first Close keeps the temporary file, directory
+// and lock; neither another save nor close acts on them again.
 type store struct {
 	dir  string
 	d    *os.File // the directory, kept open for fsync
@@ -32,6 +33,47 @@ type store struct {
 	// it by returning an error. It is set only by this package's tests;
 	// the writes, syncs and renames around it are real.
 	fault func(stage string) error
+
+	// failed keeps the original temporary file whose first Close failed.
+	// Its state is unknown: nothing saves again or releases the lock.
+	failed *closeError
+
+	closed   bool  // close was called
+	closeErr error // the first close's result
+}
+
+// ErrUnsettled reports the failed first Close of a file this package
+// opened, so that the file's state is unknown. The error keeps the file,
+// or the store whose lock and directory it closed, reachable, and joins
+// every independent cause; nothing closes the file again. The caller must
+// keep the error and act on nothing the file guards.
+var ErrUnsettled = errors.New("an original file close did not settle")
+
+// A closeError is the failed first Close of f, or of s's lock or
+// directory. It keeps f or s reachable while the error is.
+type closeError struct {
+	f   *os.File
+	s   *store
+	err error
+}
+
+func (e *closeError) Error() string   { return e.err.Error() }
+func (e *closeError) Unwrap() []error { return []error{ErrUnsettled, e.err} }
+
+// beforeClose, if set, is called with each file closeFile closes, just
+// before its one Close. Only this package's tests set it: closing the file
+// first is their MODEL of a failed Close.
+var beforeClose func(*os.File)
+
+// closeFile closes f once. A failed Close returns a *closeError keeping f.
+func closeFile(f *os.File) error {
+	if beforeClose != nil {
+		beforeClose(f)
+	}
+	if err := f.Close(); err != nil {
+		return &closeError{f: f, err: err}
+	}
+	return nil
 }
 
 // openStore opens the state directory dir and takes its lock without
@@ -70,39 +112,34 @@ func openStore(dir string, create bool, syncParent func(*os.File) error) (s *sto
 	}
 	lock, err := os.OpenFile(filepath.Join(dir, lockName), os.O_RDWR|os.O_CREATE|openNoFollow, 0o600)
 	if err != nil {
-		d.Close()
-		return nil, false, fmt.Errorf("open state lock: %w", err)
+		return nil, false, errors.Join(fmt.Errorf("open state lock: %w", err), closeFile(d))
 	}
 	if err := checkOpen(lock, filepath.Join(dir, lockName), false); err != nil {
-		lock.Close()
-		d.Close()
-		return nil, false, err
+		return nil, false, errors.Join(err, closeFile(lock), closeFile(d))
 	}
 	if err := lockFile(lock); err != nil {
-		lock.Close()
-		d.Close()
-		return nil, false, err
+		return nil, false, errors.Join(err, closeFile(lock), closeFile(d))
 	}
 	s = &store{dir: dir, d: d, lock: lock}
 	// A temporary file is a save that never committed: remove it.
 	if err := os.Remove(s.path(tempName)); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		s.close()
-		return nil, false, fmt.Errorf("remove uncommitted state: %w", err)
+		return nil, false, errors.Join(fmt.Errorf("remove uncommitted state: %w", err), s.close())
 	}
 	return s, created, nil
 }
 
 // syncParentDir opens the directory parent, which holds the state
 // directory's entry, syncs it with sync and closes it. The parent is not
-// checked to be private: see the package documentation.
+// checked to be private: see the package documentation. A failed sync
+// and a failed Close are both returned.
 func syncParentDir(parent string, sync func(*os.File) error) error {
 	p, err := os.OpenFile(parent, os.O_RDONLY|openDirectory, 0)
 	if err != nil {
 		return fmt.Errorf("sync parent directory: %w", err)
 	}
 	err = sync(p)
-	if cerr := p.Close(); err == nil {
-		err = cerr
+	if cerr := closeFile(p); cerr != nil {
+		err = errors.Join(err, cerr)
 	}
 	if err != nil {
 		return fmt.Errorf("sync parent directory %s: %w", parent, err)
@@ -120,8 +157,7 @@ func openDir(dir string) (*os.File, error) {
 		return nil, fmt.Errorf("open state directory: %w", err)
 	}
 	if err := checkOpen(d, dir, true); err != nil {
-		d.Close()
-		return nil, err
+		return nil, errors.Join(err, closeFile(d))
 	}
 	return d, nil
 }
@@ -141,16 +177,24 @@ func checkOpen(f *os.File, name string, dir bool) error {
 // The open does not wait: a FIFO with no writer opens at once instead of
 // blocking, and like a directory, device or socket it is then refused
 // before anything is read. A regular file ignores the nonblocking flag.
-func readPrivate(name string, max int64) ([]byte, error) {
+//
+// The file is closed once. If that Close fails, readPrivate returns no
+// data and an error wrapping [ErrUnsettled] that keeps the file, joined
+// with any earlier error.
+func readPrivate(name string, max int64) (data []byte, err error) {
 	f, err := os.OpenFile(name, os.O_RDONLY|openNoFollow|openNonblock, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := closeFile(f); cerr != nil {
+			data, err = nil, errors.Join(err, cerr)
+		}
+	}()
 	if err := checkOpen(f, name, false); err != nil {
 		return nil, err
 	}
-	data, err := io.ReadAll(io.LimitReader(f, max+1))
+	data, err = io.ReadAll(io.LimitReader(f, max+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", name, err)
 	}
@@ -162,14 +206,17 @@ func readPrivate(name string, max int64) ([]byte, error) {
 
 // readState reads the state file of directory dir without its lock. A
 // committed state file is only ever replaced by rename, so the bytes are
-// one whole committed state.
+// one whole committed state. A failed Close of the directory is returned
+// before anything is read.
 func readState(dir string) ([]byte, error) {
 	dir = filepath.Clean(dir)
 	d, err := openDir(dir)
 	if err != nil {
 		return nil, err
 	}
-	d.Close()
+	if err := closeFile(d); err != nil {
+		return nil, err
+	}
 	return readStateFile(filepath.Join(dir, stateName))
 }
 
@@ -202,6 +249,9 @@ func (s *store) fail(stage string) error {
 // the rename, the new state may or may not survive a crash: the caller
 // must save it again before acting on it.
 func (s *store) save(data []byte) error {
+	if s.failed != nil {
+		return s.failed
+	}
 	if len(data) > maxState {
 		return fmt.Errorf("save state: %d bytes exceeds %d", len(data), maxState)
 	}
@@ -220,8 +270,9 @@ func (s *store) save(data []byte) error {
 	if err == nil {
 		err = f.Sync()
 	}
-	if cerr := f.Close(); err == nil {
-		err = cerr
+	if cerr := closeFile(f); cerr != nil {
+		s.failed = &closeError{f: f, s: s, err: errors.Join(err, cerr)}
+		return fmt.Errorf("save state: %w", s.failed)
 	}
 	if err == nil {
 		err = s.fail("rename")
@@ -242,11 +293,20 @@ func (s *store) save(data []byte) error {
 	return nil
 }
 
-// close releases the lock.
+// close releases the lock and closes the directory, once: every call
+// returns the first call's result. If either Close fails, the error wraps
+// ErrUnsettled, joins both causes and keeps s, whose files are never
+// closed again.
 func (s *store) close() error {
-	err := s.lock.Close()
-	if derr := s.d.Close(); err == nil {
-		err = derr
+	if !s.closed {
+		s.closed = true
+		if s.failed != nil {
+			s.closeErr = s.failed
+			return s.closeErr
+		}
+		if err := errors.Join(closeFile(s.lock), closeFile(s.d)); err != nil {
+			s.closeErr = &closeError{s: s, err: err}
+		}
 	}
-	return err
+	return s.closeErr
 }

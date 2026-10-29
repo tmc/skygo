@@ -1,15 +1,19 @@
 // Command skygo-ec2 creates, stops, restarts and terminates one EC2
-// virtual machine and keeps its lifecycle in a private state directory.
+// virtual machine and keeps its lifecycle in a private state directory,
+// and runs finite skygo jobs on that VM once it is running.
 //
 // Usage:
 //
 //	skygo-ec2 command -config FILE -state DIR [flags]
 //
-// The commands are start, stop, restart, down and status. See the README
-// of this module for the configuration, credential and state formats.
+// The lifecycle commands are start, stop, restart, down and status. The
+// job commands run, resume, job-status, logs and cancel use an existing,
+// owned, running VM through an SSH agent session and never create, start,
+// stop or terminate it. See the README of this module for the
+// configuration, credential, state and job formats.
 //
-// skygo-ec2 manages a VM only. It runs no skygo job on it and is not a
-// skygo execution target.
+// skygo-ec2 is not a skygo execution target: its jobs are not managed by
+// a skygo server's configured targets.
 package main
 
 import (
@@ -28,6 +32,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/tmc/skygo/integrations/ec2/internal/ec2api"
 	"github.com/tmc/skygo/integrations/ec2/internal/ec2ctl"
+	"github.com/tmc/skygo/integrations/ec2/internal/ec2job"
 	"github.com/tmc/skygo/integrations/ec2/internal/ec2vm"
 )
 
@@ -39,6 +44,8 @@ Commands:
   restart  stop the running VM, then start it again
   down     terminate the VM; latched: it is never started again
   status   print the stored state; with -refresh, also describe the VM
+
+Job commands (see skygo-ec2 run -h): run, resume, job-status, logs, cancel
 
 Flags:
   -config FILE       operator configuration (JSON)
@@ -75,10 +82,29 @@ type env struct {
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := run(ctx, os.Args[1:], env{os.Stdout, os.Stderr, ec2api.NewClient})
+	e := env{os.Stdout, os.Stderr, ec2api.NewClient}
+	args := os.Args[1:]
+	var (
+		c    *jobCommand
+		code int
+	)
+	if len(args) > 0 && jobCommands[args[0]] {
+		c = runJob(ctx, args[0], args[1:], jobEnv{e.stdout, e.stderr, e.newClient, openSession, openSettled, ec2job.LoadConfig})
+		code = c.code
+	} else {
+		code = run(ctx, args, e)
+	}
 	stop()
+	// c owns what a job command could not settle: an SSH session or open
+	// error, a file whose Close failed and the locked journal. kept, a
+	// package variable, keeps it reachable through os.Exit, which closes
+	// every descriptor the process holds; nothing closes them before.
+	kept = c
 	os.Exit(code)
 }
+
+// kept is the job command main keeps until the process exits.
+var kept *jobCommand
 
 type options struct {
 	config, state, credentials string
@@ -87,12 +113,19 @@ type options struct {
 	json, refresh              bool
 }
 
+// run runs a lifecycle command and returns its exit status. A job
+// command returns an owner its caller must keep, so it is run by runJob,
+// never here.
 func run(ctx context.Context, args []string, e env) int {
 	if len(args) == 0 {
 		fmt.Fprint(e.stderr, usage)
 		return 2
 	}
 	cmd := args[0]
+	if jobCommands[cmd] {
+		fmt.Fprintf(e.stderr, "skygo-ec2: %s: a job command is run by runJob, which returns its owner\n", cmd)
+		return 2
+	}
 	if _, ok := goals[cmd]; !ok && cmd != "status" {
 		fmt.Fprintf(e.stderr, "skygo-ec2: unknown command %q\n%s", cmd, usage)
 		return 2

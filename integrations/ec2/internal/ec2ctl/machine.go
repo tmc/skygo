@@ -65,6 +65,8 @@ type Machine struct {
 	s       *store // nil once closed
 	st      state
 	pending bool // st may not be durably stored
+
+	closeErr error // the first Close's failure, which keeps the store
 }
 
 // Create opens the state directory dir for cfg, creating it and storing
@@ -97,21 +99,17 @@ func createMachine(dir string, cfg *Config, syncParent func(*os.File) error) (*M
 	case err == nil:
 		return m, nil
 	case !errors.Is(err, ErrNoState):
-		s.close()
-		return nil, err
+		return nil, errors.Join(err, s.close())
 	case !created:
-		s.close()
-		return nil, fmt.Errorf("%w: directory %s exists without a state file; refusing to start a new record in it", ErrNoState, s.dir)
+		return nil, errors.Join(fmt.Errorf("%w: directory %s exists without a state file; refusing to start a new record in it", ErrNoState, s.dir), s.close())
 	}
 	rec, err := ec2vm.NewRecord(&cfg.Profile, cfg.Identity, cfg.UserData)
 	if err != nil {
-		s.close()
-		return nil, err
+		return nil, errors.Join(err, s.close())
 	}
 	m = &Machine{s: s}
 	if err := m.commit(state{profile: cfg.Profile, rec: rec}); err != nil {
-		s.close()
-		return nil, err
+		return nil, errors.Join(err, s.close())
 	}
 	return m, nil
 }
@@ -136,8 +134,7 @@ func openMachine(dir string, cfg *Config, syncParent func(*os.File) error) (*Mac
 	}
 	m, err := open(s, cfg)
 	if err != nil {
-		s.close()
-		return nil, err
+		return nil, errors.Join(err, s.close())
 	}
 	return m, nil
 }
@@ -161,14 +158,18 @@ func open(s *store, cfg *Config) (*Machine, error) {
 // Close releases the state directory's lock. A state that was not durably
 // stored is lost; the durable state is the last one stored. Close
 // invalidates m even if releasing reports an error; a second Close is
-// [os.ErrClosed].
+// [os.ErrClosed]. If releasing fails, the error wraps [ErrUnsettled] and
+// keeps the original lock and directory, which are never closed again;
+// m keeps that error too. A failed first Close of a temporary state file
+// instead keeps that file and the lock, without closing anything else.
 func (m *Machine) Close() error {
 	if m.closed() {
 		return os.ErrClosed
 	}
 	s := m.s
 	m.s = nil
-	return s.close()
+	m.closeErr = s.close()
+	return m.closeErr
 }
 
 // closed reports whether m no longer holds the lock.
@@ -261,7 +262,9 @@ func (m *Machine) SetGoal(g Goal) error {
 // cannot be stored, Drive returns ErrUnpersisted and makes no further
 // call; the next Drive or SetGoal stores it first. A failed mutation is
 // never retried by Drive: running the command again is the operator's
-// decision. A failed read that is retryable is repeated within the bound.
+// decision. If the state's first file Close failed, every later save and
+// Close also reports ErrUnsettled and keeps the original file and lock.
+// A failed read that is retryable is repeated within the bound.
 // A read that observes nothing is repeated only while the stored record
 // still names a read as its next step: a description by instance ID that
 // finds nothing leaves the phase unknown and is repeated, but a ClientToken

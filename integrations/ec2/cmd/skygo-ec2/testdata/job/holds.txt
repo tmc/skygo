@@ -1,0 +1,88 @@
+# Every cancel of a job held because its upload Begin or its submit is in
+# doubt reports the hold with exit 5, the second and a reopened one too,
+# and the job directory alone decides it: no EC2 call, no session, no
+# Begin, no submit, and the same status. A job never submitted and with
+# no upload ends at every cancel with exit 0.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+# An upload Begin whose reply was lost holds the run.
+lose BeginArtifactUpload 1
+! job run -job $WORK/begin -task $WORK/task.json -workdir $WORK/src
+code 5
+stdout '"hold": "upload-begin-outcome-unknown"'
+opens 1
+accepted BeginArtifactUpload 1
+rawmark BeginArtifactUpload
+
+ec2mark
+! job cancel -job $WORK/begin
+code 5
+stdout '"desired": "cancel"'
+stdout '"state": "NEVER_SUBMITTED"'
+stdout '"hold": "upload-begin-outcome-unknown"'
+cp stdout $WORK/begin-first.json
+! job cancel -job $WORK/begin
+code 5
+cmp stdout $WORK/begin-first.json
+! job cancel -job $WORK/begin
+code 5
+cmp stdout $WORK/begin-first.json
+! job resume -job $WORK/begin
+code 5
+stdout '"hold": "upload-begin-outcome-unknown"'
+ec2since 0
+opens 1
+accepted BeginArtifactUpload 1
+rawsince BeginArtifactUpload 0
+calls CancelArtifactUpload 0
+calls SubmitWorkspaceJob 0
+jobs 0
+
+# A submit whose reply was lost (the server applied it) is held by the
+# first cancel, and by every later one.
+lose SubmitWorkspaceJob 1
+! job run -job $WORK/doubt -task $WORK/task.json -workdir $WORK/src
+code 1
+stdout '"submit": "sent"'
+opens 2
+ec2mark
+! job cancel -job $WORK/doubt
+code 5
+stdout '"hold": "canceled-with-submit-outcome-unknown"'
+cp stdout $WORK/doubt-first.json
+! job cancel -job $WORK/doubt
+code 5
+cmp stdout $WORK/doubt-first.json
+ec2since 0
+opens 2
+calls SubmitWorkspaceJob 1
+calls CancelJob 0
+jobs 1
+
+# The twin: a job whose session never opened was never submitted and has
+# no upload. Every cancel ends it, without a hold or a remote request.
+openfail
+! job run -job $WORK/never -task $WORK/task.json -workdir $WORK/src
+code 1
+opens 3
+ec2mark
+job cancel -job $WORK/never
+code 0
+stdout '"state": "NEVER_SUBMITTED"'
+! stdout '"hold"'
+job cancel -job $WORK/never
+code 0
+! stdout '"hold"'
+ec2since 0
+opens 3
+accepted BeginArtifactUpload 2
+calls SubmitWorkspaceJob 1
+
+mutations 1
+
+-- task.json --
+{"argv":["/bin/true"],"timeoutSeconds":"60"}
+-- src/input.txt --
+input

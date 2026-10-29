@@ -5,10 +5,11 @@ machine for skygo. It provides `skygo-ec2`, a command that creates, stops,
 restarts and terminates one VM and keeps its lifecycle in a private state
 directory.
 
-`skygo-ec2` is a VM lifecycle tool. It is **not** a skygo execution target:
-it runs no job, installs no agent, collects no artifacts or logs, and
-nothing in skygo schedules work onto the VM. It has not been run against
-AWS.
+`skygo-ec2` is a VM lifecycle tool with provider-specific job commands
+that run finite workspace jobs on the VM it already owns and runs (see
+[Jobs](#jobs)). It is **not** a skygo execution target: nothing in skygo
+schedules work onto the VM, and job commands never create, start, stop or
+replace it. It has not been run against AWS.
 
 Packages:
 
@@ -27,6 +28,9 @@ Packages:
 - `internal/ec2ctl`: the durable caller. It stores every record field in a
   locked private directory and drives `ec2vm.Step` with a real
   `ec2api.Client`.
+- `internal/ec2job`: job commands' VM verification, private job journal,
+  workdir upload, submit, observation, cancellation, output download and
+  logs, through the public `integrations/ssh/sshagent` session.
 - `internal/ec2test`: a local TLS model of EC2 and STS, used only by tests.
 - `cmd/skygo-ec2`: the command.
 
@@ -200,11 +204,154 @@ begin a second record.
   not evidence that a mutation did or did not happen, nor that the
   instance's root volume and network interface are gone.
 
+## Jobs
+
+```
+skygo-ec2 job-command -config FILE -state DIR -credentials FILE -job-config FILE -job DIR [flags]
+
+  run         freeze the workdir, upload it, submit the task once and wait
+  resume      continue a job; replays a submit in doubt with its exact request
+  job-status  observe the job once; never submits
+  logs        copy the job's log to standard output; never submits
+  cancel      latch cancel, deliver it to a known job and wait for the end;
+              for a job never submitted, delete its known upload
+
+  -task FILE         run: skygo task (protobuf JSON), naming no workdir
+  -yaml FILE         run: SkyPilot task YAML, lowered with the existing lowerer
+  -workdir DIR       run: directory to snapshot as the task's workdir
+  -outputs A,B       run -yaml: output roots relative to the workdir
+  -task-timeout D    run -yaml: the task's timeout, in whole seconds
+  -poll D            interval between observations (default 5s); 0 does not wait
+  -offset N          logs: start at byte N instead of the log checkpoint
+  -json              logs: print the page and data as JSON
+  -timeout D         bound on the command (default 10m, at most 24h)
+```
+
+Exit status: 0 succeeded (job-status, logs: printed; cancel: canceled or
+never submitted), 1 error, 2 usage error, 3 the job has not ended (it was
+not stopped), 4 the job ended without success, 5 the job is held. Every
+command but `logs` prints the job's status as JSON.
+
+`logs` starts at the job's log checkpoint, where the last delivered copy
+ended, unless `-offset` seeks explicitly. Once the copy, every write to
+standard output and the stream's close have succeeded, the checkpoint
+moves to where the copy ended, keyed to the job, its request domain and
+the log's attempt. Writing and committing are two steps: a crash between
+them repeats those bytes on the next `logs`. Delivery is at least once,
+never exactly once. A checkpoint of another attempt is refused; read it
+with an explicit `-offset`.
+
+A refusal the job directory alone decides is made before any EC2 call or
+SSH session: `resume` of a held or canceled job, of an upload or download
+Begin or download Close in doubt or of a submit in doubt past its retry
+window, `cancel` of a job held because an upload, submit or download is in
+doubt (exit 5 on every such `cancel`), and `job-status` or `logs` of a job
+whose ID is unknown (`job-status` prints the stored status).
+
+Before any SSH or job request, every other job command verifies the VM: the
+lifecycle state directory must hold a sent create of the configured
+instance, wanting present and running, with no restart or hold, and a
+fresh describe of the owned instance (account, ClientToken, tags, image,
+type, subnet, key and groups) must report it running at exactly the
+configured address. The lifecycle lock is held only while this is checked.
+A job command never creates, starts, stops or replaces a VM.
+
+`-job-config` names a private version 1 JSON file (mode 0600, at most
+64 KiB) binding the VM (instance, image, type, architecture `arm64`,
+`public` or `private` address and its IP, declared CPU and memory, an
+absolute safety deadline and cleanup reserve), the SSH and agent settings
+of `sshagent.Config`, an operator-initialized installation with a scoped
+token file, and the task shell, SkyPilot infra binding and maximum
+timeout. A task is refused before any EC2 call if it asks for
+accelerators, an image, resource limits, selectors or labels, retries,
+data mounts, a directory, another target, more than the declared CPU or
+memory, several nodes, or a timeout that is not finite, exceeds the
+maximum or does not end before the safety deadline less the reserve.
+
+The job directory (`-job`, mode 0700, created by `run`) holds a `lock`,
+the journal `job.json` (format `skygo-ec2-job-state` version 3), the frozen
+`workdir.tar` and, once collected, the verified `output.tar`. It is
+written as the lifecycle state directory is: temporary file, sync, close,
+rename, directory sync, refused if its JSON is not canonical, never
+repaired. Version 2 adds the upload cleanup and log checkpoint, version 3
+the result download, so that a version 2 reader refuses a journal that may
+hold a download's custody; a version 1 or 2 journal is read as written and
+stored as version 3 at its next save, with the same task bytes, request
+ID, request domain and identities. A journal of another format or version,
+or a corrupt one, is refused before the lock file is created or any
+temporary file removed; this format's temporary files are removed only
+after the journal is read again under the lock. That first read assumes
+every writer holds the lock; it is not a lock itself. The task is
+kept as the protobuf bytes first stored and never re-encoded for
+comparison, since the server binds a replay to the task's meaning; a
+stored task with fields this version does not know is refused. The
+journal binds, before any effect, the configuration digest, the verified
+VM, the task, the snapshot, the request ID, method and finite timeout, and
+the desired state. It holds no credential, server message or log cursor.
+
+Ambiguity rules:
+
+- The retention mode and, if enabled, the request domain are recorded once
+  from GetRetention before the first mutation and never refreshed.
+- A Begin whose reply is lost holds the job: its upload ID is unknown, so
+  nothing begins another upload or submits. A known upload is reconciled
+  with GetArtifactUpload. Every upload and replay uses the frozen snapshot.
+- A submit whose outcome is unknown is replayed only by `resume`, with the
+  stored task, request ID, method and domain, and only while the domain is
+  the server's lineage and within its retry window; otherwise it is
+  refused. A job with a known ID is never submitted again; `job-status`
+  and `logs` never submit.
+- A submit reply with a valid job ID but an invalid state, or an accepted
+  task or target not exactly the one submitted (every field compared),
+  has its ID stored and the job held: `job-status` and `cancel` still use
+  that ID; nothing runs it as the task or submits again.
+- `cancel` stores the wish first. A job never submitted then ends; a
+  submit in doubt is held, and every later `cancel` reports the hold
+  again; a known job, including one held because its accepted reply did
+  not match, gets one CancelJob, whose reply confirms delivery only, and
+  is canceled when it is seen CANCELED.
+- An ended job's result is recorded only as the server states it:
+  available, absent, expired or held. A missing result, one of another
+  attempt or one of an unknown state records nothing; a later `resume`
+  collects the job's result.
+- An available result is downloaded under the journal's custody: the
+  BeginArtifactDownload is stored before it is sent, bound to the result
+  reference and attempt; a returned download ID is stored before any read,
+  even when the reply's other fields are invalid; the CloseArtifactDownload
+  is stored before it is sent, and its nil reply is the only release
+  recorded. A Begin or Close whose outcome is unknown holds the job: no
+  other download is begun and the Close is not sent again. `output.tar` is
+  frozen before the Close and reported as the output only after the
+  release.
+- A canceled job never submitted whose upload ID is known gets one
+  CancelArtifactUpload for that ID, stored as sent first. Its nil reply
+  means the server marked the upload for deletion (`"cleanup":
+  "delivered"`), not that the bytes are gone; a failure leaves the cleanup
+  unknown, and another `cancel` sends the same request. An upload a submit
+  may own, a finalized reference and an upload whose Begin is in doubt
+  are never cleaned up, and no expiry counts as cleanup.
+- Task timeouts and configuration durations are bounded as second counts
+  before they become durations, so no value can wrap past a bound.
+- The SSH session, response streams and journal files are each closed
+  once; a failed close fails the command and is never retried. The
+  command keeps a session whose Close failed, an open error whose cleanup
+  did not settle, and the error of a job configuration or job directory
+  file whose Close failed, each with every other cause, and keeps the job
+  directory locked, until the process exits. After a temporary journal
+  file's or a read job directory file's Close fails, the job refuses every
+  call and the file is neither removed nor reused.
+
 ## Tests
 
 ```sh
 (cd integrations/ec2 && GOWORK=off go test ./...)
 ```
+
+The job tests are Linux-only. They serve a real installation, initialized
+with the canonical CLI, with `server.Run` in process, and replace only the
+SSH session: its control channel is loopback HTTP carrying the scoped
+token. `cmd/skygo-ec2/testdata/job/*.txt` are `rsc.io/script` scripts
+run by `TestJobScripts`.
 
 Tests compose the real state files (fsync, rename, flock, permissions
 under a temporary directory), `ec2vm.Step`, a real `ec2api.Client` and the
@@ -222,8 +369,6 @@ the local endpoints with explicit trusted roots. The command never calls it.
 This module is one slice of the S12 provider work. Still required before
 EC2 is a skygo execution target:
 
-- agent bootstrap on the VM and finite job execution, artifact and log
-  collection and cancellation through the SSH remote executor;
 - composing a persisted skygo target and Environment with this lifecycle,
   rather than a separate state directory;
 - an independent maximum-lifetime cleanup backstop, and inventory and

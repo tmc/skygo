@@ -1,0 +1,113 @@
+# Job commands never create, start or replace a VM, and refuse a task
+# the VM cannot run before any EC2 call or session.
+
+# No VM was ever created: refused without a mutation or a job directory.
+! job run -job $WORK/j -task $WORK/task.json -workdir $WORK/src
+code 1
+mutations 0
+opens 0
+! exists $WORK/j
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+mutations 1
+
+# Usage errors.
+! job run -job $WORK/j -workdir $WORK/src
+code 2
+! job run -job $WORK/j -task $WORK/task.json -yaml $WORK/task.yaml -workdir $WORK/src
+code 2
+! job run -job $WORK/j -task $WORK/task.json
+code 2
+! job run -job $WORK/j -yaml $WORK/task.yaml -workdir $WORK/src
+code 2
+! job run -job $WORK/j -task $WORK/task.json -workdir $WORK/src -outputs out
+code 2
+! job run -job $WORK/j -task $WORK/task.json -workdir $WORK/src -timeout 25h
+code 2
+
+# Tasks the VM cannot run: refused before any EC2 call.
+ec2mark
+! job run -job $WORK/j -task $WORK/gpu.json -workdir $WORK/src
+code 1
+stderr 'accelerators are not supported'
+! job run -job $WORK/j -task $WORK/long.json -workdir $WORK/src
+code 1
+stderr 'task timeout exceeds the configured maximum'
+! job run -job $WORK/j -task $WORK/forever.json -workdir $WORK/src
+code 1
+stderr 'task timeout must be finite'
+! job run -job $WORK/j -task $WORK/workdir.json -workdir $WORK/src
+code 1
+stderr 'must not name a workdir'
+! job run -job $WORK/j -task $WORK/other-target.json -workdir $WORK/src
+code 1
+stderr 'target is not the configured agent target'
+! job run -job $WORK/j -yaml $WORK/nodes.yaml -workdir $WORK/src -task-timeout 60s
+code 1
+! job run -job $WORK/j -yaml $WORK/cloud.yaml -workdir $WORK/src -task-timeout 60s
+code 1
+stderr 'resources.cloud'
+! job run -job $WORK/j -task $WORK/task.json -workdir $WORK/missing
+code 1
+! job run -job-config $JOBCONFIG_OPEN -job $WORK/j -task $WORK/task.json -workdir $WORK/src
+code 1
+ec2since 0
+opens 0
+! exists $WORK/j
+
+# Another instance than the lifecycle state holds: refused before any
+# EC2 call.
+! job run -job-config $JOBCONFIG_OTHER -job $WORK/j -task $WORK/task.json -workdir $WORK/src
+code 1
+ec2since 0
+
+# A public address the VM does not have: refused after describing it.
+! job run -job-config $JOBCONFIG_PUBLIC -job $WORK/j -task $WORK/task.json -workdir $WORK/src
+code 1
+opens 0
+! exists $WORK/j
+
+# A VM stopped outside skygo is never started for a job.
+ec2state stopped
+! job run -job $WORK/j -task $WORK/task.json -workdir $WORK/src
+code 1
+opens 0
+! exists $WORK/j
+
+# A job directory that does not exist is never created by other commands.
+! job job-status -job $WORK/none
+code 1
+! job cancel -job $WORK/none
+code 1
+! exists $WORK/none
+
+mutations 1
+jobs 0
+
+-- task.json --
+{"argv":["/bin/true"],"timeoutSeconds":"60"}
+-- gpu.json --
+{"argv":["nvidia-smi"],"accelerator":"H100","acceleratorCount":1,"timeoutSeconds":"60"}
+-- long.json --
+{"argv":["/bin/true"],"timeoutSeconds":"7200"}
+-- forever.json --
+{"argv":["/bin/true"]}
+-- workdir.json --
+{"argv":["/bin/true"],"workdir":{"id":"00000000000000000000000000000000","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","size":"1"},"timeoutSeconds":"60"}
+-- other-target.json --
+{"argv":["/bin/true"],"target":"dgx","timeoutSeconds":"60"}
+-- task.yaml --
+workdir: .
+run: "true"
+-- nodes.yaml --
+workdir: .
+run: "true"
+num_nodes: 2
+-- cloud.yaml --
+workdir: .
+run: "true"
+resources:
+  cloud: aws
+-- src/input.txt --
+input

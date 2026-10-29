@@ -1,0 +1,55 @@
+# cancel of a job never submitted whose upload ID is known asks the
+# server to delete that upload, once. The reply means the server marked
+# it for deletion; afterwards nothing is sent again. A submitted job's
+# upload is the job's and is never cleaned up.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+# The first chunk's reply is lost: the upload ID is known, nothing was
+# submitted.
+lose WriteArtifactChunk 1
+! job run -job $WORK/up -task $WORK/task.json -workdir $WORK/src
+code 1
+stdout '"upload": "open"'
+stdout '"submit": "none"'
+opens 1
+
+job cancel -job $WORK/up
+code 0
+stdout '"state": "NEVER_SUBMITTED"'
+stdout '"cleanup": "delivered"'
+stdout '"upload_id": "[0-9a-f]{32}"'
+calls CancelArtifactUpload 1
+opens 2
+
+# A delivered cleanup needs no VM, session or request.
+ec2mark
+job cancel -job $WORK/up
+code 0
+stdout '"cleanup": "delivered"'
+ec2since 0
+opens 2
+calls CancelArtifactUpload 1
+accepted BeginArtifactUpload 1
+calls SubmitWorkspaceJob 0
+jobs 0
+
+# The twin: a submitted job ended; cancel sends nothing and cleans
+# nothing up.
+job run -job $WORK/done -task $WORK/task.json -workdir $WORK/src -poll 100ms
+code 0
+! job cancel -job $WORK/done
+code 4
+stdout '"state": "SUCCEEDED"'
+! stdout '"cleanup"'
+calls CancelArtifactUpload 1
+calls CancelJob 0
+jobs 1
+
+mutations 1
+
+-- task.json --
+{"argv":["/bin/true"],"timeoutSeconds":"60"}
+-- src/input.txt --
+input

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -1120,5 +1121,110 @@ func TestDriveLimits(t *testing.T) {
 	}
 	if e.srv.Total() != 0 {
 		t.Fatal("invalid limits made a call")
+	}
+}
+
+// TestObserveAddress observes the address facts of the owned instance as
+// the ec2test model describes it: a private address and no public one.
+// Observe stores nothing and sends no mutation, and Address never puts
+// one kind of address in place of the other.
+func TestObserveAddress(t *testing.T) {
+	e := newEnv(t)
+	m := e.create()
+	id := e.drive(m, GoalRunning).Record.InstanceID
+	before, err := os.ReadFile(filepath.Join(e.dir, stateName))
+	must(t, err)
+	mutations := e.srv.Count("RunInstances") + e.srv.Count("StartInstances") + e.srv.Count("StopInstances") + e.srv.Count("TerminateInstances")
+
+	obs, err := Observe(context.Background(), e.c, e.stored().Record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if obs.InstanceID != id || obs.PrivateIP != netip.MustParseAddr("10.0.0.5") || obs.PublicIP.IsValid() {
+		t.Fatalf("Observe = %+v, want %s at private 10.0.0.5 with no public address", obs, id)
+	}
+	if a, err := obs.Address(false); err != nil || a != netip.MustParseAddr("10.0.0.5") {
+		t.Fatalf("Address(private) = %v, %v", a, err)
+	}
+	if a, err := obs.Address(true); err == nil || a.IsValid() {
+		t.Fatalf("Address(public) = %v, %v; want a refusal, not the private address", a, err)
+	}
+	after, err := os.ReadFile(filepath.Join(e.dir, stateName))
+	must(t, err)
+	if !bytes.Equal(before, after) {
+		t.Fatal("Observe changed the stored state")
+	}
+	if n := e.srv.Count("RunInstances") + e.srv.Count("StartInstances") + e.srv.Count("StopInstances") + e.srv.Count("TerminateInstances"); n != mutations {
+		t.Fatalf("Observe sent %d mutations", n-mutations)
+	}
+}
+
+func TestObservationAddress(t *testing.T) {
+	for _, tt := range []struct {
+		name            string
+		public, private string
+		wantPublic      bool
+		wantPrivate     bool
+	}{
+		{name: "both", public: "203.0.113.7", private: "10.0.0.5", wantPublic: true, wantPrivate: true},
+		{name: "private only", private: "10.0.0.5", wantPrivate: true},
+		{name: "public in private range", public: "10.1.2.3", private: "10.0.0.5", wantPrivate: true},
+		{name: "ipv6", public: "2001:db8::7", private: "fd00::5", wantPublic: true, wantPrivate: true},
+		{name: "neither"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			obs := &Observation{InstanceID: "i-0123456789abcdef0"}
+			if tt.public != "" {
+				obs.PublicIP = netip.MustParseAddr(tt.public)
+			}
+			if tt.private != "" {
+				obs.PrivateIP = netip.MustParseAddr(tt.private)
+			}
+			if a, err := obs.Address(true); (err == nil) != tt.wantPublic || err == nil && a != obs.PublicIP {
+				t.Errorf("Address(public) = %v, %v", a, err)
+			}
+			if a, err := obs.Address(false); (err == nil) != tt.wantPrivate || err == nil && a != obs.PrivateIP {
+				t.Errorf("Address(private) = %v, %v", a, err)
+			}
+		})
+	}
+	var nilObs *Observation
+	if _, err := nilObs.Address(false); err == nil {
+		t.Error("nil Observation returned an address")
+	}
+}
+
+func TestParseAddress(t *testing.T) {
+	for _, tt := range []struct {
+		in string
+		ok bool
+	}{
+		{"", true},
+		{"10.0.0.5", true},
+		{"203.0.113.7", true},
+		{"2001:db8::1", true},
+		{"fd00::5", true},
+		{"2001:DB8::1", false},     // not canonical
+		{"010.0.0.5", false},       // not canonical
+		{"::ffff:10.0.0.5", false}, // IPv4-mapped
+		{"fe80::1%eth0", false},    // zone
+		{"127.0.0.1", false},       // loopback
+		{"169.254.1.1", false},     // link-local
+		{"0.0.0.0", false},         // unspecified
+		{"224.0.0.1", false},       // multicast
+		{"999.0.0.1", false},
+		{"10.0.0.5:22", false},
+	} {
+		a, err := parseAddress("private", tt.in)
+		if (err == nil) != tt.ok {
+			t.Errorf("parseAddress(%q) = %v, %v; want ok=%v", tt.in, a, err, tt.ok)
+			continue
+		}
+		if err == nil && tt.in != "" && a.String() != tt.in {
+			t.Errorf("parseAddress(%q) = %v", tt.in, a)
+		}
+		if err != nil && strings.Contains(err.Error(), tt.in) && tt.in != "" {
+			t.Errorf("parseAddress(%q) error quotes the reported text: %v", tt.in, err)
+		}
 	}
 }

@@ -1,0 +1,84 @@
+# A submit whose reply is lost is replayed only by an explicit resume,
+# with the stored request; the server holds one job. A Begin whose reply
+# is lost holds the job: no second Begin and no submit.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+lose SubmitWorkspaceJob 1
+! job run -job $WORK/job -task $WORK/task.json -workdir $WORK/src -poll 100ms
+code 1
+stdout '"upload": "finalized"'
+stdout '"submit": "sent"'
+! stdout '"job_id"'
+stderr 'replay only with resume'
+calls SubmitWorkspaceJob 1
+jobs 1
+
+# job-status cannot look up a job whose ID is unknown, and never submits:
+# it prints the stored status without an EC2 call or a session.
+opens 1
+ec2mark
+job job-status -job $WORK/job
+code 0
+stdout '"submit": "sent"'
+! stdout '"job_id"'
+calls SubmitWorkspaceJob 1
+
+# logs has no job to read, which the journal alone decides.
+! job logs -job $WORK/job
+code 1
+stderr 'no job ID is known'
+ec2since 0
+opens 1
+
+job resume -job $WORK/job -poll 100ms
+code 0
+stdout '"state": "SUCCEEDED"'
+stdout '"output": "saved"'
+calls SubmitWorkspaceJob 2
+accepted BeginArtifactUpload 1
+jobs 1
+output $WORK/job out/result.txt input
+
+# A lost chunk reply: resume reconciles the offset and sends each chunk
+# once. The workdir is more than two chunks; the second reply is lost.
+blob $WORK/big/blob 150000
+lose WriteArtifactChunk 2
+! job run -job $WORK/chunk -task $WORK/task.json -workdir $WORK/big -poll 100ms
+code 1
+stdout '"upload": "open"'
+stdout '"acknowledged": 65536,'
+job resume -job $WORK/chunk -poll 100ms
+code 0
+stdout '"state": "SUCCEEDED"'
+calls GetArtifactUpload 1
+jobs 2
+
+# A lost Begin reply holds the job, latched across commands. resume of
+# the held job is refused before any EC2 call or session.
+lose BeginArtifactUpload 1
+! job run -job $WORK/held -task $WORK/task.json -workdir $WORK/src
+code 5
+stdout '"hold": "upload-begin-outcome-unknown"'
+opens 5
+rawmark BeginArtifactUpload
+ec2mark
+! job resume -job $WORK/held
+code 5
+stdout '"hold": "upload-begin-outcome-unknown"'
+ec2since 0
+opens 5
+accepted BeginArtifactUpload 3
+rawsince BeginArtifactUpload 0
+calls SubmitWorkspaceJob 3
+jobs 2
+
+mutations 1
+
+-- task.json --
+{"argv":["/bin/sh","-c","cat input.txt >out/result.txt"],"setup":["/bin/sh","-c","mkdir out"],"outputs":["out"],"timeoutSeconds":"60"}
+-- src/input.txt --
+input
+-- big/input.txt --
+input

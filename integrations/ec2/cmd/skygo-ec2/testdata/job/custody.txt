@@ -1,0 +1,63 @@
+# A job configuration whose file Close did not settle (MODEL: the loader
+# returns ec2job.LoadConfig's unsettled error, holding a model owner, not
+# a file) fails the command before any EC2 call, session or job request,
+# and before any journal exists. The command keeps the error, with its
+# owner, across a later successful command.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+configunsettled
+ec2mark
+! job run -job $WORK/job -task $WORK/task.json -workdir $WORK/src
+code 1
+stderr 'close of the configuration file did not settle'
+! stderr 'keeping the job directory locked'
+! stdout .
+ec2since 0
+opens 0
+unsettled 1
+keptconfig 1
+calls BeginArtifactUpload 0
+jobs 0
+! exists $WORK/job
+
+# Another job's command succeeds; the first command keeps its owner.
+job run -job $WORK/other -task $WORK/task.json -workdir $WORK/src -poll 100ms
+code 0
+stdout '"state": "SUCCEEDED"'
+unsettled 1
+keptconfig 1
+opens 1
+jobs 1
+
+# The same failure for a command on an existing journal opens neither
+# the journal nor a session, and the command keeps its own owner.
+configunsettled
+ec2mark
+! job resume -job $WORK/other
+code 1
+stderr 'close of the configuration file did not settle'
+ec2since 0
+opens 1
+unsettled 2
+keptconfig 2
+calls SubmitWorkspaceJob 1
+
+# The journal was never opened by the refused command, so it is free.
+job job-status -job $WORK/other
+code 0
+stdout '"state": "SUCCEEDED"'
+unsettled 2
+opens 2
+
+# The MODEL owners hold no file, so the script settles them.
+release
+unsettled 0
+
+mutations 1
+
+-- task.json --
+{"argv":["/bin/true"],"timeoutSeconds":"60"}
+-- src/input.txt --
+input

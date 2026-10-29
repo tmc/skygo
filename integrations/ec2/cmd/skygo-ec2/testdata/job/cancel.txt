@@ -1,0 +1,109 @@
+# cancel latches the wish before any VM, SSH or job request, delivers it
+# once to a known job, and reports canceled only when it is seen CANCELED.
+# A submit in doubt is held instead; a job never submitted just ends.
+
+skygo-ec2 start -config $CONFIG -state $STATE -credentials $CREDS -interval 0
+code 0
+
+# A run that is not waited for exits 3: the job was not stopped.
+! job run -job $WORK/job -task $WORK/sleep.json -workdir $WORK/src -poll 0
+code 3
+stdout '"state": "(QUEUED|STARTING|RUNNING)"'
+
+job cancel -job $WORK/job -poll 100ms
+code 0
+stdout '"desired": "cancel"'
+stdout '"cancel": "delivered"'
+stdout '"state": "CANCELED"'
+calls CancelJob 1
+calls CancelArtifactUpload 0
+opens 2
+
+# Again: the job is seen ended, so no VM, session or request is needed.
+ec2mark
+job cancel -job $WORK/job
+code 0
+opens 2
+ec2since 0
+calls CancelJob 1
+
+# A canceled job is never run again, and the journal alone decides it:
+# no EC2 call and no session.
+! job resume -job $WORK/job
+code 1
+stderr 'cancel was requested'
+ec2since 0
+opens 2
+
+# A job whose session never opened was never submitted: cancel ends it
+# without touching the VM.
+openfail
+! job run -job $WORK/never -task $WORK/sleep.json -workdir $WORK/src
+code 1
+stdout '"submit": "none"'
+stderr 'model: session refused'
+ec2mark
+job cancel -job $WORK/never
+code 0
+stdout '"state": "NEVER_SUBMITTED"'
+! stdout '"cleanup"'
+ec2since 0
+calls SubmitWorkspaceJob 1
+opens 3
+
+# A cancel of a submit in doubt holds the job, latched. Neither cancel nor
+# resume of the held job makes an EC2 call or opens a session, and the
+# stored request is never sent again.
+lose SubmitWorkspaceJob 1
+! job run -job $WORK/doubt -task $WORK/sleep.json -workdir $WORK/src
+code 1
+opens 4
+ec2mark
+! job cancel -job $WORK/doubt
+code 5
+stdout '"hold": "canceled-with-submit-outcome-unknown"'
+stdout '"submit": "sent"'
+stdout '"request_id": "[0-9a-f]{32}"'
+! job resume -job $WORK/doubt
+code 5
+stdout '"hold": "canceled-with-submit-outcome-unknown"'
+ec2since 0
+opens 4
+calls SubmitWorkspaceJob 2
+
+# A session Close whose outcome is unknown fails the command; it is
+# called once and never retried. The command keeps the session and the
+# job directory locked, so no later command in the process reopens the
+# job or opens a session for it until the owner is settled.
+closefail
+! job job-status -job $WORK/job
+code 1
+stdout '"state": "CANCELED"'
+stderr 'close SSH session'
+stderr 'keeping the job directory locked'
+opens 5
+closes 4
+unsettled 1
+ec2mark
+! job job-status -job $WORK/job
+code 1
+stderr 'locked by another process'
+ec2since 0
+opens 5
+closes 4
+
+# The MODEL session owns nothing, so the script settles it; the job
+# directory is then free.
+release
+unsettled 0
+job job-status -job $WORK/job
+code 0
+opens 6
+closes 5
+
+mutations 1
+
+-- sleep.json --
+{"argv":["/bin/sh","-c","sleep 120"],"timeoutSeconds":"300"}
+-- src/input.txt --
+input
