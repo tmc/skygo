@@ -6,21 +6,16 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
-	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
-	v1 "github.com/tmc/skygo/gen/skygo/v1"
-	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
-	"github.com/tmc/skygo/integrations/ssh/internal/agentbuild"
+	"github.com/tmc/skygo/integrations/ssh/internal/agentidentity"
+	"github.com/tmc/skygo/integrations/ssh/internal/agentsession"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentssh"
 	"github.com/tmc/skygo/integrations/ssh/internal/bootstrap"
 	"github.com/tmc/skygo/integrations/ssh/internal/sshconfig"
@@ -30,12 +25,8 @@ import (
 )
 
 const (
-	// agentName is the DNS name in every agent's TLS certificate. Each
-	// agent directory has its own self-signed certificate for it.
-	agentName   = "agent.skygo.invalid"
-	defaultPort = 47080
-
-	readyTimeout = time.Minute
+	agentName   = agentsession.AgentName
+	defaultPort = agentsession.DefaultPort
 )
 
 func main() {
@@ -76,6 +67,12 @@ type flags struct {
 	target         string // name of the remote built-in target
 	port           int    // remote loopback port of the agent
 	restartStopped bool
+
+	// installation is an operator-initialized remote installation for the
+	// agent to serve, and scopedToken the local private file holding a
+	// credential its auth file issued. Both are set or neither.
+	installation bootstrap.Installation
+	scopedToken  string
 }
 
 func parseFlags(args []string, stderr io.Writer) (flags, []string, error) {
@@ -94,8 +91,19 @@ func parseFlags(args []string, stderr io.Writer) (flags, []string, error) {
 	fs.StringVar(&f.target, "target-name", "", "`name` of the remote target (default: the host alias)")
 	fs.IntVar(&f.port, "agent-port", defaultPort, "remote loopback `port` of the agent")
 	fs.BoolVar(&f.restartStopped, "restart-stopped", false, "start a new agent process if the recorded one has exited")
+	fs.StringVar(&f.installation.DataDir, "remote-data-dir", "", "existing remote state `directory` of an operator-initialized installation, with scoped auth and artifacts initialized")
+	fs.StringVar(&f.installation.AuthFile, "remote-auth-file", "", "the installation's remote scoped auth `file`")
+	fs.StringVar(&f.installation.ArtifactDir, "remote-artifact-dir", "", "the installation's remote initialized artifact `directory`")
+	fs.StringVar(&f.scopedToken, "scoped-token-file", "", "local private `file` holding a token issued by the installation's auth file")
 	if err := fs.Parse(args); err != nil {
 		return flags{}, nil, err
+	}
+	in := f.installation
+	if set := countSet(in.DataDir, in.AuthFile, in.ArtifactDir, f.scopedToken); set != 0 && set != 4 {
+		return flags{}, nil, errors.New("skygo-ssh: --remote-data-dir, --remote-auth-file, --remote-artifact-dir and --scoped-token-file go together")
+	}
+	if !in.IsZero() && (!bootstrap.ValidPath(in.DataDir) || !bootstrap.ValidPath(in.AuthFile) || !bootstrap.ValidPath(in.ArtifactDir)) {
+		return flags{}, nil, errors.New("skygo-ssh: remote installation paths must be clean absolute paths of at most 200 letters, digits, '.', '_', '-' and '/'")
 	}
 	if f.host == "" || f.knownHosts == "" {
 		fs.Usage()
@@ -104,7 +112,7 @@ func parseFlags(args []string, stderr io.Writer) (flags, []string, error) {
 	if f.target == "" {
 		f.target = f.host
 	}
-	if !validTargetName(f.target) {
+	if !agentsession.ValidTarget(f.target) {
 		return flags{}, nil, fmt.Errorf("skygo-ssh: target name %q must be a lowercase DNS name; pass --target-name", f.target)
 	}
 	if f.port < 1024 || f.port > 65535 {
@@ -116,22 +124,19 @@ func parseFlags(args []string, stderr io.Writer) (flags, []string, error) {
 	return f, fs.Args(), nil
 }
 
-func validTargetName(s string) bool {
-	if s == "" || len(s) > 63 {
-		return false
-	}
-	for _, label := range strings.Split(s, ".") {
-		if label == "" || label[0] == '-' || label[len(label)-1] == '-' ||
-			strings.Trim(label, "abcdefghijklmnopqrstuvwxyz0123456789-") != "" {
-			return false
+func countSet(values ...string) int {
+	n := 0
+	for _, v := range values {
+		if v != "" {
+			n++
 		}
 	}
-	return true
+	return n
 }
 
 // runClient runs the skygo command in args against the agent on f.host,
 // first building, installing and starting the agent as needed.
-func runClient(ctx context.Context, f flags, args []string, stderr io.Writer) error {
+func runClient(ctx context.Context, f flags, args []string, stderr io.Writer) (err error) {
 	needed, err := checkArgs(cli.NewWithClient(nil, nil, cli.ClientOptions{}), args)
 	if err != nil {
 		return err
@@ -145,13 +150,47 @@ func runClient(ctx context.Context, f flags, args []string, stderr io.Writer) er
 	if err != nil {
 		return err
 	}
-	defer s.close()
-	root := cli.NewWithClient(nil, s.http, cli.ClientOptions{Infra: "ssh/" + f.host, Target: f.target})
-	root.SetArgs(args)
-	if err := setEndpoint(root, agentssh.Target{AgentName: agentName}.Endpoint(), s.id.token); err != nil {
+	defer func() { err = closeSession(s, err) }()
+	root, err := agentCommand(s.HTTPClient(), f.host, f.target, s.TokenFile(), args)
+	if err != nil {
 		return err
 	}
 	return root.ExecuteContext(ctx)
+}
+
+// closeSession closes s once. If that Close fails, it returns err joined
+// with a *closeError that keeps s; otherwise it returns err.
+func closeSession(s io.Closer, err error) error {
+	if cerr := s.Close(); cerr != nil {
+		return errors.Join(err, &closeError{owner: s, err: cerr})
+	}
+	return err
+}
+
+// A closeError reports a failed first Close of a session's SSH agent
+// connection, whose state is then unknown. It keeps the session, which
+// keeps the connection; the Close is never retried. Its text is fixed;
+// Unwrap returns the original Close error.
+type closeError struct {
+	owner io.Closer // the *agentsession.Session
+	err   error
+}
+
+func (e *closeError) Error() string {
+	return "skygo-ssh: closing the ssh agent connection failed; its state is unknown"
+}
+
+func (e *closeError) Unwrap() error { return e.err }
+
+// agentCommand returns the skygo command for args, reaching the agent on
+// host through hc with the credential in tokenFile.
+func agentCommand(hc *http.Client, host, target, tokenFile string, args []string) (*cobra.Command, error) {
+	root := cli.NewWithClient(nil, hc, cli.ClientOptions{Infra: "ssh/" + host, Target: target})
+	root.SetArgs(args)
+	if err := setEndpoint(root, agentssh.Target{AgentName: agentName}.Endpoint(), tokenFile); err != nil {
+		return nil, err
+	}
+	return root, nil
 }
 
 // checkArgs refuses skygo arguments that would bypass the agent, and
@@ -200,22 +239,31 @@ func setEndpoint(root *cobra.Command, endpoint, tokenFile string) error {
 	return root.PersistentFlags().Set("token-file", tokenFile)
 }
 
-// A session is a ready agent and the HTTP client that reaches it.
-type session struct {
-	http   *http.Client
-	id     identity
-	closer io.Closer // SSH agent connection, if any
-}
-
-func (s *session) close() {
-	if s.closer != nil {
-		s.closer.Close()
+// startAgent resolves f.host with ssh -G and opens an agentsession for it:
+// the agent is built from the local checkout, installed and started on the
+// host if needed, and answers as itself. With an installation, the agent
+// serves it and the session uses the scoped token, which is read before
+// anything else happens.
+func startAgent(ctx context.Context, f flags, stderr io.Writer) (*agentsession.Session, error) {
+	o := agentsession.Options{
+		Name:           f.host,
+		Source:         f.source,
+		AllowDirty:     f.source != "",
+		Target:         f.target,
+		Port:           f.port,
+		RestartStopped: f.restartStopped,
+		Installation:   f.installation,
+		Log:            stderr,
 	}
-}
-
-// startAgent builds the agent from the local checkout, installs and starts
-// it on the host if needed, and waits until it answers as itself.
-func startAgent(ctx context.Context, f flags, stderr io.Writer) (_ *session, err error) {
+	var err error
+	if !f.installation.IsZero() {
+		if o.TokenFile, err = filepath.Abs(f.scopedToken); err != nil {
+			return nil, err
+		}
+		if o.Bearer, err = agentidentity.ReadToken(o.TokenFile); err != nil {
+			return nil, fmt.Errorf("skygo-ssh: scoped token: %w", err)
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -224,175 +272,31 @@ func startAgent(ctx context.Context, f flags, stderr io.Writer) (_ *session, err
 	if err != nil {
 		return nil, err
 	}
-	knownHosts, err := filepath.Abs(f.knownHosts)
-	if err != nil {
+	o.SSHAddress, o.User = host.Address, host.User
+	if o.KnownHostsFile, err = filepath.Abs(f.knownHosts); err != nil {
 		return nil, err
 	}
-	s := &session{}
-	defer func() {
-		if err != nil {
-			s.close()
-		}
-	}()
-	target := agentssh.Target{
-		SSHAddress:     host.Address,
-		User:           host.User,
-		KnownHostsFile: knownHosts,
-		AgentAddress:   net.JoinHostPort("127.0.0.1", strconv.Itoa(f.port)),
-		AgentName:      agentName,
-	}
 	if f.keyFile != "" {
-		if target.KeyFile, err = filepath.Abs(f.keyFile); err != nil {
+		if o.KeyFile, err = filepath.Abs(f.keyFile); err != nil {
 			return nil, err
 		}
 	} else {
-		if target.SignerKey = f.fingerprint; target.SignerKey == "" {
-			if target.SignerKey, err = publicFingerprint(host.IdentityFiles); err != nil {
+		if o.SignerKey = f.fingerprint; o.SignerKey == "" {
+			if o.SignerKey, err = publicFingerprint(host.IdentityFiles); err != nil {
 				return nil, fmt.Errorf("skygo-ssh: %s: %w", f.host, err)
 			}
 		}
-		socket := os.Getenv("SSH_AUTH_SOCK")
+		o.AgentSocket = os.Getenv("SSH_AUTH_SOCK")
 		switch host.IdentityAgent {
 		case "":
 		case "none":
 			return nil, fmt.Errorf("skygo-ssh: %s: identityagent is none; pass --key-file", f.host)
 		default:
-			socket = host.IdentityAgent
-		}
-		if target.Signer, s.closer, err = agentSigner(socket, target.SignerKey); err != nil {
-			return nil, fmt.Errorf("skygo-ssh: %w", err)
+			o.AgentSocket = host.IdentityAgent
 		}
 	}
-
-	build, err := buildAgent(ctx, f.source, stderr)
-	if err != nil {
+	if o.IdentityDir, o.CacheDir, err = localDirs(f.host); err != nil {
 		return nil, err
 	}
-	config, err := os.UserConfigDir()
-	if err != nil {
-		return nil, err
-	}
-	s.id, err = loadIdentity(filepath.Join(config, "skygo-ssh", "agents", f.host, build.Commit, build.Digest), agentName)
-	if err != nil {
-		return nil, fmt.Errorf("skygo-ssh: %w", err)
-	}
-	target.AgentCAFile = s.id.cert
-	a := bootstrap.Agent{
-		Arch:   bootstrap.Arch,
-		Commit: build.Commit,
-		Digest: build.Digest,
-		Port:   f.port,
-		Target: f.target,
-		Local:  map[string]string{"skygo-ssh": build.Path, "cert.pem": s.id.cert, "key.pem": s.id.key, "token": s.id.token},
-	}
-
-	sc, err := agentssh.Dial(ctx, target)
-	if err != nil {
-		return nil, err
-	}
-	defer sc.Close()
-	r := bootstrap.SSHRunner{Client: sc}
-	if _, err := bootstrap.Install(ctx, r, a, stderr); err != nil {
-		return nil, err
-	}
-	pid, err := bootstrap.Start(ctx, r, a, f.restartStopped)
-	if err != nil {
-		return nil, err
-	}
-	if s.http, err = agentssh.NewClient(target); err != nil {
-		return nil, err
-	}
-	s.http.Transport = identityTransport{s.http.Transport}
-	status := func(ctx context.Context) (bootstrap.State, error) { return bootstrap.Status(ctx, r, a) }
-	if err := waitReady(ctx, s.http, target.Endpoint(), s.id.bearer, f.target, status); err != nil {
-		if log, lerr := bootstrap.Log(ctx, r, a); lerr == nil && log != "" {
-			fmt.Fprintf(stderr, "skygo-ssh: end of %s/agent.log:\n%s\n", a.Dir(), log)
-		}
-		return nil, err
-	}
-	fmt.Fprintf(stderr, "skygo-ssh: agent ready on %s: target %s, pid %d, %s, legacy bearer token\n", f.host, f.target, pid, a.Dir())
-	return s, nil
-}
-
-// buildAgent builds the agent from the checkout named by source, or the
-// clean checkout holding the current directory.
-func buildAgent(ctx context.Context, source string, stderr io.Writer) (agentbuild.Build, error) {
-	dir := source
-	if dir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return agentbuild.Build{}, err
-		}
-		dir = wd
-	}
-	root, err := agentbuild.FindRoot(dir)
-	if err != nil {
-		return agentbuild.Build{}, err
-	}
-	cache, err := os.UserCacheDir()
-	if err != nil {
-		return agentbuild.Build{}, err
-	}
-	fmt.Fprintf(stderr, "skygo-ssh: building linux/arm64 agent from %s\n", root)
-	b, err := new(agentbuild.Builder).Build(ctx, root, filepath.Join(cache, "skygo-ssh", "build"), source != "")
-	if err != nil {
-		return agentbuild.Build{}, err
-	}
-	dirty := ""
-	if b.Dirty {
-		dirty = " with uncommitted changes"
-	}
-	fmt.Fprintf(stderr, "skygo-ssh: agent %s%s, sha256 %s\n", b.Commit, dirty, b.Digest)
-	return b, nil
-}
-
-// waitReady waits until the agent at endpoint answers an authorized
-// GetServerInfo naming target as a local target. A response proves the
-// agent holds the key of its pinned certificate and accepts the token.
-// Between attempts it checks that the recorded process has not stopped.
-func waitReady(ctx context.Context, hc *http.Client, endpoint, token, target string, status func(context.Context) (bootstrap.State, error)) error {
-	cc := skyv1connect.NewControlServiceClient(hc, endpoint)
-	deadline := time.Now().Add(readyTimeout)
-	delay := 100 * time.Millisecond
-	for {
-		err := checkReady(ctx, cc, token, target)
-		if err == nil || errors.Is(err, errWrongAgent) {
-			return err
-		}
-		st, serr := status(ctx)
-		if serr != nil {
-			return serr
-		}
-		if st.Agent != "running" && st.Agent != "unknown" {
-			return fmt.Errorf("skygo-ssh: agent %s before it was ready: %w", st.Agent, err)
-		}
-		if time.Now().After(deadline) {
-			return fmt.Errorf("skygo-ssh: agent not ready after %v: %w", readyTimeout, err)
-		}
-		select {
-		case <-ctx.Done():
-			return context.Cause(ctx)
-		case <-time.After(delay):
-		}
-		delay = min(2*delay, time.Second)
-	}
-}
-
-var errWrongAgent = errors.New("skygo-ssh: agent does not serve the expected target")
-
-func checkReady(ctx context.Context, cc skyv1connect.ControlServiceClient, token, target string) error {
-	req := connect.NewRequest(&v1.GetServerInfoRequest{})
-	req.Header().Set("Authorization", "Bearer "+token)
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-	resp, err := cc.GetServerInfo(ctx, req)
-	if err != nil {
-		return err
-	}
-	for _, t := range resp.Msg.Targets {
-		if t.Name == target && t.Kind == "local" {
-			return nil
-		}
-	}
-	return fmt.Errorf("%w %s", errWrongAgent, target)
+	return agentsession.Open(ctx, o)
 }

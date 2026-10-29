@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +15,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/integrations/ssh/internal/agentidentity"
+	"github.com/tmc/skygo/integrations/ssh/internal/agentsession"
+	"github.com/tmc/skygo/integrations/ssh/internal/bootstrap"
 	"github.com/tmc/skygo/internal/cli"
 	"github.com/tmc/skygo/internal/local"
 	"golang.org/x/crypto/ssh"
@@ -24,6 +30,54 @@ func TestMain(m *testing.M) {
 		os.Exit(local.RunSupervisor(os.Args[2:]))
 	}
 	os.Exit(m.Run())
+}
+
+// The command's tests call the session implementation by the names it had
+// in this package. Each forwarder calls the one implementation in
+// agentsession or agentidentity unchanged.
+
+// An identity is the fields of an agentidentity.Identity under their
+// former names.
+type identity struct {
+	cert, key, token string
+	bearer           string
+}
+
+func fromIdentity(id agentidentity.Identity) identity {
+	return identity{cert: id.Cert, key: id.Key, token: id.Token, bearer: id.Bearer}
+}
+
+func loadIdentity(dir, name string) (identity, error) {
+	id, err := agentidentity.Load(dir, name)
+	return fromIdentity(id), err
+}
+
+func checkIdentity(dir, name string) (identity, error) {
+	id, err := agentidentity.Check(dir, name)
+	return fromIdentity(id), err
+}
+
+func readToken(name string) (string, error) { return agentidentity.ReadToken(name) }
+
+// An identityTransport is agentsession.Transport as a positional literal.
+type identityTransport struct{ next http.RoundTripper }
+
+func (t identityTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	return agentsession.Transport{Next: t.next}.RoundTrip(req)
+}
+
+func agentSigner(socket, fingerprint string) (ssh.Signer, io.Closer, error) {
+	return agentsession.AgentSigner(socket, fingerprint)
+}
+
+var errWrongAgent = agentsession.ErrWrongAgent
+
+func waitReady(ctx context.Context, hc *http.Client, endpoint, token, target string, workspace bool, status func(context.Context) (bootstrap.State, error)) error {
+	return agentsession.WaitReady(ctx, hc, endpoint, token, target, workspace, status)
+}
+
+func checkReady(ctx context.Context, cc skyv1connect.ControlServiceClient, token, target string, workspace bool) error {
+	return agentsession.CheckReady(ctx, cc, token, target, workspace)
 }
 
 func TestParseFlags(t *testing.T) {
@@ -46,6 +100,19 @@ func TestParseFlags(t *testing.T) {
 			want: flags{host: "dgx", knownHosts: "kh", fingerprint: "SHA256:x", source: "/src", target: "spark", port: 50000, restartStopped: true},
 			rest: []string{"jobs", "list"},
 		},
+		{
+			name: "installation",
+			args: []string{"--host", "dgx", "--known-hosts", "kh", "--remote-data-dir", "/srv/skygo/data", "--remote-auth-file", "/srv/skygo/auth.json", "--remote-artifact-dir", "/srv/skygo/artifacts", "--scoped-token-file", "tok", "artifacts", "upload", "src"},
+			want: flags{host: "dgx", knownHosts: "kh", target: "dgx", port: defaultPort,
+				installation: bootstrap.Installation{DataDir: "/srv/skygo/data", AuthFile: "/srv/skygo/auth.json", ArtifactDir: "/srv/skygo/artifacts"}, scopedToken: "tok"},
+			rest: []string{"artifacts", "upload", "src"},
+		},
+		{name: "installation without token", args: []string{"--host", "dgx", "--known-hosts", "kh", "--remote-data-dir", "/d", "--remote-auth-file", "/a", "--remote-artifact-dir", "/r"}, err: "go together"},
+		{name: "token without installation", args: []string{"--host", "dgx", "--known-hosts", "kh", "--scoped-token-file", "tok"}, err: "go together"},
+		{name: "data dir alone", args: []string{"--host", "dgx", "--known-hosts", "kh", "--remote-data-dir", "/d"}, err: "go together"},
+		{name: "relative remote path", args: []string{"--host", "dgx", "--known-hosts", "kh", "--remote-data-dir", "d", "--remote-auth-file", "/a", "--remote-artifact-dir", "/r", "--scoped-token-file", "tok"}, err: "clean absolute"},
+		{name: "unclean remote path", args: []string{"--host", "dgx", "--known-hosts", "kh", "--remote-data-dir", "/d", "--remote-auth-file", "/x/../a", "--remote-artifact-dir", "/r", "--scoped-token-file", "tok"}, err: "clean absolute"},
+		{name: "shell remote path", args: []string{"--host", "dgx", "--known-hosts", "kh", "--remote-data-dir", "/d", "--remote-auth-file", "/a", "--remote-artifact-dir", "/r;id", "--scoped-token-file", "tok"}, err: "clean absolute"},
 		{name: "no host", args: []string{"--known-hosts", "kh", "jobs", "list"}, err: "required"},
 		{name: "no known hosts", args: []string{"--host", "dgx", "jobs", "list"}, err: "required"},
 		{name: "alias is not a target name", args: []string{"--host", "DGX_1", "--known-hosts", "kh"}, err: "--target-name"},
@@ -244,6 +311,69 @@ func TestAgentSigner(t *testing.T) {
 	}
 	if _, _, err := agentSigner("", fingerprints[0]); err == nil || !strings.Contains(err.Error(), "SSH_AUTH_SOCK") {
 		t.Fatalf("agentSigner without a socket = %v", err)
+	}
+}
+
+// A modelSession is a MODEL of an agentsession.Session's Close: it counts
+// calls and returns err.
+type modelSession struct {
+	err    error
+	closes int
+}
+
+func (m *modelSession) Close() error {
+	m.closes++
+	return m.err
+}
+
+// TestCloseSession checks that a failed Close is reported with the
+// command's own error, keeps the session, runs once and shows none of the
+// Close error's text, and that a clean Close leaves the command's result
+// unchanged.
+func TestCloseSession(t *testing.T) {
+	const secret = "s3cret-0f9e"
+	cmdErr := errors.New("modeled command failure")
+	closeErr := errors.New("modeled close failure " + secret)
+	tests := []struct {
+		name     string
+		cmd      error
+		closeErr error
+	}{
+		{"command and close fail", cmdErr, closeErr},
+		{"close fails", nil, closeErr},
+		{"command fails", cmdErr, nil},
+		{"success", nil, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := &modelSession{err: tt.closeErr}
+			err := closeSession(m, tt.cmd)
+			if m.closes != 1 {
+				t.Errorf("Close called %d times, want 1", m.closes)
+			}
+			if tt.closeErr == nil {
+				if err != tt.cmd {
+					t.Errorf("closeSession = %v, want the command's result %v", err, tt.cmd)
+				}
+				return
+			}
+			if !errors.Is(err, tt.closeErr) || tt.cmd != nil && !errors.Is(err, tt.cmd) {
+				t.Errorf("closeSession = %v; want both the command's and Close's errors", err)
+			}
+			var ce *closeError
+			if !errors.As(err, &ce) || ce.owner != io.Closer(m) || ce.err != tt.closeErr {
+				t.Errorf("closeSession = %v; want a *closeError keeping the session", err)
+			}
+			if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "ssh agent connection") {
+				t.Errorf("closeSession = %q", err)
+			}
+			if tt.cmd != nil && !strings.Contains(err.Error(), tt.cmd.Error()) {
+				t.Errorf("closeSession = %q; want the command's error shown", err)
+			}
+			if m.closes != 1 {
+				t.Errorf("Close called %d times after reporting, want 1", m.closes)
+			}
+		})
 	}
 }
 

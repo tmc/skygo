@@ -35,7 +35,7 @@ func Example() {
 	}
 	r := modeledRunner("arch aarch64\n" +
 		"file skygo-ssh missing\nfile cert.pem missing\nfile key.pem missing\nfile token missing\n" +
-		"agent none\n")
+		"agent none\nconfig none\n")
 
 	st, err := bootstrap.Status(context.Background(), r, a)
 	if err != nil {
@@ -43,15 +43,74 @@ func Example() {
 		return
 	}
 	fmt.Println(a.Dir())
-	fmt.Println(st.Arch == a.Arch, st.Agent, st.PID)
+	fmt.Println(st.Arch == a.Arch, st.Agent, st.PID, st.Config, st.ConfigSame)
 	for _, name := range bootstrap.Files {
 		fmt.Println(name, st.Files[name])
 	}
 	// Output:
 	// ~/skygo-test/0123456789abcdef0123456789abcdef01234567/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855
-	// true none 0
+	// true none 0 none false
 	// skygo-ssh missing
 	// cert.pem missing
 	// key.pem missing
 	// token missing
+}
+
+// This example models a directory whose record is the agent's own. The
+// Runner is modeled; the remote script reports only the record's form and
+// whether it matches, never its contents.
+func ExampleStatus_record() {
+	a := bootstrap.Agent{
+		Arch:   bootstrap.Arch,
+		Commit: "0123456789abcdef0123456789abcdef01234567",
+		Digest: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+		Port:   8443,
+		Target: "local",
+		Installation: bootstrap.Installation{
+			DataDir:     "/srv/skygo/state",
+			AuthFile:    "/srv/skygo/state/auth.json",
+			ArtifactDir: "/srv/skygo/artifacts",
+		},
+		Local: map[string]string{
+			"skygo-ssh": "/build/skygo-ssh-linux-arm64",
+			"cert.pem":  "/state/cert.pem",
+			"key.pem":   "/state/key.pem",
+		},
+	}
+	r := modeledRunner("arch aarch64\n" +
+		"file skygo-ssh missing\nfile cert.pem missing\nfile key.pem missing\nfile token missing\n" +
+		"agent stopped 4242\nconfig installation same\n")
+
+	st, err := bootstrap.Status(context.Background(), r, a)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(st.Agent, st.PID, st.Config, st.ConfigSame)
+	// Output:
+	// stopped 4242 installation true
+}
+
+func ExampleInstallation_IsZero() {
+	var legacy bootstrap.Installation
+	in := bootstrap.Installation{
+		DataDir:     "/srv/skygo/state",
+		AuthFile:    "/srv/skygo/state/auth.json",
+		ArtifactDir: "/srv/skygo/artifacts",
+	}
+	fmt.Println(legacy.IsZero(), in.IsZero())
+	// Output:
+	// true false
+}
+
+func ExampleValidPath() {
+	for _, p := range []string{"/srv/skygo/state", "srv/skygo", "/srv/../etc", "/srv/a b", "/"} {
+		fmt.Println(p, bootstrap.ValidPath(p))
+	}
+	// Output:
+	// /srv/skygo/state true
+	// srv/skygo false
+	// /srv/../etc false
+	// /srv/a b false
+	// / false
 }

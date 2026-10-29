@@ -62,6 +62,9 @@ func TestAgentConfig(t *testing.T) {
 	if got.DisableLocal || got.AuthFile != "" || got.ArtifactDir != "" || got.Targets != nil {
 		t.Errorf("config enables more than the local target: %+v", got)
 	}
+	if got.ExistingInstallation {
+		t.Error("legacy agent selected the existing installation route")
+	}
 	c := got.TLSConfig
 	if c == nil || len(c.Certificates) != 1 || c.MinVersion != tls.VersionTLS12 || !slices.Equal(c.NextProtos, []string{"http/1.1"}) {
 		t.Fatalf("TLS config = %+v", c)
@@ -280,14 +283,19 @@ func TestAgentCLI(t *testing.T) {
 	endpoint := "https://" + agentName
 
 	running := func(context.Context) (bootstrap.State, error) { return bootstrap.State{Agent: "running"}, nil }
-	if err := waitReady(ctx, hc, endpoint, id.bearer, "dgx", running); err != nil {
+	if err := waitReady(ctx, hc, endpoint, id.bearer, "dgx", false, running); err != nil {
 		t.Fatal(err)
 	}
-	if err := waitReady(ctx, hc, endpoint, id.bearer, "local", running); !errors.Is(err, errWrongAgent) {
+	if err := waitReady(ctx, hc, endpoint, id.bearer, "local", false, running); !errors.Is(err, errWrongAgent) {
 		t.Fatalf("waitReady for another target = %v, want errWrongAgent", err)
 	}
+	// The legacy agent serves no artifact workspaces, so an installation
+	// session refuses it as the wrong agent.
+	if err := waitReady(ctx, hc, endpoint, id.bearer, "dgx", true, running); !errors.Is(err, errWrongAgent) {
+		t.Fatalf("waitReady for workspaces from a legacy agent = %v, want errWrongAgent", err)
+	}
 	stopped := func(context.Context) (bootstrap.State, error) { return bootstrap.State{Agent: "stopped"}, nil }
-	if err := waitReady(ctx, hc, endpoint, "wrong-token", "dgx", stopped); err == nil || !strings.Contains(err.Error(), "agent stopped") {
+	if err := waitReady(ctx, hc, endpoint, "wrong-token", "dgx", false, stopped); err == nil || !strings.Contains(err.Error(), "agent stopped") {
 		t.Fatalf("waitReady with a wrong token = %v", err)
 	}
 

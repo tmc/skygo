@@ -14,9 +14,12 @@ import (
 //
 // Modes:
 //
-//	status                        print arch, each file's SHA-256 and the agent state
+//	status PORT TARGET [DATA AUTH ARTIFACTS]
+//	                              print arch, each file's SHA-256, the agent state,
+//	                              and the record's form and whether it is the given one
 //	put NAME SHA256               store standard input as NAME if it is absent
-//	start PORT TARGET RESTART     start the agent unless one is recorded
+//	start PORT TARGET RESTART [DATA AUTH ARTIFACTS]
+//	                              start the agent unless one is recorded
 //	log                           print the end of agent.log
 //
 // The first start records PORT and TARGET in agent.config, exactly
@@ -27,6 +30,20 @@ import (
 // "agent configuration-mismatch"; any other record is refused. A running
 // agent without a record is refused, since its configuration is unknown;
 // a stopped one may be restarted with a new record.
+//
+// Status and start read the record with the same parser, which accepts
+// only those exact forms and creates nothing. Status prints "config none",
+// "config unsafe", or "config FORM same" or "config FORM other" for a
+// record of FORM legacy or installation; it never prints the record.
+//
+// A start naming an installation, by the clean absolute paths DATA, AUTH
+// and ARTIFACTS, appends "data DATA\nauth AUTH\nartifacts ARTIFACTS\n" to
+// the record, so a record of either form is "another configuration" for a
+// start of the other. Before anything else it requires DATA and ARTIFACTS
+// to be existing directories, DATA/jobs.db and AUTH existing regular
+// files, none of them symlinks, and the agent directory to hold no token;
+// it never creates or changes them. The agent is then started with
+// --data-dir, --auth-file and --artifact-dir.
 const script = `set -eu
 umask 077
 fail() { printf "skygo-bootstrap: %s\n" "$*" >&2; exit 1; }
@@ -38,6 +55,11 @@ sum() {
 }
 portok() { case $1 in "" | 0* | *[!0-9]*) return 1 ;; esac; [ ${#1} -le 5 ] && [ "$1" -ge 1024 ] && [ "$1" -le 65535 ]; }
 targetok() { case $1 in "" | *[!a-z0-9.-]*) return 1 ;; esac; [ ${#1} -le 128 ]; }
+pathok() {
+	case $1 in /?*) ;; *) return 1 ;; esac
+	case $1 in */ | *//* | */./* | */../* | */. | */.. | *[!ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._/-]*) return 1 ;; esac
+	[ ${#1} -le 200 ]
+}
 mode=${1-} commit=${2-} digest=${3-}
 case ${#commit} in 40 | 64) ;; *) fail "invalid commit" ;; esac
 hex "$commit" || fail "invalid commit"
@@ -48,7 +70,10 @@ dir=$root/$commit/$digest
 bin=$dir/skygo-ssh
 pidfile=$dir/agent.pid
 cfg=$dir/agent.config
-want= seen= canon=
+want=
+nl="
+"
+readok=" skygo-read-ok" readfailed=" skygo-read-failed"
 dirs() {
 	for d in "$root" "$root/$commit" "$dir"; do
 		if [ -L "$d" ]; then fail "$d is a symlink"; fi
@@ -66,29 +91,91 @@ state() {
 	real=$(cd "$dir" 2>/dev/null && pwd -P)/skygo-ssh
 	if [ "$exe" = "$real" ]; then echo "running $pid"; else echo "unknown $pid"; fi
 }
-temp() { t=$dir/.config-$1-$$; (set -C; : >"$t") 2>/dev/null || fail "$t exists"; }
-clean() { for t in "$want" "$seen" "$canon"; do if [ -n "$t" ]; then rm -f "$t"; fi; done; }
-# config compares agent.config with the record in $want and prints same,
-# other for a well-formed record of another configuration, none or unsafe.
-# It reads at most 256 bytes, more than any record holds, so a copy equal
-# to a record means the file is exactly that record.
+# desired sets port, target, data, auth and artifacts from the operands
+# PORT TARGET [DATA AUTH ARTIFACTS], which must be valid.
+desired() {
+	case $# in 2 | 5) ;; *) fail "invalid operands" ;; esac
+	port=$1 target=$2 data=${3-} auth=${4-} artifacts=${5-}
+	portok "$port" || fail "invalid port"
+	targetok "$target" || fail "invalid target name"
+	if [ $# -eq 5 ]; then
+		pathok "$data" && pathok "$auth" && pathok "$artifacts" || fail "invalid installation path"
+	fi
+}
+# line moves the first line of $rec, without its newline, to $l. It
+# fails if $rec holds no newline.
+line() {
+	case $rec in *"$nl"*) ;; *) return 1 ;; esac
+	l=${rec%%"$nl"*}
+	rec=${rec#*"$nl"}
+}
+# field moves the first line of $rec, which must be "$1 VALUE", to $v.
+field() { line || return 1; v=${l#"$1 "}; [ "$v" != "$l" ]; }
+# parse is the one reader of agent.config. It sets form to none, unsafe,
+# legacy or installation, and for a record sets rport, rtarget, rdata,
+# rauth and rartifacts. A record is a regular file of at most 1024 bytes
+# holding exactly "port PORT\ntarget TARGET\n", for legacy, or that
+# followed by "data DATA\nauth AUTH\nartifacts ARTIFACTS\n", for an
+# installation, each value valid as the operand of that name. parse reads
+# the file once, through one pipe, and creates nothing. head's bytes are
+# followed by a trailer, the last bytes in the pipe, saying whether head
+# succeeded; tr then maps NUL, which command substitution would drop, to
+# a byte no field accepts, and a final x keeps trailing newlines. parse
+# requires tr to succeed and the success trailer, removes exactly that
+# trailer, and reads a 1025th byte to refuse a longer file. A failed read
+# or transform is unsafe, whatever bytes it delivered.
+parse() {
+	form=unsafe rport= rtarget= rdata= rauth= rartifacts=
+	if [ -L "$cfg" ]; then return 0; fi
+	if [ ! -e "$cfg" ]; then form=none; return 0; fi
+	if [ ! -f "$cfg" ]; then return 0; fi
+	rec=$({
+		if head -c 1025 "$cfg" 2>/dev/null; then printf "%s" "$readok"; else printf "%s" "$readfailed"; fi
+	} | tr "\000" "#" && echo x) || return 0
+	rec=${rec%x}
+	case $rec in *"$readok") rec=${rec%"$readok"} ;; *) return 0 ;; esac
+	[ ${#rec} -le 1024 ] || return 0
+	field port && portok "$v" || return 0
+	rport=$v
+	field target && targetok "$v" || return 0
+	rtarget=$v
+	if [ -z "$rec" ]; then form=legacy; return 0; fi
+	field data && pathok "$v" || return 0
+	rdata=$v
+	field auth && pathok "$v" || return 0
+	rauth=$v
+	field artifacts && pathok "$v" || return 0
+	rartifacts=$v
+	[ -z "$rec" ] || return 0
+	form=installation
+}
+# same reports whether the record parse read is the desired one.
+same() {
+	[ "$rport" = "$port" ] && [ "$rtarget" = "$target" ] && [ "$rdata" = "$data" ] &&
+		[ "$rauth" = "$auth" ] && [ "$rartifacts" = "$artifacts" ]
+}
+# config prints none, unsafe, same for the desired record, or other for a
+# record of another configuration, of either form.
 config() {
-	if [ -L "$cfg" ]; then echo unsafe; return; fi
-	if [ ! -e "$cfg" ]; then echo none; return; fi
-	if [ ! -f "$cfg" ]; then echo unsafe; return; fi
-	head -c 256 "$cfg" >"$seen" 2>/dev/null || { echo unsafe; return; }
-	if [ "$(sum "$seen")" = "$(sum "$want")" ]; then echo same; return; fi
-	{ IFS= read -r l1 && IFS= read -r l2; } <"$seen" || { echo unsafe; return; }
-	p=${l1#"port "} g=${l2#"target "}
-	if [ "$p" = "$l1" ] || [ "$g" = "$l2" ] || ! portok "$p" || ! targetok "$g"; then echo unsafe; return; fi
-	printf "port %s\ntarget %s\n" "$p" "$g" >"$canon"
-	if [ "$(sum "$seen")" = "$(sum "$canon")" ]; then echo other; else echo unsafe; fi
+	parse
+	case $form in
+	none | unsafe) echo "$form" ;;
+	*) if same; then echo same; else echo other; fi ;;
+	esac
 }
 mismatch() { echo "agent configuration-mismatch"; exit 0; }
 unverifiable() { fail "agent configuration $cfg is unverifiable; inspect it, stop any agent process, then remove it"; }
-# record links $want into place as agent.config. If another start created
-# the record first, record accepts it only if it is the same.
+clean() { if [ -n "$want" ]; then rm -f "$want"; fi; }
+# record writes the desired record to a new file and links it into place
+# as agent.config. If another start created the record first, record
+# accepts it only if it is the same.
 record() {
+	t=$dir/.config-want-$$
+	(set -C; : >"$t") 2>/dev/null || fail "$t exists"
+	want=$t
+	trap clean EXIT
+	printf "port %s\ntarget %s\n" "$port" "$target" >"$want"
+	if [ -n "$data" ]; then printf "data %s\nauth %s\nartifacts %s\n" "$data" "$auth" "$artifacts" >>"$want"; fi
 	chmod 400 "$want"
 	if ln "$want" "$cfg" 2>/dev/null; then return; fi
 	case $(config) in
@@ -99,6 +186,8 @@ record() {
 }
 case $mode in
 status)
+	shift 3
+	desired "$@"
 	dirs
 	printf "arch %s\n" "$(uname -m)"
 	for f in skygo-ssh cert.pem key.pem token; do
@@ -109,6 +198,11 @@ status)
 		else echo "file $f missing"; fi
 	done
 	echo "agent $(state)"
+	parse
+	case $form in
+	none | unsafe) echo "config $form" ;;
+	*) if same; then echo "config $form same"; else echo "config $form other"; fi ;;
+	esac
 	;;
 put)
 	name=${4-} want=${5-}
@@ -127,23 +221,30 @@ put)
 	echo "stored $name"
 	;;
 start)
-	port=${4-} target=${5-} restart=${6-}
-	portok "$port" || fail "invalid port"
-	targetok "$target" || fail "invalid target name"
+	restart=${6-}
+	case $# in
+	6) desired "$4" "$5" ;;
+	9) desired "$4" "$5" "$7" "$8" "$9" ;;
+	*) fail "invalid operands" ;;
+	esac
 	case $restart in 0 | 1) ;; *) fail "invalid restart flag" ;; esac
 	dirs
 	if [ -L "$bin" ] || [ ! -f "$bin" ]; then fail "agent binary is missing"; fi
 	[ "$(sum "$bin")" = "$digest" ] || fail "agent binary differs from its digest; refusing to run it"
+	if [ -n "$data" ]; then
+		if [ -e "$dir/token" ] || [ -L "$dir/token" ]; then fail "$dir holds a legacy token; refusing to serve an installation from it"; fi
+		for d in "$data" "$artifacts"; do
+			if [ -L "$d" ] || [ ! -d "$d" ]; then fail "$d is not an existing directory; initialize the installation on the host first"; fi
+		done
+		for p in "$data/jobs.db" "$auth"; do
+			if [ -L "$p" ] || [ ! -f "$p" ]; then fail "$p is not an existing regular file; initialize the installation on the host first"; fi
+		done
+	fi
 	s=$(state)
 	case $s in
 	none | running* | stopped*) ;;
 	*) fail "agent state $s; inspect $dir/agent.log, stop any agent process, then remove $pidfile" ;;
 	esac
-	trap clean EXIT
-	temp want; want=$t
-	temp seen; seen=$t
-	temp canon; canon=$t
-	printf "port %s\ntarget %s\n" "$port" "$target" >"$want"
 	c=$(config)
 	case $c in
 	none | same) ;;
@@ -162,10 +263,12 @@ start)
 	case $s in stopped*) mv "$pidfile" "$pidfile.stopped" ;; esac
 	(set -C; : >"$pidfile") 2>/dev/null || fail "another start holds $pidfile"
 	cd "$dir"
+	set -- agent --dir "$dir" --listen "127.0.0.1:$port" --target "$target"
+	if [ -n "$data" ]; then set -- "$@" --data-dir "$data" --auth-file "$auth" --artifact-dir "$artifacts"; fi
 	if command -v setsid >/dev/null 2>&1; then
-		setsid nohup "$bin" agent --dir "$dir" --listen "127.0.0.1:$port" --target "$target" </dev/null >>agent.log 2>&1 &
+		setsid nohup "$bin" "$@" </dev/null >>agent.log 2>&1 &
 	else
-		nohup "$bin" agent --dir "$dir" --listen "127.0.0.1:$port" --target "$target" </dev/null >>agent.log 2>&1 &
+		nohup "$bin" "$@" </dev/null >>agent.log 2>&1 &
 	fi
 	echo "$!" >"$pidfile"
 	echo "agent started $!"
@@ -179,15 +282,15 @@ esac
 `
 
 // command returns the remote command line running script with operands.
-// Every operand must be a safe word; each is quoted regardless, because
-// the remote login shell interprets the line.
+// Every operand must be a safe word or a valid installation path; each is
+// quoted regardless, because the remote login shell interprets the line.
 func command(operands ...string) (string, error) {
 	var b strings.Builder
 	b.WriteString("sh -c ")
 	b.WriteString(quote(script))
 	b.WriteString(" skygo-bootstrap")
 	for _, s := range operands {
-		if !safeWord(s) {
+		if !safeWord(s) && !ValidPath(s) {
 			return "", errors.New("bootstrap: unsafe operand")
 		}
 		b.WriteString(" ")

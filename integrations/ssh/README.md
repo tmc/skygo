@@ -116,7 +116,12 @@ before anything is started, stopped or renamed, even with
 remove the record to change settings while keeping the old job store.
 A record that is not a regular file holding exactly that text, such as
 a symlink or a truncated or extended file, is
-refused as unverifiable. A running agent without a record, started by an
+refused as unverifiable. The remote script reads the record with one
+exact parser, at most 1024 bytes, for both its status report and every
+start; a read that fails is unsafe, whatever it delivered. The status report says only whether the record is absent, unsafe,
+or a legacy or installation record that is or is not the requested one,
+never its contents. skygo-ssh refuses a record of another configuration
+or form before copying any file. A running agent without a record, started by an
 earlier skygo-ssh, is refused because its configuration cannot be
 verified; once it has stopped, `--restart-stopped` starts it again and
 records the configuration.
@@ -130,6 +135,70 @@ The certificate, key and token are kept locally under the user config
 directory (`~/Library/Application Support` on macOS) in
 `skygo-ssh/agents/ALIAS/COMMIT/SHA256/`, mode 0600, and are reused. The
 token is passed to skygo as `--token-file` and is never printed.
+
+## Serving an initialized installation
+
+By default the agent keeps its own unscoped store and legacy token. To
+use scoped credentials, artifacts and workspace jobs instead, initialize
+an installation on the host yourself, with the canonical `skygo` binary
+and the server stopped:
+
+```
+skygo auth init --data-dir /srv/skygo/data --auth-file /srv/skygo/auth.json \
+    --token-output ~/admin.token
+skygo state artifacts init --data-dir /srv/skygo/data \
+    --artifact-dir /srv/skygo/artifacts --ack-writers-stopped
+```
+
+Then copy a token issued by that auth file to a private local file and
+name all four paths:
+
+```
+skygo-ssh --host dgx --known-hosts ~/.config/skygo-ssh/dgx.known_hosts \
+    --remote-data-dir /srv/skygo/data --remote-auth-file /srv/skygo/auth.json \
+    --remote-artifact-dir /srv/skygo/artifacts --scoped-token-file ~/.config/skygo-ssh/dgx.token \
+    artifacts upload ./src
+```
+
+The agent is then `server.Run` with that state directory, `AuthFile` and
+`ArtifactDir`, `ExistingInstallation` set, and no legacy token;
+`artifacts upload`, `artifacts download` and tasks with `workdir`, `setup`
+and `outputs` work as against a local server. Neither skygo-ssh nor the
+server creates, initializes or migrates the installation. Before starting
+the agent skygo-ssh refuses an incomplete set of flags, paths that are not
+clean and absolute (letters, digits, `.`, `_`, `-` and `/`, at most 200
+bytes), a state directory without `jobs.db`, an absent auth file or
+artifact directory, any of them a symlink, and an agent directory holding
+a legacy token. The agent repeats these checks. The server then decides
+the rest before it listens: it reads the store without writing it and
+refuses one that is not an existing, current, scoped installation (an
+empty `jobs.db` included), an auth file of another installation, and an
+artifact root whose marker does not match the store; only then does it
+take the database's writer lock, and it refuses if the store changed in
+between. Other writers must be stopped: edits that bypass the database's
+lock are not detected.
+
+The agent directory then holds no `token`, and `agent.config` adds
+`data DIR`, `auth FILE` and `artifacts DIR` lines. A directory started for
+one installation, or for none, refuses a command naming another before
+anything is copied or started: a command without installation flags
+refuses an installation's directory, and a command with them refuses a
+legacy record even if the directory holds no token. A two-line record is
+always legacy; a missing token never makes it an installation's. In
+either mode, a directory whose `agent.config` is truncated, extended, of
+unknown form or not a regular file is refused before anything is copied
+into it. Nothing adopts, copies or rewrites a mismatched record. The agent's
+paths come only from that record and its
+command line; credentials stay in files. Readiness requires the scoped
+token to be accepted and the artifact service and the target's workdir
+snapshots to be advertised. The server does not report its installation's
+identity, so the exact paths are bound by the record, not checked over RPC.
+
+Interrupting skygo-ssh, or losing the SSH connection, does not cancel a
+job; `jobs cancel ID --yes` does. Workspace jobs are not covered by the
+durable supervisor: a job running when the agent stops is not reattached.
+Uploaded snapshots and results follow the installation's own artifact
+lifecycle; skygo-ssh adds no retention or cleanup of its own.
 
 ## Tasks
 
@@ -161,12 +230,18 @@ this command does not install k3s, use sudo, or provision a machine.
   `jobs logs --follow` stops after 10 seconds; jobs keep running, and
   `jobs logs ID` reads the retained log again.
 - A new build gets a new agent directory and a new agent on the same port.
-  Stop the previous agent first (`kill $(cat ~/skygo-test/C/D/agent.pid)`
-  on the host); otherwise the new agent cannot listen and skygo-ssh
-  reports it.
-- There is no stop command, no scoped authentication, no retention domain,
-  no artifacts or workspaces, and no dashboard. `server`, `auth` and
-  `state` work on local files and are refused; run them on the host.
+  While the previous agent runs, the new one cannot listen and skygo-ssh
+  reports it. skygo-ssh cannot stop the previous agent: `agent.pid` holds
+  only a process ID, which does not identify the process, so do not
+  signal by it. Stopping is HOLD until the process's original custodian
+  can stop it (see "Native installation check (HOLD)").
+- There is no stop command and no dashboard. Without an initialized
+  installation there is no scoped authentication, retention domain,
+  artifacts or workspaces. `server`, `auth` and `state` work on local files
+  and are refused; run them on the host.
+- Artifact transfers use the canonical 64 KiB chunks, each one RPC within
+  the limits above. There are no persistent environments, sessions or
+  interactive terminals.
 - Removing the local identity while the remote copy exists makes the next
   command refuse the mismatch; remove the remote agent directory too.
 - The agent is built for linux/arm64 and installs only where `uname -m`
@@ -174,6 +249,17 @@ this command does not install k3s, use sudo, or provision a machine.
 
 ## Packages
 
+- `sshagent` opens the agent from Go as skygo-ssh does, from an explicit
+  `Config` (SSH address and user, known_hosts file, key file or pinned SSH
+  agent key, checkout, local identity and build directories, target, port
+  and optional installation) instead of an `ssh -G` alias. A `Session`
+  offers only `Control`, an authenticated control client, `Binding`, the
+  facts Open verified, and `Close`.
+- `internal/agentsession` is the one implementation of opening a session,
+  used by both skygo-ssh and `sshagent`: it builds, installs, starts and
+  waits for the agent.
+- `internal/agentidentity` creates and reads the agent's private TLS
+  identity and token files, for both the agent and its clients.
 - `internal/agentssh` sends each HTTP request over its own SSH connection
   and `direct-tcpip` channel to the agent's loopback port, verifying the
   SSH host key against the dedicated known_hosts file and the agent with
@@ -184,6 +270,21 @@ this command does not install k3s, use sudo, or provision a machine.
 - `internal/agentbuild` locates the checkout and builds the agent.
 - `internal/bootstrap` holds the remote script and runs it.
 
+Opening a session acquires two local connections: the connection to the
+SSH agent, held until `Session.Close`, and the SSH connection that runs the
+bootstrap commands, closed and joined before Open returns. Each is closed
+once; a later or concurrent Close returns the first result and never
+closes it again. Each readiness request must also show that its
+connections were closed: the first Close of its response body, which
+Connect may discard, is recorded and must return nil, and Open sends no
+further request or command after one that did not. If any of these did
+not settle, Open returns an `OpenError` that references the originals for
+as long as the caller holds the error, and no session; its text names only
+the parts that did not settle, and `errors.Is` and `errors.As` reach the
+original errors. Requests made later through `Control` own their
+connections; `Session.Close` does not wait for them. Nothing stops the
+remote agent or its jobs.
+
 ## Tests
 
 ```
@@ -193,5 +294,96 @@ GOWORK=off go test ./internal/server ./internal/cli
 
 The bootstrap tests run the real script through an in-process SSH server
 with a temporary `HOME`; the test that checks process reuse needs `/proc`.
+`TestStartCommand` checks the operands Start sends through a MODEL
+Runner that runs nothing; it does not show the record the script writes
+or the argv it starts the agent with. The record tests start nothing;
+they check that Status and refused installs and starts leave the agent
+directory, the installation and a bystander file identical, inode and
+modification time included. `TestRecordReadFailure` replaces `head`
+with a MODEL that delivers a whole valid record and then fails, and
+checks that the script's parser reports it unsafe.
 `cmd/skygo-ssh` runs the agent in process with `server.Run` and drives it
-with the canonical CLI. No test connects to a real host.
+with the canonical CLI; on Linux, `TestAgentInstallationCLI` and the
+script `cmd/skygo-ssh/testdata/installation.txt` do so for a real
+installation initialized with `skygo auth init` and `skygo state
+artifacts init`. The CLI test's refusals, including a MODELED zero-byte
+`jobs.db`, must leave both installations' state, auth files, artifact
+roots and a bystander identical, device, inode, mode and bytes included.
+Their roots live in one private directory under
+`~/tmp/skypilot/20261028-s11-ssh-installation-tests/`, removed only after
+every in-process `server.Run` has returned without a `*server.RunError`
+and the test passed; otherwise the test reports the kept path. No test
+connects to a real host.
+
+The `Dial` ownership tests in `internal/agentssh` wrap the actual TCP
+connection to an in-process SSH server and count the Closes that reach it;
+failed Closes and deadlines, and a server that never answers, are MODELS.
+The runner ownership tests use the in-process exec server, a MODEL client
+whose session open stays pending and a MODEL stdin that holds a started
+command. The `internal/agentsession` readiness tests use MODEL transports
+and response bodies, whose Close failures hold nothing. Its
+`TestOpenModelHost` tests run Open through an in-process SSH server with
+actual SSH, host key, client key, channels, TLS and typed GetServerInfo,
+but the agent build, the bootstrap script and the agent are MODELS: a
+fixed file is hashed and transferred, the script's operands are
+interpreted in memory, and an in-process Connect server stands in for the
+agent. None builds or starts an agent or runs the script. The `sshagent`
+tests use a MODEL SSH agent connection and a MODEL transport.
+
+## Native installation check (HOLD)
+
+`testdata/native-installation.sh` refuses unconditionally, before any
+network access or effect. A native check needs two things this module
+does not have:
+
+- A stop by the original process custodian. `agent.pid` records only a
+  process ID; signaling by that number, or by a process name or a
+  `kill -0` probe, may reach an unrelated process that reused it, and is
+  not a substitute. The agent is started detached by a remote shell that
+  exits, so nothing holds the started process and none of skygo-ssh, its
+  tests or this check can stop it. There is no stop command, and none is
+  described here; native work stays HOLD until a stop exists that is
+  held by the process's original starter and waits for that same process
+  to exit.
+- An admitted binary. Running whatever `skygo-ssh` is first on `PATH`
+  proves nothing about the source. The client binary, the agent it builds
+  and the operator's `skygo` must be bound by SHA-256 to a separately
+  admitted, real Git checkout (not a copied tree without Git metadata).
+
+Until both exist, the native work is NOT_RUN. The intended cases are kept
+here as a recipe. It is not executable as written: `ALIAS`, `KH`, `PIN`,
+`SKYGO_SSH` (the admitted client binary), `NS` (`~/skygo-test/PIN/s11` on
+the host) and `WORK` (a new private local evidence directory) are
+placeholders, and every stop step below is the missing contract.
+
+```
+# Host floors, checked before any effect and again before each start:
+# uname -m = aarch64; >= 100 GiB free in the remote HOME; >= 16 GiB
+# MemAvailable; >= 4 CPUs; GPU utilization <= 10% and no compute apps.
+# Run CPU-only jobs; no sudo, installation or system change.
+
+# Operator, on the host, server stopped, for installations a and b:
+skygo auth init --data-dir NS/a/data --auth-file NS/a/auth.json --token-output NS/a/admin.token
+skygo state artifacts init --data-dir NS/a/data --artifact-dir NS/a/artifacts --ack-writers-stopped
+# Copy NS/a/admin.token to WORK/a.token by a private file transfer (never
+# through a captured stdout or a log), mode 0600.
+
+# Client, locally (I is the four installation flags for a):
+SKYGO_SSH --host ALIAS --known-hosts KH I artifacts upload WORK/source
+SKYGO_SSH ... I run -f WORK/task.json --wait --request-id s11-native-PIN
+SKYGO_SSH ... I artifacts download --ref WORK/result.json WORK/result
+cmp WORK/expected.txt WORK/result/out/result.txt
+SKYGO_SSH ... I run -f WORK/long.json --request-id s11-native-cancel-PIN
+SKYGO_SSH ... I jobs logs --follow ID      # interrupted: job stays RUNNING
+SKYGO_SSH ... I jobs cancel ID --yes       # job becomes CANCELED
+# STOP the exact agent process (missing contract), then:
+SKYGO_SSH ... --restart-stopped I jobs get JOB --json   # same result
+SKYGO_SSH ... (installation b flags) targets list       # refused: mismatch
+SKYGO_SSH ... targets list                              # refused: legacy into installation
+# Both installation trees unchanged; no token in the agent directory.
+# On any failure, signal nothing (the stop is the missing contract) and
+# keep NS, the agent directory and WORK for inspection.
+```
+
+Tasks are files written locally (`task.json`, `long.json`); no task
+argument is interpolated into a remote command line.

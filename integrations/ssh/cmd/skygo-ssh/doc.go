@@ -44,6 +44,14 @@
 //		The agent's loopback port on the host. The default is 47080.
 //	--restart-stopped
 //		Start a new agent if the recorded agent process has exited.
+//	--remote-data-dir DIR, --remote-auth-file FILE, --remote-artifact-dir DIR
+//		Serve an installation the operator initialized on the host, with
+//		scoped authentication and artifacts, instead of the agent's own
+//		state and legacy token. Clean absolute remote paths; all three go
+//		with --scoped-token-file.
+//	--scoped-token-file FILE
+//		A local private file holding a token the installation's auth file
+//		issued, used instead of the agent's legacy token.
 //
 // See README.md for enrollment, the remote layout and current limits.
 package main

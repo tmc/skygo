@@ -1,0 +1,44 @@
+# skygo-ssh's client path against a real agent serving an
+# operator-initialized installation; see TestAgentInstallationScript.
+
+# Commands working on local files, and flags that would replace the
+# agent's endpoint or credential, are refused before reaching the agent.
+! skygo-ssh admin state artifacts init
+stderr 'works on local files; run it on the remote host'
+! skygo-ssh admin --token-file $WORK/source/seed.txt targets list
+stderr 'token-file is set by skygo-ssh'
+jobs 0
+
+# The admin uploads a small workdir and runs a workspace job whose setup
+# makes a file the command reads with the uploaded seed.
+skygo-ssh admin artifacts upload $WORK/source
+cp stdout input.json
+stderr '^upload-id: '
+task input.json task.json
+skygo-ssh admin run -f $WORK/task.json --request-id ssh-script --wait
+stdout '\tdgx\tsucceeded'
+cp stdout run.txt
+jobs 1
+
+# Its result downloads with exact bytes.
+job-result run.txt result.json
+skygo-ssh admin artifacts download --ref $WORK/result.json $WORK/result
+cmp result/out/result.txt expected.txt
+
+# A reader can neither upload nor run, and creates no job.
+! skygo-ssh carol artifacts upload $WORK/source
+stderr '(?i)permission.denied'
+! skygo-ssh carol run -f $WORK/task.json --request-id ssh-reader
+stderr '(?i)permission.denied'
+jobs 1
+
+# Replaying the request returns the same job and runs nothing again.
+skygo-ssh admin run -f $WORK/task.json --request-id ssh-script --wait
+cmp stdout run.txt
+jobs 1
+
+-- source/seed.txt --
+seed
+-- expected.txt --
+seed
+prepared
