@@ -43,7 +43,7 @@ func TestReadDurableRequiresEOF(t *testing.T) {
 // before identity capture. Its actual Wait and output closure determine success.
 func TestDurableAlreadyExitedChild(t *testing.T) {
 	f := newDurableFixture(t, "0")
-	f.task.Argv = []string{"/bin/true"}
+	f.task.Argv = []string{"/bin/sh", "-c", "exit 0"}
 	f.writeIntent()
 	log, err := os.OpenFile(filepath.Join(f.logs, f.id+".log"), os.O_WRONLY, 0)
 	if err != nil {
