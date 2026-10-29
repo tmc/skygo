@@ -305,7 +305,13 @@ func (s *Store) BindOutputStorage(target, binding string, storage backend.Output
 
 // Compact writes a validated compact database into a new output file. The
 // original installation must be stopped and is never replaced or removed.
-func Compact(dir, output string) (err error) {
+// An error may be returned after publication. An ErrCloseUncertain error
+// retains an original owner; keep it and do not retry or clean up beneath it.
+func Compact(dir, output string) error {
+	return compactWithOps(dir, output, snapshotOps{database: (*bolt.DB).Close, file: (*os.File).Close, link: os.Link})
+}
+
+func compactWithOps(dir, output string, closes snapshotOps) (result error) {
 	if dir == "" || output == "" {
 		return errors.New("compact requires directory and output")
 	}
@@ -313,82 +319,78 @@ func Compact(dir, output string) (err error) {
 	if filepath.Clean(source) == filepath.Clean(output) {
 		return errors.New("compact output is the source")
 	}
-	db, e := openSnapshot(source)
-	if e != nil {
-		return e
+	owner, err := openOwnedSnapshot(source, false)
+	if err != nil {
+		return err
 	}
-	defer db.Close()
-	if e = db.View(validateSnapshot); e != nil {
-		return e
+	var name string
+	sourceClosed := false
+	defer func() {
+		if !sourceClosed {
+			result = errors.Join(result, owner.close(closes))
+		}
+		removeSnapshot(name, &result)
+	}()
+	if err := owner.db.View(validateSnapshot); err != nil {
+		return err
 	}
-	info, e := os.Stat(source)
-	if e != nil {
-		return e
+	info, err := os.Stat(source)
+	if err != nil {
+		return err
 	}
-	free, e := filesystemFree(filepath.Dir(output))
-	if e != nil {
-		return e
+	free, err := filesystemFree(filepath.Dir(output))
+	if err != nil {
+		return err
 	}
 	if uint64(info.Size()) > ^uint64(0)-(64<<20) || free < uint64(info.Size())+(64<<20) {
 		return errors.New("insufficient compaction space")
 	}
-	f, e := os.CreateTemp(filepath.Dir(output), ".skygo-compact-*")
-	if e != nil {
-		return e
+	f, err := os.CreateTemp(filepath.Dir(output), ".skygo-compact-*")
+	if err != nil {
+		return err
 	}
-	name := f.Name()
-	if e = f.Close(); e != nil {
-		os.Remove(name)
-		return e
+	name = f.Name()
+	if err := closes.closeFile(f); err != nil {
+		return err
 	}
-	defer os.Remove(name)
-	dest, e := bolt.Open(name, 0600, nil)
-	if e != nil {
-		return e
+	dest, err := openOwnedSnapshot(name, true)
+	if err != nil {
+		return err
 	}
-	e = bolt.Compact(dest, db, maxChangeBytes)
-	closeErr := dest.Close()
-	if e != nil {
-		return e
+	compactErr := bolt.Compact(dest.db, owner.db, maxChangeBytes)
+	destCloseErr := dest.close(closes)
+	sourceClosed = true // The first Close result must never be retried.
+	sourceCloseErr := owner.close(closes)
+	if err := errors.Join(compactErr, destCloseErr, sourceCloseErr); err != nil {
+		return err
 	}
-	if closeErr != nil {
-		return closeErr
+	validated, err := openOwnedSnapshot(name, false)
+	if err != nil {
+		return err
 	}
-	compact, e := openSnapshot(name)
-	if e != nil {
-		return e
+	validationErr := validated.db.View(validateSnapshot)
+	if err := errors.Join(validationErr, validated.close(closes)); err != nil {
+		return err
 	}
-	e = compact.View(validateSnapshot)
-	closeErr = compact.Close()
-	if e != nil {
-		return e
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	i, e := os.Stat(name)
-	if e != nil {
-		return e
+	i, err := os.Stat(name)
+	if err != nil {
+		return err
 	}
 	if i.Size() > info.Size() {
 		return errors.New("compact result exceeds source length")
 	}
-	handle, e := os.OpenFile(name, os.O_RDWR, 0)
-	if e != nil {
-		return e
+	handle, err := os.OpenFile(name, os.O_RDWR, 0)
+	if err != nil {
+		return err
 	}
-	e = handle.Sync()
-	closeErr = handle.Close()
-	if e != nil {
-		return e
+	syncErr := handle.Sync()
+	if err := errors.Join(syncErr, closes.closeFile(handle)); err != nil {
+		return err
 	}
-	if closeErr != nil {
-		return closeErr
+	if err := closes.link(name, output); err != nil {
+		return err
 	}
-	if e = os.Link(name, output); e != nil {
-		return e
-	}
-	return syncDirectory(filepath.Dir(output))
+	return syncSnapshotDirectory(filepath.Dir(output), closes)
 }
 func freshenRestored(path string, closes snapshotOps) (result error) {
 	lineage, err := newID()
@@ -435,15 +437,6 @@ func freshenRestoredTx(tx *bolt.Tx, lineage string, now time.Time) error {
 		return e
 	}
 	return validateRetention(tx)
-}
-
-func syncDirectory(dir string) error {
-	f, e := os.Open(dir)
-	if e != nil {
-		return e
-	}
-	defer f.Close()
-	return f.Sync()
 }
 
 // Directory returns the private state directory for trusted local sampling.
