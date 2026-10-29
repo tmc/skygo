@@ -1,5 +1,10 @@
 {
   "argv": ["/bin/bash", "-c", "nvidia-smi"],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "2",
+    "SKYPILOT_NUM_NODES": "1"
+  },
   "image": "nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04",
   "cpu_millis": 2000,
   "memory_bytes": 1610612736,

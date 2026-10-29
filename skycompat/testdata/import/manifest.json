@@ -54,7 +54,7 @@
    },
    "expect": "lower",
    "want": "local/task.json",
-   "want_sha256": "d34650f015352c6e05e4e6d680e42039c1f24fb3330df465ec02d84056fe954f",
+   "want_sha256": "8071cb22b13206a1a6e81b19c866610b13377007c6a48082bee3fc1c1a9648ca",
    "notes": "local/task.notes",
    "notes_sha256": "dfdad8483b9f03fcbc158751645816f35d162fe5491aabb846d2c42f368f1b72"
   },
@@ -73,7 +73,7 @@
    },
    "expect": "lower",
    "want": "kubernetes/task.json",
-   "want_sha256": "dd27eeeb1bd65f3c35ec961e8b89a5dde35ab14bb2fc2c63e3966a91a6c5073f",
+   "want_sha256": "dadfbb939e5d9dc3959c5460a29093a2a2442f33c59a7a5abe82a9e75f89bb88",
    "notes": "kubernetes/task.notes",
    "notes_sha256": "099571de6167eeed0a2511a0702b5bc02fe8e31ad5fb28673221c3cc32db116b"
   },
@@ -87,7 +87,7 @@
    },
    "expect": "lower",
    "want": "accept/resources.json",
-   "want_sha256": "4d9101e18738474dd2f59ee187ca25f8fd9eb9bd08a9c0b151097a14cd366b0b",
+   "want_sha256": "5f7212132b606e6109130669d7bba660b81d67c75b51c5272ed385dd61796d4b",
    "notes": "accept/resources.notes",
    "notes_sha256": "57553cf86bb2bbdb8f00b62f01c0898edc4f450f24781baaacb6023ebcd97656"
   },
@@ -103,7 +103,7 @@
    },
    "expect": "lower",
    "want": "accept/defaults.json",
-   "want_sha256": "aa6ec6725dc7de7f875435efc2f74c276225a45b9923fe4c31d337c738d310b2",
+   "want_sha256": "d7ef729f4c366839fc6cb67fe163e119a8841fcb78037080954cc8b2b859fcc4",
    "notes": "accept/defaults.notes",
    "notes_sha256": "223c3a9ce0051eea73a39683f48c52d22681ed2ce34839f008f51d29d46a543b"
   },
@@ -115,7 +115,7 @@
    },
    "expect": "lower",
    "want": "accept/multiline.json",
-   "want_sha256": "86f006c08ed7b5477c9095b968d6e49da551a5ecab39fb359f59246a13dc3113",
+   "want_sha256": "b909bea0d0d4406920708ce579a3e14f09382f627956e5db1cb8fd83250dd168",
    "notes": "accept/multiline.notes",
    "notes_sha256": "7495fb7c7e3f23250885bfc390b8e287c35d460d4f1be1f0a16f3c0a26e323b0"
   },

@@ -1,0 +1,22 @@
+server start
+skygo --json run default.yaml --request-id runtime-default --wait
+job-id DEFAULT
+skygo jobs logs $DEFAULT
+stdout '^0/1/0\n$'
+skygo --json run override.yaml --request-id runtime-override --wait
+job-id OVERRIDE
+skygo jobs logs $OVERRIDE
+stdout '^0/7/0\n$'
+server stop
+! stderr .
+
+-- default.yaml --
+run: |
+  printf '%s/%s/%s\n' "$SKYPILOT_NODE_RANK" "$SKYPILOT_NUM_NODES" "$SKYPILOT_NUM_GPUS_PER_NODE"
+-- override.yaml --
+envs:
+  SKYPILOT_NODE_RANK: '99'
+  SKYPILOT_NUM_NODES: '7'
+  SKYPILOT_NUM_GPUS_PER_NODE: '99'
+run: |
+  printf '%s/%s/%s\n' "$SKYPILOT_NODE_RANK" "$SKYPILOT_NUM_NODES" "$SKYPILOT_NUM_GPUS_PER_NODE"

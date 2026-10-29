@@ -23,6 +23,12 @@ import (
 
 var ref = &skyv1.ArtifactRef{Id: "00112233445566778899aabbccddeeff", Sha256: "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f", Size: 4096}
 
+// cpuEnv returns a new copy of the environment of a one-node task that
+// requests no GPUs and sets no envs.
+func cpuEnv() map[string]string {
+	return map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "0"}
+}
+
 func lowerText(t *testing.T, text string, opts Options) (*skyv1.Task, []Note, error) {
 	t.Helper()
 	d, err := taskyaml.Parse(strings.NewReader(text), taskyaml.Options{})
@@ -41,15 +47,15 @@ func TestLower(t *testing.T) {
 		want    *skyv1.Task
 		wantErr string
 	}{
-		{"run", "run: echo hi\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo hi"}}, ""},
+		{"run", "run: echo hi\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo hi"}, Env: cpuEnv()}, ""},
 		{"run no shell", "run: echo hi\n", Options{}, nil, "task yaml: unsupported run at 1:6: requires a shell"},
 		{"run absent", "envs: {A: b}\n", sh, nil, "task yaml: unsupported run at 0:0: requires run text"},
 		{"run null", "run: null\n", sh, nil, "task yaml: unsupported run at 1:6: requires run text"},
 		{"run nul", "run: \"a\\0b\"\n", sh, nil, "task yaml: invalid run at 1:6"},
-		{"empty run", "run: ''\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", ""}}, ""},
-		{"options", "run: x\n", Options{Shell: "/usr/bin/bash", Target: "kube", TimeoutSeconds: 604800}, &skyv1.Task{Argv: []string{"/usr/bin/bash", "-c", "x"}, Target: "kube", TimeoutSeconds: 604800}, ""},
-		{"setup", "workdir: .\nsetup: make\nrun: x\n", Options{Shell: "/bin/sh", Workdir: ref, Outputs: []string{"out", "logs/a"}}, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Setup: []string{"/bin/sh", "-c", "make"}, Workdir: ref, Outputs: []string{"out", "logs/a"}}, ""},
-		{"setup null", "setup: null\nrun: x\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"empty run", "run: ''\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", ""}, Env: cpuEnv()}, ""},
+		{"options", "run: x\n", Options{Shell: "/usr/bin/bash", Target: "kube", TimeoutSeconds: 604800}, &skyv1.Task{Argv: []string{"/usr/bin/bash", "-c", "x"}, Env: cpuEnv(), Target: "kube", TimeoutSeconds: 604800}, ""},
+		{"setup", "workdir: .\nsetup: make\nrun: x\n", Options{Shell: "/bin/sh", Workdir: ref, Outputs: []string{"out", "logs/a"}}, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv(), Setup: []string{"/bin/sh", "-c", "make"}, Workdir: ref, Outputs: []string{"out", "logs/a"}}, ""},
+		{"setup null", "setup: null\nrun: x\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"setup no workdir", "setup: make\nrun: x\n", sh, nil, "task yaml: unsupported setup at 1:8: requires workdir"},
 		{"setup no shell", "workdir: .\nsetup: make\nrun: x\n", Options{Workdir: ref}, nil, "task yaml: unsupported setup at 2:8: requires a shell"},
 		{"setup limit", "workdir: .\nsetup: \"" + strings.Repeat(`\x01`, 3000) + "\"\nrun: x\n", Options{Shell: "/bin/sh", Workdir: ref}, nil, "task yaml: limit setup at 2:8"},
@@ -57,34 +63,34 @@ func TestLower(t *testing.T) {
 		{"workdir dollar", "workdir: ${HOME}\nrun: x\n", Options{Shell: "/bin/sh", Workdir: ref}, nil, "task yaml: unsupported workdir at 1:10: environment substitution"},
 		{"ref without workdir", "run: x\n", Options{Shell: "/bin/sh", Workdir: ref}, nil, "tasklower: workdir reference supplied for a task without workdir"},
 		{"outputs without workdir", "run: x\n", Options{Shell: "/bin/sh", Outputs: []string{"out"}}, nil, "tasklower: outputs require a task workdir"},
-		{"envs", "run: x\nenvs: {B: '2', A: 'x=y'}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"A": "x=y", "B": "2"}}, ""},
+		{"envs", "run: x\nenvs: {B: '2', A: 'x=y'}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"A": "x=y", "B": "2", "SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "0"}}, ""},
 		{"envs nul", "run: x\nenvs: {A: \"\\0\"}\n", sh, nil, "task yaml: invalid envs at 2:7"},
 		{"name", "name: n\nrun: x\n", sh, nil, "task yaml: unsupported name at 1:7: requires explicit drop"},
-		{"name dropped", "name: n\nrun: x\n", Options{Shell: "/bin/sh", AllowDrop: []string{"name"}}, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
-		{"name null", "name: null\nrun: x\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"name dropped", "name: n\nrun: x\n", Options{Shell: "/bin/sh", AllowDrop: []string{"name"}}, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
+		{"name null", "name: null\nrun: x\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"user yaml", "_user_specified_yaml: y\nrun: x\n", Options{Shell: "/bin/sh", AllowDrop: []string{"name"}}, nil, "task yaml: unsupported _user_specified_yaml at 1:23: requires explicit drop"},
-		{"cpus", "run: x\nresources: {cpus: 0.25}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, CpuMillis: 250}, ""},
-		{"cpus minimum", "run: x\nresources: {cpus: 4+}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, CpuMillis: 4000}, ""},
-		{"cpus millicpu", "run: x\nresources: {cpus: 0.001}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, CpuMillis: 1}, ""},
+		{"cpus", "run: x\nresources: {cpus: 0.25}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv(), CpuMillis: 250}, ""},
+		{"cpus minimum", "run: x\nresources: {cpus: 4+}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv(), CpuMillis: 4000}, ""},
+		{"cpus millicpu", "run: x\nresources: {cpus: 0.001}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv(), CpuMillis: 1}, ""},
 		{"cpus fraction", "run: x\nresources: {cpus: 0.0005}\n", sh, nil, "task yaml: invalid resources.cpus at 2:19: requires whole millicpus"},
-		{"cpus largest", "run: x\nresources: {cpus: 1000000000000000}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, CpuMillis: 1000000000000000000}, ""},
-		{"accelerators map", "run: x\nresources: {accelerators: {H100: 8}}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Accelerator: "H100", AcceleratorCount: 8}, ""},
-		{"accelerators string", "run: x\nresources: {accelerators: 'L4:2'}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Accelerator: "L4", AcceleratorCount: 2}, ""},
-		{"accelerators one", "run: x\nresources: {accelerators: T4}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Accelerator: "T4", AcceleratorCount: 1}, ""},
-		{"accelerators int32", "run: x\nresources: {accelerators: {A: 2147483647}}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Accelerator: "A", AcceleratorCount: math.MaxInt32}, ""},
+		{"cpus largest", "run: x\nresources: {cpus: 1000000000000000}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv(), CpuMillis: 1000000000000000000}, ""},
+		{"accelerators map", "run: x\nresources: {accelerators: {H100: 8}}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "8"}, Accelerator: "H100", AcceleratorCount: 8}, ""},
+		{"accelerators string", "run: x\nresources: {accelerators: 'L4:2'}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "2"}, Accelerator: "L4", AcceleratorCount: 2}, ""},
+		{"accelerators one", "run: x\nresources: {accelerators: T4}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "1"}, Accelerator: "T4", AcceleratorCount: 1}, ""},
+		{"accelerators int32", "run: x\nresources: {accelerators: {A: 2147483647}}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "2147483647"}, Accelerator: "A", AcceleratorCount: math.MaxInt32}, ""},
 		{"accelerators overflow", "run: x\nresources: {accelerators: {A: 2147483648}}\n", sh, nil, "task yaml: unsupported resources.accelerators at 2:27: requires a whole count"},
 		{"accelerators fraction", "run: x\nresources: {accelerators: 'A:0.5'}\n", sh, nil, "task yaml: unsupported resources.accelerators at 2:27: requires a whole count"},
-		{"image", "run: x\nresources: {image_id: 'docker:ghcr.io/a/b@sha256:00'}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Image: "ghcr.io/a/b@sha256:00"}, ""},
+		{"image", "run: x\nresources: {image_id: 'docker:ghcr.io/a/b@sha256:00'}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv(), Image: "ghcr.io/a/b@sha256:00"}, ""},
 		{"image bare", "run: x\nresources: {image_id: ubuntu}\n", sh, nil, "task yaml: unsupported resources.image_id at 2:23: requires docker:IMAGE"},
 		{"image empty", "run: x\nresources: {image_id: 'docker:'}\n", sh, nil, "task yaml: unsupported resources.image_id at 2:23: requires docker:IMAGE"},
 		{"image other", "run: x\nresources: {image_id: 'gcr:docker:x'}\n", sh, nil, "task yaml: unsupported resources.image_id at 2:23: requires docker:IMAGE"},
-		{"use_spot false", "run: x\nresources: {use_spot: false}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"use_spot false", "run: x\nresources: {use_spot: false}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"use_spot true", "run: x\nresources: {use_spot: true}\n", sh, nil, "task yaml: unsupported resources.use_spot at 2:23"},
-		{"disk default", "run: x\nresources: {disk_size: 256}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"disk default", "run: x\nresources: {disk_size: 256}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"disk nondefault", "run: x\nresources: {disk_size: 512}\n", sh, nil, "task yaml: unsupported resources.disk_size at 2:24"},
 		{"disk default unit", "run: x\nresources: {disk_size: 256GB}\n", sh, nil, "task yaml: unsupported resources.disk_size at 2:24"},
 		{"infra", "run: x\nresources: {infra: k8s}\n", sh, nil, "task yaml: unsupported resources.infra at 2:20"},
-		{"infra null", "run: x\nresources: {infra: null, autostop: null, job_recovery: null}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"infra null", "run: x\nresources: {infra: null, autostop: null, job_recovery: null}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"autostop", "run: x\nresources: {autostop: 10m}\n", sh, nil, "task yaml: unsupported resources.autostop at 2:23"},
 		{"autostop false", "run: x\nresources: {autostop: false}\n", sh, nil, "task yaml: unsupported resources.autostop at 2:23"},
 		{"autostop map", "run: x\nresources: {autostop: {idle_minutes: 30, wait_for: jobs_and_ssh}}\n", sh, nil, "task yaml: unsupported resources.autostop at 2:23"},
@@ -93,17 +99,17 @@ func TestLower(t *testing.T) {
 		{"accelerators set", "run: x\nresources: {accelerators: {L4:1, A10G:1}}\n", sh, nil, "task yaml: unsupported resources.accelerators at 2:27"},
 		{"accelerators map choices", "run: x\nresources: {accelerators: {L4: 1, A10G: 1}}\n", sh, nil, "task yaml: unsupported resources.accelerators at 2:27"},
 		{"accelerators list", "run: x\nresources: {accelerators: [L4, A10G]}\n", sh, nil, "task yaml: unsupported resources.accelerators at 2:27"},
-		{"accelerators one-element set", "run: x\nresources: {accelerators: {L4:2}}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Accelerator: "L4", AcceleratorCount: 2}, ""},
-		{"accelerators one-element list", "run: x\nresources: {accelerators: ['L4:2']}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Accelerator: "L4", AcceleratorCount: 2}, ""},
+		{"accelerators one-element set", "run: x\nresources: {accelerators: {L4:2}}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "2"}, Accelerator: "L4", AcceleratorCount: 2}, ""},
+		{"accelerators one-element list", "run: x\nresources: {accelerators: ['L4:2']}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: map[string]string{"SKYPILOT_NUM_NODES": "1", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_GPUS_PER_NODE": "2"}, Accelerator: "L4", AcceleratorCount: 2}, ""},
 		{"cloud", "run: x\nresources: {cloud: kubernetes}\n", sh, nil, "task yaml: unsupported resources.cloud at 2:20: select a skygo target"},
 		{"region", "run: x\nresources: {region: r}\n", sh, nil, "task yaml: unsupported resources.region at 2:21: select a skygo target"},
 		{"zone", "run: x\nresources: {zone: z}\n", sh, nil, "task yaml: unsupported resources.zone at 2:19: select a skygo target"},
 		{"instance type", "run: x\nresources: {instance_type: i}\n", sh, nil, "task yaml: unsupported resources.instance_type at 2:28: select a skygo target"},
-		{"one node", "run: x\nnum_nodes: 1\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"one node", "run: x\nnum_nodes: 1\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"two nodes", "run: x\nnum_nodes: 2\n", sh, nil, "task yaml: unsupported num_nodes at 2:12"},
 		{"file mounts", "run: x\nfile_mounts: {/a: b}\n", sh, nil, "task yaml: unsupported file_mounts at 2:14"},
 		{"volumes", "run: x\nvolumes: {/a: b}\n", sh, nil, "task yaml: unsupported volumes at 2:10"},
-		{"empty mounts", "run: x\nfile_mounts: {}\nvolumes: {}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}}, ""},
+		{"empty mounts", "run: x\nfile_mounts: {}\nvolumes: {}\n", sh, &skyv1.Task{Argv: []string{"/bin/sh", "-c", "x"}, Env: cpuEnv()}, ""},
 		{"first problem wins", "num_nodes: 2\nresources: {cloud: aws}\nrun: x\n", sh, nil, "task yaml: unsupported num_nodes at 1:12"},
 		{"relative shell", "run: x\n", Options{Shell: "sh"}, nil, "tasklower: shell must be a clean absolute path"},
 		{"unclean shell", "run: x\n", Options{Shell: "/bin/../bin/sh"}, nil, "tasklower: shell must be a clean absolute path"},
@@ -471,7 +477,7 @@ func TestFixtures(t *testing.T) {
 
 // manifestSHA256 pins the manifest itself, so a fixture and its manifest
 // row cannot change together unnoticed.
-const manifestSHA256 = "30e9ffdd919a7a0683d14493bd3ff8bc9f4b43c33a7607d703a772602487b456"
+const manifestSHA256 = "09121d006127d67f9486db518dc65592db472041283890ca89ba7106d8d1b43c"
 
 // errorText matches every error Lower may return. Paths and hints come
 // from fixed lists, so a source or option value cannot appear.

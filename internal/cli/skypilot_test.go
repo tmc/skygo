@@ -91,7 +91,7 @@ run: |
 func skypilotWant(shell, target string) *skyv1.Task {
 	return &skyv1.Task{
 		Argv:        []string{shell, "-c", "echo \"$GREETING\"\n"},
-		Env:         map[string]string{"GREETING": "hi"},
+		Env:         map[string]string{"GREETING": "hi", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_NODES": "1", "SKYPILOT_NUM_GPUS_PER_NODE": "0"},
 		CpuMillis:   500,
 		MemoryBytes: 512 << 20,
 		Target:      target,
@@ -330,6 +330,7 @@ func TestTaskInfraBinding(t *testing.T) {
 	bound := ClientOptions{Infra: "ssh/dgx", Target: "dgx"}
 	want09 := &skyv1.Task{
 		Argv:   []string{"/bin/sh", "-c", "uname -m\nnvidia-smi --query-gpu=name,driver_version --format=csv\necho \"rank $SKYPILOT_NODE_RANK of $SKYPILOT_NUM_NODES, $SKYPILOT_NUM_GPUS_PER_NODE GPU\"\n"},
+		Env:    map[string]string{"SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_NODES": "1", "SKYPILOT_NUM_GPUS_PER_NODE": "1"},
 		Target: "dgx", Accelerator: "GB10", AcceleratorCount: 1,
 	}
 	for _, tc := range []struct {
@@ -344,8 +345,8 @@ func TestTaskInfraBinding(t *testing.T) {
 		{name: "unchanged primer09", binding: bound, file: "testdata/skypilot/primer09.yaml", want: want09},
 		{name: "matching explicit target", binding: bound, file: "testdata/skypilot/primer09.yaml", flags: []string{"--target", "dgx"}, want: want09},
 		{name: "native SSH task", binding: bound, stdin: "argv: [printf, native]\nenv: {MODE: native}\ntarget: dgx\n", want: &skyv1.Task{Argv: []string{"printf", "native"}, Env: map[string]string{"MODE": "native"}, Target: "dgx"}},
-		{name: "no infra does not select bound target", binding: bound, stdin: "run: echo hello\n", want: &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo hello"}}},
-		{name: "explicit environment preserved", binding: bound, stdin: "envs: {MODE: bound}\nresources:\n  infra: ssh/dgx\n  accelerators: GB10:1\nrun: echo \"$MODE\"\n", want: &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo \"$MODE\""}, Env: map[string]string{"MODE": "bound"}, Target: "dgx", Accelerator: "GB10", AcceleratorCount: 1}},
+		{name: "no infra does not select bound target", binding: bound, stdin: "run: echo hello\n", want: &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo hello"}, Env: map[string]string{"SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_NODES": "1", "SKYPILOT_NUM_GPUS_PER_NODE": "0"}}},
+		{name: "explicit environment preserved", binding: bound, stdin: "envs: {MODE: bound}\nresources:\n  infra: ssh/dgx\n  accelerators: GB10:1\nrun: echo \"$MODE\"\n", want: &skyv1.Task{Argv: []string{"/bin/sh", "-c", "echo \"$MODE\""}, Env: map[string]string{"MODE": "bound", "SKYPILOT_NODE_RANK": "0", "SKYPILOT_NUM_NODES": "1", "SKYPILOT_NUM_GPUS_PER_NODE": "1"}, Target: "dgx", Accelerator: "GB10", AcceleratorCount: 1}},
 		{name: "missing binding", file: "testdata/skypilot/primer09.yaml"},
 		{name: "target flag grants no binding", file: "testdata/skypilot/primer09.yaml", flags: []string{"--target", "dgx"}},
 		{name: "wrong pool", binding: ClientOptions{Infra: "ssh/other", Target: "dgx"}, file: "testdata/skypilot/primer09.yaml"},

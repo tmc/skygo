@@ -123,6 +123,12 @@ var (
 // source field, in source order. The returned task is new; Lower never
 // consults the process environment or the filesystem.
 //
+// The task environment, used by both setup and run, is the source envs plus
+// SKYPILOT_NUM_NODES "1" unless envs sets it, SKYPILOT_NODE_RANK "0" and
+// SKYPILOT_NUM_GPUS_PER_NODE, the requested accelerator count or 0 for no
+// accelerator or a TPU, Inferentia or Trainium name. These describe the
+// request, not allocated devices.
+//
 // Lower refuses a field it cannot represent with a *taskyaml.Error, possibly
 // wrapped with a fixed hint, carrying the field path and source position.
 // It refuses invalid Options with another error. Neither contains source
@@ -168,7 +174,26 @@ func Lower(d *taskyaml.Document, opts Options) (*skyv1.Task, []Note, error) {
 	if d.Task.Workdir == nil && len(opts.Outputs) != 0 {
 		return nil, nil, errors.New("tasklower: outputs require a task workdir")
 	}
+	l.task.Env = runtimeEnv(l.task.Env, l.task.Accelerator, l.task.AcceleratorCount)
 	return l.task, l.notes, nil
+}
+
+// runtimeEnv returns a new map holding the user environment and the
+// single-node variables upstream gives a run (sky/backends/task_codegen.py):
+// SKYPILOT_NUM_NODES is set before the user map, so a user value survives;
+// SKYPILOT_NODE_RANK and SKYPILOT_NUM_GPUS_PER_NODE are set after it.
+// As in sky/utils/accelerator_registry.py, an accelerator whose name contains
+// tpu, inferentia or trainium in any case requests no GPUs.
+func runtimeEnv(user map[string]string, accel string, count int32) map[string]string {
+	env := map[string]string{"SKYPILOT_NUM_NODES": "1"}
+	maps.Copy(env, user)
+	name := strings.ToLower(accel)
+	if accel == "" || strings.Contains(name, "tpu") || strings.Contains(name, "inferentia") || strings.Contains(name, "trainium") {
+		count = 0
+	}
+	env["SKYPILOT_NODE_RANK"] = "0"
+	env["SKYPILOT_NUM_GPUS_PER_NODE"] = strconv.Itoa(int(count))
+	return env
 }
 
 type lowering struct {

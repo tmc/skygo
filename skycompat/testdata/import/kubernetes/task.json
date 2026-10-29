@@ -1,7 +1,10 @@
 {
   "argv": ["/bin/sh", "-c", "printf '%s from %s\\n' \"$GREETING\" \"$(cat out/stage.txt)\" > out/result.txt\necho \"job: $GREETING\"\n"],
   "env": {
-    "GREETING": "hello"
+    "GREETING": "hello",
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
   },
   "image": "busybox:1.36.1",
   "cpu_millis": 100,

@@ -33,6 +33,21 @@ func ExampleLower() {
 	// resources.memory lowered memory_bytes
 }
 
+func ExampleLower_runtimeEnvironment() {
+	d, err := taskyaml.Parse(strings.NewReader("run: echo $SKYPILOT_NODE_RANK\n"), taskyaml.Options{})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	task, _, err := tasklower.Lower(d, tasklower.Options{Shell: "/bin/sh"})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Println(task.Env["SKYPILOT_NODE_RANK"], task.Env["SKYPILOT_NUM_NODES"], task.Env["SKYPILOT_NUM_GPUS_PER_NODE"])
+	// Output: 0 1 0
+}
+
 func ExampleLower_refused() {
 	d, err := taskyaml.Parse(strings.NewReader("run: echo hello\nnum_nodes: 2\n"), taskyaml.Options{})
 	if err != nil {
