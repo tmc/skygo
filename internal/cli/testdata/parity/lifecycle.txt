@@ -11,7 +11,9 @@ stderr '^request-id: successful\njob: '
 ! stdout 'request-id:'
 job-id SUCCESS
 skygo jobs get $SUCCESS
-stdout '^'$SUCCESS'\tlocal\tsucceeded\n$'
+stdout '^ID: "'$SUCCESS'"\n'
+stdout '^Target: "local"$'
+stdout '^State: succeeded$'
 ! stdout '\x1b'
 ! stderr .
 skygo --json run -f success.json --request-id successful --wait

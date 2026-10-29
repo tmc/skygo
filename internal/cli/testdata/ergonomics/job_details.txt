@@ -1,0 +1,8 @@
+skygo jobs get j1
+stdout 'ID: "j1"'
+stdout 'State: failed'
+stdout 'Exit code: 0'
+stdout 'Attempt 1:'
+skygo --json jobs get j1
+stdout '"exit_code": *0'
+! stdout 'Exit code:'

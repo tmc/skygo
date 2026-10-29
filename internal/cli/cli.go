@@ -357,7 +357,7 @@ func (o *options) jobs() *cobra.Command {
 		if err != nil {
 			return retentionDiagnostic(err)
 		}
-		return o.job(cmd.OutOrStdout(), r.Msg.Job)
+		return o.jobDetails(cmd.OutOrStdout(), r.Msg.Job)
 	}}
 	var yes bool
 	cancelCmd := &cobra.Command{Use: "cancel ID --yes", Short: "Request job cancellation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
