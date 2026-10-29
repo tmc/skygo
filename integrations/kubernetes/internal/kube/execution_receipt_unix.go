@@ -101,7 +101,13 @@ func sameDir(f *os.File, want fileID) error {
 
 // openAt opens the entry name of dir.
 func openAt(dir *os.File, name string, flag int) (*os.File, error) {
-	fd, err := unix.Openat(int(dir.Fd()), name, flag|receiptFileFlags, 0o600)
+	dirfd := int(dir.Fd())
+	fd, err := unix.Openat(dirfd, name, flag|receiptFileFlags, 0o600)
+	if err == unix.ENOENT && flag&os.O_CREATE != 0 && flag&os.O_EXCL == 0 {
+		// A concurrent creator may have won. Open its entry without creating
+		// anything or weakening the original flags.
+		fd, err = unix.Openat(dirfd, name, flag&^os.O_CREATE|receiptFileFlags, 0o600)
+	}
 	if err != nil {
 		return nil, &os.PathError{Op: "open", Path: filepath.Join(dir.Name(), name), Err: err}
 	}

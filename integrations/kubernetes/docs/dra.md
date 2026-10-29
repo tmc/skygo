@@ -1,84 +1,207 @@
 # Dynamic resource allocation
 
-DRA support is planned, not implemented. Its first prerequisite, durable
-execution receipts for ordinary Jobs and retry Pods, is implemented behind an
-explicit constructor, which the server selects only with `--execution-state`;
-see [Durable execution receipts](#durable-execution-receipts).
-No target accepts DRA tasks. The Kubernetes target currently maps
-accelerator names to extended resources, such as `nvidia.com/gpu`. This design
-adds a second, explicit allocation mode inside the Kubernetes integration module.
-It does not add Kubernetes dependencies to the core or change local and SSH
-execution.
+An experimental first DRA mode is implemented. It is disabled unless the
+operator configures it, and it is not native qualification: its tests use a
+loopback API whose controller, scheduler and kubelet behavior is MODELED and
+have not been run here. Automatic retry, native Jobs, templates, failed or
+canceled cleanup and device-level recovery remain later work.
 
-## Device requests and target policy
+## Configuration
 
-Tasks continue to request a portable accelerator name and positive integer count.
-The operator maps each name to exactly one allocation mode:
+Tasks keep requesting a portable accelerator name and a positive count. The
+operator maps each name to exactly one mode: an extended resource
+(`resource_name`) or DRA:
 
-- An extended-resource name and the existing node-selector policy.
-- A DRA `DeviceClass`, bounded CEL selectors, and an exact device count supplied
-  by the task.
+```yaml
+resources:
+  max_accelerators: 8
+  accelerators:
+    h100:
+      dra:
+        device_class: gpu.example.com      # DNS subdomain
+        selectors:                         # 0..8 CEL expressions, 1..1024 bytes each
+        - 'device.attributes["gpu.example.com"].model == "H100"'
+```
 
-The two modes are mutually exclusive. A missing DRA API, class, driver, or
-permission never selects the extended-resource mode instead. A target can expose
-separate accelerator names when the operator deliberately offers both modes.
+`dra` conflicts with `resource_name`, `required_node_selector` and a target
+`data` block. A missing API, class or driver never falls back to an extended
+resource. The class, selectors (in order) and the fixed claim shape below are
+part of the target binding (`skygo-kubernetes-dra-target-v1`); targets without
+DRA keep their existing binding bytes. Tasks cannot supply classes, CEL,
+driver configuration, admin access or Kubernetes objects.
 
-DRA policy, canonical selectors, allocation mode, and count rules belong in the
-target binding. Changing them changes the binding. Targets without DRA keep
-their existing binding bytes and behavior. User tasks cannot supply Kubernetes
-objects, arbitrary CEL, driver configuration, or administrative device access.
+The server enables the mode only with all of:
 
-`Check` remains a local policy check. Construction of a DRA-enabled target adds
-bounded API discovery and class validation under the caller's context; the
-legacy constructor path remains unchanged. Planning reports compatibility, not
-a reservation or a promise that devices are currently free. Kubernetes and its
-DRA driver perform allocation and scheduling.
+    skygo-kubernetes server --targets targets.yaml \
+      --execution-state /srv/skygo/exec --dra-state /srv/skygo/dra \
+      [--dra-log-retention 24h]
 
-## Claims and ownership
+`--dra-state` requires `--execution-state` (and so `--targets`); a targets file
+with a DRA accelerator is refused without it. With it, the server installs one
+integration (`NewDRAIntegration`) that constructs every configured target once,
+as `FromTargetWithState` does, and owns DRA custody and maintenance. Only those
+targets advertise DRA accelerators. DRA tasks with retry, data, workdir, setup
+or outputs are refused by `Check`, before any effect. Workers and persistent
+environments are unavailable on this route.
 
-The first implementation uses namespaced `ResourceClaimTemplate` objects and
-independent generated claims for each Pod. The Pod references its template and
-the task container references the corresponding claim. This follows the
-[Kubernetes workload model](https://kubernetes.io/docs/tasks/configure-pod-container/assign-resources/allocate-devices-dra/).
+## Operating contract
 
-Templates are immutable execution objects. Their names derive from the target
-binding, accepted task, and attempt identity; their metadata records those
-values. A template is owned by its exact Job UID, or by the exact directly
-managed Pod UID for retry execution. A missing template must not permit the
-workload to run. Create the parent referencing the expected template, obtain
-its UID, then create the template with that owner reference. Validate this
-ordering against a real API server before enabling it.
+Skygo assumes, and does not attest:
 
-Kubernetes generates a separate claim for each Pod and ties that claim's
-lifetime to the Pod. See the upstream
-[claim lifecycle](https://kubernetes.io/docs/concepts/resource-management/dynamic-resource-allocation/dra-api/).
-A completed Job may retain its Pod for logs, so job completion alone is not a
-Skygo guarantee that a device has been released. DRA cleanup must provide a
-separate, observed release result.
+- The namespace is dedicated to this installation and its admission is
+  trusted. No other writer creates, replaces, mutates or consumes its claims or
+  Pods, binds Pods directly to nodes, or force-deletes them. `ExactCount` asks
+  for exclusive devices; it does not limit a claim to one Pod, and the
+  namespace UID is not an access control list.
+- One deployed server writes the two state roots and holds the namespace
+  credentials. The operator stops older executables and withholds the new
+  roots and namespace credentials from them. An older executable refuses the
+  new targets file (unknown field `dra`) and the `--dra-state` flag before it
+  writes anything, but it never reads the DRA state marker: nothing here
+  protects against an arbitrary old or hostile program with the same access.
+- The kubelet, container runtime and DRA driver are standard and trusted. In
+  v1.35.9 the kubelet stops containers, then unprepares DRA resources, and only
+  then publishes the terminal phase (`pkg/kubelet/kubelet.go:2224-2289`,
+  `status/status_manager.go:1281-1295`, `cm/dra/manager.go:648-688`).
 
-Native receipts must survive both a server restart and deletion of the native
-parent. Pin the parent UID through the existing opaque execution identity.
-Keep bounded template and generated-claim names, UIDs, and specification digests
-until cleanup completes; parent annotations alone cannot preserve this receipt
-after parent deletion. The durable receipt format below reserves these typed
-rows; DRA must use it. Recovery validates the parent UID,
-namespace, task digest, binding, owner references, and expected specifications.
-A name or label match alone does not authorize adoption or deletion. The
-ordinary Job path needs this stronger UID pin; the existing retry path already
-uses a pinned Pod instance.
+[`examples/dra-rbac.yaml`](../examples/dra-rbac.yaml) shows the narrow
+permissions the mode uses.
 
-A lost create response remains uncertain until the permitted identity checks
-resolve it. It does not authorize a second allocation. Retry attempts receive
-new templates and generated claims; they never reuse the preceding Pod's
-claim. Cancellation deletes only the pinned workload. Garbage collection
-handles owned dependents; any direct deletion additionally requires the
-recorded UID. Allocation uncertainty, finalizers, and cleanup timeouts remain
-visible and prevent a successful resource-release result. Skygo never removes
-Kubernetes or driver finalizers to force progress.
+## One claim, then one Pod
 
-Caller-supplied or shared claims, fractional capacity, prioritized device
-alternatives, and administrative access are outside this first phase. They
-need separate authorization and lifetime rules.
+Each attempt has exactly two objects, both declared durably before either is
+created:
+
+- a standalone `resource.k8s.io/v1` ResourceClaim `skygo-<attempt>-<nonce>`
+  with one request `accelerator`: `exactly` the policy's class and selectors,
+  `allocationMode: ExactCount` and the task's count as an int64. It has no
+  owner reference, finalizer, admin access, alternatives, constraints,
+  configuration, tolerations or capacity request;
+- one directly managed Pod `skygo-<attempt>` (the ordinary retry Pod, without
+  an extended resource) whose `spec.resourceClaims` has the single entry
+  `accelerator` with `resourceClaimName`, and whose task container lists that
+  entry and request in `resources.claims`.
+
+No Job, template, generated claim, helper container or shared claim is used.
+The record pins the namespace UID and the class UID and complete spec digest
+read at construction; both are read again before every native mutation, each
+create, the cancellation deletion and each API cleanup deletion, and any
+change refuses that send and is a HOLD. A read that fails or whose response
+is incomplete or not cleanly closed is not drift: it defers the send. Start
+records both identities with independent nonces and spec digests, consumes
+the claim's send grant, sends one create, and pins the UID of an exact `201`;
+only then does it consume the Pod's separate grant and send the Pod once.
+
+A response is complete only when its body was read to its end; headers or a
+status alone are not. A complete response other than an exact `201` is
+terminal: a definite rejection (`AlreadyExists`, `Invalid`, `Forbidden`) is
+recorded as rejected, and any other status, `500`, `429` and `409 Conflict`
+included, is recorded refused with a witness, even if the API stored the
+object, and no later read adopts it. Complete `201` responses are matched
+strictly: unknown fields, status in a claim create response, admission
+mutation (other than the v1.35.9 Pod defaults listed below), `200`, a
+redirect or another nonce are refused with a witness. A lost or incomplete
+reply leaves its grant consumed: only a read of the exact declared object
+pins it, and a claim whose reply was lost never gets a Pod. A grant that was
+never consumed when Start ends is withdrawn. Nothing is resent, in this or
+any later process, and network requests never run under the journal lock.
+
+client-go reads and closes every response body but discards the error of its
+`Close`. The DRA mode therefore owns each native request's original response:
+it records what was read and runs the original `Close` once, and a request is
+settled only when that `Close` returned without error. An exact `201` whose
+`Close` is still running or failed is kept as the seen UID, truth without
+authority: nothing is pinned from it and no Pod is sent after such a claim.
+A failed `Close` of any request of an attempt, a read, create or deletion,
+is a sticky HOLD of the whole attempt and keeps the integration's `Close`
+failing. The original first publishes the failure in its process, and then
+records that HOLD in the attempt's record before its operation releases any
+permit, even after its caller returned, so no later pin, create,
+cancellation, cleanup deletion or retirement follows in this or a later
+process; truths already recorded, a seen or pinned UID, a delivered
+deletion or a witnessed success, stay. An attempt already in HOLD keeps its
+first reason: every HOLD is the same fence (below). If the HOLD cannot be
+written, the operation keeps its permits for the process lifetime and the integration's
+`Close` fails. A `Close` still running, or a caller's timeout, is not a
+failure. A caller's cancellation or deadline ends its wait, not the
+original: its operation keeps every permit until the original returns, and
+the integration's `Close` joins it. Construction reads, discovery included,
+are context-aware requests on the same transport, bounded by the caller and
+30 seconds; if one's original `Close` is still held or failed, construction
+returns its error with a partial Integration, which the server closes before
+anything it depends on.
+
+The Pod is canonicalized with the same Pod defaults and admission outputs as
+receipts (below); the v1.35.9 sources add none for these Pods. A claim is
+compared exactly, except that the built-in `resource.kubernetes.io/delete-protection`
+finalizer is ignored when it is the only one.
+
+## Execution, HOLD and API cleanup
+
+The execution outcome, a sticky HOLD reason and API cleanup are recorded
+separately. A witnessed ordinary success of the exact pinned Pod (phase
+`Succeeded`, the single task container terminated with code 0, no deletion in
+progress) is reported as succeeded. Generic `Failed` (which PodGC can write
+without the kubelet), cancellation, a missing or replaced Pod or claim, a
+foreign reservation on the claim, or any other unusual state is a HOLD: the
+claim, its record and the attempt stay for the operator. A 404, an empty
+reservation list, a cleared allocation, a missing finalizer, a node `Ready`
+snapshot, a timeout or a later allocation never repair it. Keeping the claim
+object does not keep its allocation: the claim controller can deallocate it
+independently.
+
+In this first mode every HOLD, whatever its reason, including one recorded
+by an earlier version, is the same fence and is handled by the operator: no
+recovery pin, create, cancellation, cleanup deletion or retirement follows
+it, in any process, and its first reason is kept, never overwritten or
+reclassified. Reads and the witness of an execution outcome continue. Each
+native mutation is admitted only after its namespace and class rechecks, in
+one step under the journal lock that checks the current record and a
+published failed `Close` and registers the request; a HOLD or failure before
+that admits nothing, and a request admitted before it may still deliver,
+which is recorded and never recalled. Automatic handling of failed or
+canceled attempts, retries and Jobs remains later work.
+
+The integration's maintenance loop resumes every open record after a restart
+and after the core stops observing the job. After a witnessed success, with no
+HOLD or cancellation, once `--dra-log-retention` has passed (zero keeps
+everything) and while no other operation of the scope runs in any process,
+it records intent and sends one graceful, UID-preconditioned deletion of the
+Pod, waits for its absence, then does the same for the claim, and retires the
+record as a tombstone. That absence is API cleanup only; it is not proof that
+a device was physically released, that a driver RPC ran, or native
+qualification. Skygo never removes finalizers, clears status, forces deletion
+or creates anything in cleanup. Cancellation deletes only the pinned Pod,
+gracefully and UID-preconditioned; it keeps the claim in HOLD. A delivered
+cancellation is recorded as a fact beside the execution, not as its outcome:
+a Pod that then disappears without a witnessed terminal state is reported
+Unknown, never Canceled or stopped; only a terminal state witnessed from the
+exact Pod is reported, as Canceled.
+
+The integration's `Close` first refuses every further operation of every
+target it owns, cached target references included, and cancels its own
+`Run`; only then does it join `Run`, every operation and every original
+response `Close`. A `Close` that returns an error, after its deadline or a
+failed original, never readmits anything; the server then keeps the Store and
+state the integration depends on.
+
+## DRA state
+
+`--dra-state` names a separate, private directory: absolute, without symlinks,
+owned by the server user with mode `0700`, neither the execution state nor
+inside or around it. It holds a marker (`skygo-dra-state.json`: format and
+owner) and one scope per DRA target binding with the same lock, permit,
+private-file and fsync rules as receipts, but its own record format
+(`skygo-kubernetes-dra-record-v1`). Before any lock, scope, record or API write
+the server reads the whole root and refuses anything but a fresh empty root or
+the exact same-version root of this installation: unknown or legacy entries,
+a scope of no configured target (as after a binding change), another marker,
+a lock that is not an empty private regular file, or a record that does not
+check exactly. A temporary file of the marker or of a record is left only by
+an interrupted write; whatever it holds, it is refused for the operator and
+never removed, replaced or adopted. Nothing is migrated or adopted. To
+change a DRA target's binding, drain it with the old configuration and start
+with a fresh root. Execution receipts and their format are unchanged.
 
 ## Durable execution receipts
 
@@ -292,8 +415,8 @@ Every backend method refuses a receipt carrying dependent rows. Those typed
 rows record `ResourceClaimTemplate` objects owned by the parent UID, each
 Job-owned Pod, and each generated `ResourceClaim` owned by one exact Pod: a
 recorded Pod row of a Job, never the Job, or the parent UID of a directly
-managed Pod, which has no Pod rows. They exist for the DRA lifecycle and are
-exercised only by storage tests.
+managed Pod, which has no Pod rows. They are exercised only by storage tests;
+the DRA mode does not use them and keeps its own records in the DRA state.
 
 Limits of this stage: rollback of a receipt file to an older valid copy is
 detected within one process, and across restarts only through a pinned
@@ -302,55 +425,36 @@ writer that copies a nonce.
 
 ## Module and cluster requirements
 
-The integration currently pins Kubernetes Go modules at `v0.32.3` and declares
-Go `1.24.1`; it cannot use the stable typed `resource.k8s.io/v1` client as-is.
-Upgrade `k8s.io/api`, `k8s.io/apimachinery`, and `k8s.io/client-go` together
-inside this module. Do not hand-copy Kubernetes API types into Skygo.
+The integration pins `k8s.io/api`, `k8s.io/apimachinery` and `k8s.io/client-go`
+at `v0.35.9` and declares Go `1.25.0`; the core's requirements are unchanged.
+The server confirms `resource.k8s.io/v1` by discovery; an installed driver and
+an operator-provisioned `DeviceClass` are separate requirements. Skygo does not
+install drivers, modify `DeviceClass` or `ResourceSlice` objects, update
+allocation status or request administrative device access.
 
-Select and test an explicit supported client/cluster combination before
-implementation. The upstream `v0.34.0` API module declares
-[Go 1.24](https://github.com/kubernetes/api/blob/v0.34.0/go.mod), while
-`v0.35.0` declares
-[Go 1.25](https://github.com/kubernetes/api/blob/v0.35.0/go.mod). A newer optional
-module toolchain requirement does not require raising the core's requirement.
-API discovery must confirm `resource.k8s.io/v1`; an installed driver and
-operator-provisioned `DeviceClass` are separate requirements.
+## Remaining work
 
-Use namespace-scoped permissions for the managed templates and claim
-observations, plus read access to the configured cluster-scoped classes.
-Skygo does not install drivers, modify `DeviceClass` or `ResourceSlice`
-objects, update allocation status, or request administrative device access.
-Unneeded list, mutation, and cluster-wide privileges stay absent.
+Each item below is required before a broader DRA claim:
 
-## Implementation order and acceptance
+1. Qualify this mode on an authorized cluster with a real DRA driver: the
+   device inside the container, normal completion and API cleanup, driver
+   downtime, controller restart, cancellation and node loss staying in HOLD.
+   The available development cluster runs v1.36.5 without device classes,
+   which differs from the pinned v1.35.9 sources.
+2. Failed and canceled cleanup, and device-level recovery, under a documented
+   release contract.
+3. Automatic retry, gated on release of the previous attempt.
+4. Native Job execution with DRA, if required, with every replacement Pod's
+   consumers tracked; templates later still.
+5. Workers and persistent environments with their own claims.
 
-1. Extend target configuration, validation, cloning, and canonical binding for
-   the mutually exclusive modes. Preserve legacy bindings byte for byte.
-2. Extend the shared Pod renderer and add template construction. Wire both
-   ordinary Jobs and directly managed retry Pods; retain CPU and memory
-   requests independently. Durable UID receipts and recovery exist for the
-   parent; DRA tasks additionally require only receipted targets and must
-   record each template, Pod and generated claim before acting on it.
-   Core stops observing terminal jobs, so DRA must either keep a joined
-   cleanup owner after completion or withhold terminal status until claim
-   accounting settles, retaining exit evidence and logs. Data tasks, workers
-   and persistent environments refuse DRA until they have their own receipts.
-3. Implement observed allocation diagnostics, cancellation, retention, and
-   cleanup. Report unsatisfied claims as scheduling state; do not infer
-   running or released devices from successful object creation.
-4. Apply the same rules to each worker rank when the Kubernetes worker
-   backend is integrated. Every rank gets an independent claim. Gate worker
-   release on the existing group protocol, and join every rank's claim
-   cleanup before reporting group removal. Do not advertise DRA for workers
-   based on ordinary-job tests.
-5. Qualify the complete lifecycle on an authorized cluster with a real DRA
-   driver. Until then, unit and fake-client tests establish rendering and
-   controller behavior only.
+A missing driver or unavailable cluster is a validation hold, not a passing
+allocation test.
 
-Required tests cover strict policy rejection, unchanged legacy bindings, exact
-Pod and template fields, count and selector changes, ownership conflicts, lost
-responses, server restart, retry separation, cancellation before allocation,
-delayed driver cleanup, and replacement UIDs. Real-cluster acceptance must
-show the requested device inside the container and prove eventual claim
-cleanup after cancellation and retry. A missing driver or unavailable test
-cluster is an explicit validation hold, not a passing allocation test.
+The mode's authored tests have NOT_RUN. They use loopback APIs with MODELED
+status: `TestDRAServerRun` runs the production command with the actual
+`server.Run`, a real Store and the generated Connect client;
+`TestDRATwoOSProcesses` starts two processes of the test binary over the same
+roots; `TestDRATwoSequentialBackends` is one process. The old-binary refusal
+gate needs an executable built from the signed base commit and its build
+receipt's SHA-256, and reports NOT_RUN without them.

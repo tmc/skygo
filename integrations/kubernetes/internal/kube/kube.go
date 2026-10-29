@@ -45,6 +45,8 @@ type Backend struct {
 	dataStarts       map[string]bool         // attempt IDs whose StartData was called
 	dataFrames       map[string][]*dataFrame // data operation custody; see dataFrame
 	receipts         *receiptStore           // nil unless constructed by FromTargetWithState
+	dra              *draRuntime             // nil unless constructed by NewDRAIntegration
+	gate             *draGate                // nil unless owned by NewDRAIntegration
 }
 
 // Check validates capability requirements without making network requests.
@@ -69,6 +71,11 @@ func (b *Backend) Check(t backend.Task) error {
 	}
 	if err := b.checkPolicy(t); err != nil {
 		return err
+	}
+	if b.draPolicy(t) != nil {
+		if err := b.checkDRA(t); err != nil {
+			return err
+		}
 	}
 	for k := range t.Env {
 		if len(validation.IsEnvVarName(k)) != 0 {
@@ -106,6 +113,14 @@ func (b *Backend) owned(j *batchv1.Job, id string) error {
 func (b *Backend) Start(ctx context.Context, id string, t backend.Task) error {
 	if dataTask(t) {
 		return errors.New("kubernetes data task requires StartData")
+	}
+	leave, err := b.gate.enter()
+	if err != nil {
+		return err
+	}
+	defer leave()
+	if b.draPolicy(t) != nil {
+		return b.startDRA(ctx, id, t)
 	}
 	if b.receipts != nil {
 		release, err := b.receipts.operate(ctx)
@@ -234,6 +249,14 @@ func (b *Backend) Observe(ctx context.Context, ref backend.Reference) (backend.S
 		o, err := b.ObserveData(ctx, ref)
 		return o.Status, err
 	}
+	leave, err := b.gate.enter()
+	if err != nil {
+		return backend.Status{}, err
+	}
+	defer leave()
+	if b.draPolicy(ref.Task) != nil {
+		return b.observeDRA(ctx, ref)
+	}
 	if b.receipts != nil {
 		release, err := b.receipts.operate(ctx)
 		if err != nil {
@@ -301,6 +324,14 @@ func (b *Backend) Cancel(ctx context.Context, ref backend.Reference) error {
 	if dataTask(ref.Task) {
 		return b.cancelData(ctx, ref)
 	}
+	leave, err := b.gate.enter()
+	if err != nil {
+		return err
+	}
+	defer leave()
+	if b.draPolicy(ref.Task) != nil {
+		return b.cancelDRA(ctx, ref)
+	}
 	if b.receipts != nil {
 		release, err := b.receipts.operate(ctx)
 		if err != nil {
@@ -348,6 +379,14 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	if dataTask(ref.Task) {
 		return b.logsData(ctx, ref, offset, limit)
 	}
+	leave, err := b.gate.enter()
+	if err != nil {
+		return backend.LogChunk{}, err
+	}
+	defer leave()
+	if b.draPolicy(ref.Task) != nil {
+		return b.logsDRA(ctx, ref, offset, limit)
+	}
 	if b.receipts != nil {
 		// The permit is released after the log body is closed and the
 		// receipt checked last, and covers the nested Observe. A body that
@@ -370,7 +409,6 @@ func (b *Backend) Logs(ctx context.Context, ref backend.Reference, offset int64,
 	var j *batchv1.Job
 	var uid string
 	var custody *logCustody
-	var err error
 	if b.receipts != nil {
 		if custody, err = b.admitReceiptedLogs(id); err != nil {
 			return backend.LogChunk{}, err

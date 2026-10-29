@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tmc/skygo/integrations/kubernetes/internal/kube"
@@ -21,6 +22,20 @@ import (
 
 type targetFlags struct {
 	file, kubeconfig, context, namespace, environments, services, state string
+	draState                                                            string
+	draRetention                                                        time.Duration
+}
+
+// usesDRA reports whether any target maps an accelerator to DRA.
+func usesDRA(config kube.Config) bool {
+	for _, t := range config.Targets() {
+		for _, a := range t.Resources.Accelerators {
+			if a.DRA != nil {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func command(run func(context.Context, server.Config) error) *cobra.Command {
@@ -41,6 +56,17 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 		if state && serverCommand.Flags().Changed("environment-profiles") {
 			return errors.New("--execution-state conflicts with --environment-profiles")
 		}
+		// DRA flags select a separate integration and must not select services.
+		dra := serverCommand.Flags().Changed("dra-state")
+		if dra && serverCommand.Flags().Changed("service-profiles") {
+			return errors.New("--dra-state conflicts with --service-profiles")
+		}
+		if dra && !state {
+			return errors.New("--dra-state requires --targets and --execution-state")
+		}
+		if serverCommand.Flags().Changed("dra-log-retention") && !dra {
+			return errors.New("--dra-log-retention requires --dra-state")
+		}
 		if named {
 			for _, name := range []string{"kubeconfig", "context", "namespace"} {
 				if serverCommand.Flags().Changed(name) {
@@ -54,6 +80,24 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			}
 		} else if flags.namespace == "" {
 			return errors.New("namespace is required for a Kubernetes target")
+		}
+		if usesDRA(config) && serverCommand.Flags().Changed("service-profiles") {
+			return errors.New("dra accelerators conflict with --service-profiles")
+		}
+		if dra {
+			// The integration constructs and owns every configured target;
+			// no Targets callback runs.
+			return run(ctx, server.Config{
+				DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, OIDCFile: o.OIDCFile, OIDCJWKSURL: o.OIDCJWKSURL, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
+				Install: func(s *store.Store, _ *auth.Engine) (server.Integration, error) {
+					return kube.NewDRAIntegration(ctx, config, s.Owner(), kube.DRAOptions{
+						ExecutionState: flags.state, State: flags.draState, LogRetention: flags.draRetention,
+					})
+				},
+			})
+		}
+		if usesDRA(config) {
+			return errors.New("dra accelerators require --dra-state")
 		}
 		withEnvironments := serverCommand.Flags().Changed("environment-profiles")
 		withServices := serverCommand.Flags().Changed("service-profiles")
@@ -139,6 +183,8 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			cmd.Flags().StringVar(&flags.namespace, "namespace", "", "Kubernetes namespace (required without --targets)")
 			cmd.Flags().StringVar(&flags.environments, "environment-profiles", "", "Private environment profiles file for one of --targets (requires --auth-file)")
 			cmd.Flags().StringVar(&flags.state, "execution-state", "", "Existing private 0700 directory for durable execution receipts of --targets")
+			cmd.Flags().StringVar(&flags.draState, "dra-state", "", "Separate private 0700 directory for experimental DRA records (requires --execution-state)")
+			cmd.Flags().DurationVar(&flags.draRetention, "dra-log-retention", 0, "Keep succeeded DRA Pods this long before API cleanup; 0 keeps them")
 			cmd.Flags().StringVar(&flags.services, "service-profiles", "", "Private service profiles file for one of --targets (requires --auth-file)")
 		}
 	}

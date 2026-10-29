@@ -94,3 +94,46 @@ func TestServiceProfilesFlagRefused(t *testing.T) {
 		})
 	}
 }
+
+func TestDRAServiceProfilesRefused(t *testing.T) {
+	t.Setenv("SKYGO_TOKEN", "")
+	l := &draLoopback{class: true}
+	targets, state, dra := draCommandFixture(t, l)
+	beforeState, beforeDRA := dirImage(t, state), dirImage(t, dra)
+	dir := t.TempDir()
+	data := filepath.Join(dir, "data")
+	for _, tt := range []struct {
+		name    string
+		targets string
+		args    []string
+		want    string
+	}{
+		{"dra flag", filepath.Join(dir, "missing-targets"), []string{"--dra-state", ""}, "--dra-state conflicts with --service-profiles"},
+		{"dra receipts", filepath.Join(dir, "missing-targets"), []string{"--execution-state", state, "--dra-state", dra}, "--execution-state conflicts with --service-profiles"},
+		{"dra policy", targets, nil, "dra accelerators conflict with --service-profiles"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := command(func(context.Context, server.Config) error {
+				t.Fatal("server called")
+				return nil
+			})
+			cmd.SilenceErrors, cmd.SilenceUsage = true, true
+			cmd.SetArgs(append([]string{"server", "--targets", tt.targets, "--service-profiles", filepath.Join(dir, "missing-services"), "--auth-file", "private-auth.json", "--data-dir", data}, tt.args...))
+			err := cmd.Execute()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("err = %v, want %q", err, tt.want)
+			}
+			if _, err := os.Stat(data); !os.IsNotExist(err) {
+				t.Fatalf("Store directory was touched: %v", err)
+			}
+			if dirImage(t, state) != beforeState || dirImage(t, dra) != beforeDRA {
+				t.Fatal("receipt state changed")
+			}
+		})
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if len(l.requests) != 0 {
+		t.Fatal("refused configuration contacted the API")
+	}
+}

@@ -1,0 +1,75 @@
+# Narrow permissions for the experimental DRA mode (docs/dra.md) in a
+# dedicated namespace. They are a precondition, not an isolation proof:
+# Skygo does not query or attest RBAC, and the namespace must also exclude
+# other writers and consumers of its claims and Pods through admission
+# policy the operator trusts.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: skygo
+  namespace: skygo-dra
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: skygo-dra
+  namespace: skygo-dra
+rules:
+# One standalone claim per attempt: create, exact reads, UID-preconditioned
+# deletion. No update, patch or status access; Skygo never edits finalizers.
+- apiGroups: ["resource.k8s.io"]
+  resources: ["resourceclaims"]
+  verbs: ["create", "get", "delete"]
+# One directly managed Pod per attempt, its logs, and the ordinary
+# receipted Jobs of non-DRA tasks.
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["create", "get", "list", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get"]
+- apiGroups: ["batch"]
+  resources: ["jobs"]
+  verbs: ["create", "get", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: skygo-dra
+  namespace: skygo-dra
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: skygo-dra
+subjects:
+- kind: ServiceAccount
+  name: skygo
+  namespace: skygo-dra
+---
+# Read access to the namespace itself and to the configured device classes.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: skygo-dra-read
+rules:
+- apiGroups: [""]
+  resources: ["namespaces"]
+  resourceNames: ["skygo-dra"]
+  verbs: ["get"]
+- apiGroups: ["resource.k8s.io"]
+  resources: ["deviceclasses"]
+  resourceNames: ["gpu.example.com"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: skygo-dra-read
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: skygo-dra-read
+subjects:
+- kind: ServiceAccount
+  name: skygo
+  namespace: skygo-dra

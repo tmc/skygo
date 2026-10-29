@@ -294,3 +294,105 @@ func runReceiptLockHelper(t *testing.T, root string) string {
 	t.Fatalf("helper output: %s", out)
 	return ""
 }
+
+// TestReceiptOpenPrivateCreate keeps the guards around a nonexclusive create:
+// an existing entry keeps its bytes, while exclusive creates, missing reads,
+// symlinks, nonregular entries, hard links and unsafe modes are still refused.
+func TestReceiptOpenPrivateCreate(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		kind string
+		flag int
+		ok   bool
+		want error
+	}{
+		{"existing", "regular", os.O_RDWR | os.O_CREATE, true, nil},
+		{"create", "missing", os.O_RDWR | os.O_CREATE, true, nil},
+		{"exclusive create", "missing", os.O_WRONLY | os.O_CREATE | os.O_EXCL, true, nil},
+		{"missing read", "missing", os.O_RDONLY, false, os.ErrNotExist},
+		{"exclusive existing", "regular", os.O_RDWR | os.O_CREATE | os.O_EXCL, false, os.ErrExist},
+		{"symlink", "symlink", os.O_RDWR | os.O_CREATE, false, nil},
+		{"fifo", "fifo", os.O_RDONLY, false, nil},
+		{"directory", "directory", os.O_RDONLY, false, nil},
+		{"hard link", "hardlink", os.O_RDWR | os.O_CREATE, false, nil},
+		{"unsafe mode", "unsafe", os.O_RDWR | os.O_CREATE, false, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newReceiptFixture(t)
+			entry := filepath.Join(fixture.dir, "entry")
+			victim := filepath.Join(fixture.dir, "victim")
+			const original = "keep these bytes"
+			write := func(path string, mode os.FileMode) {
+				if err := os.WriteFile(path, []byte(original), mode); err != nil {
+					t.Fatal(err)
+				}
+			}
+			switch tc.kind {
+			case "regular":
+				write(entry, 0o600)
+			case "unsafe":
+				write(entry, 0o644)
+				chmod(t, entry, 0o644)
+			case "symlink":
+				write(victim, 0o600)
+				symlink(t, victim, entry)
+			case "hardlink":
+				write(victim, 0o600)
+				if err := os.Link(victim, entry); err != nil {
+					t.Fatal(err)
+				}
+			case "fifo":
+				fifo(t, entry)
+			case "directory":
+				mkdir(t, entry)
+			}
+			op := fixture.run("open private entry", func() error {
+				dir, err := os.Open(fixture.dir)
+				if err != nil {
+					return err
+				}
+				f, _, err := openPrivate(dir, "entry", tc.flag)
+				if f != nil {
+					err = errors.Join(err, f.Close())
+				}
+				return errors.Join(err, dir.Close())
+			})
+			err := op.wait(t)
+			if (err == nil) != tc.ok || tc.want != nil && !errors.Is(err, tc.want) {
+				t.Fatalf("open = %v; success %v, error %v", err, tc.ok, tc.want)
+			}
+			switch tc.kind {
+			case "regular", "unsafe", "hardlink":
+				data, err := os.ReadFile(entry)
+				if err != nil || string(data) != original {
+					t.Fatalf("entry changed: %q, %v", data, err)
+				}
+			case "symlink":
+				info, err := os.Lstat(entry)
+				if err != nil || info.Mode()&os.ModeSymlink == 0 {
+					t.Fatalf("symlink changed: %v, %v", info, err)
+				}
+			case "fifo":
+				info, err := os.Lstat(entry)
+				if err != nil || info.Mode()&os.ModeNamedPipe == 0 {
+					t.Fatalf("fifo changed: %v, %v", info, err)
+				}
+			case "missing":
+				info, err := os.Lstat(entry)
+				if tc.ok {
+					if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 || info.Size() != 0 {
+						t.Fatalf("created entry: %v, %v", info, err)
+					}
+				} else if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("missing read created entry: %v", err)
+				}
+			}
+			if tc.kind == "symlink" || tc.kind == "hardlink" {
+				data, err := os.ReadFile(victim)
+				if err != nil || string(data) != original {
+					t.Fatalf("victim changed: %q, %v", data, err)
+				}
+			}
+		})
+	}
+}

@@ -281,7 +281,7 @@ func TestReceiptCreateRedirectControl(t *testing.T) {
 var retainedH2Peers []*h2Peer
 
 // h2Peer is a MODELED HTTP/2 endpoint over TLS, written with the Framer and
-// HPACK encoder of the module's x/net (selected v0.30.0). For each request it
+// HPACK encoder of the module's x/net (selected v0.56.0). For each request it
 // records the complete body, then, while fewer than resets bodies were
 // received, resets the stream with code, a peer protocol stimulus sent only
 // after the whole body arrived; otherwise it replies with reply. It is not a
@@ -508,8 +508,11 @@ func requireJSONObject(t *testing.T, body []byte, ctype, apiVersion, kind string
 
 // TestReceiptCreateHTTP2Reset resets the create's HTTP/2 stream after the
 // peer received its complete body, with REFUSED_STREAM or a peer
-// PROTOCOL_ERROR, both of which x/net/http2 v0.30.0 retries when it can
-// obtain the body again (transport.go:628-669). The rewindable control, the
+// PROTOCOL_ERROR. REFUSED_STREAM is retried when x/net/http2 can obtain the
+// body again (first traced at v0.30.0 transport.go:628-669; the module now
+// selects v0.56.0, whose http2/transport_common.go was read only for the
+// no-GetBody rule, so this control's replay is checked when it runs, not
+// assumed from source). The rewindable control, the
 // request kubernetes.NewForConfig's client builds for the same frozen
 // configuration, is replayed: the peer receives the same body twice. The
 // receipted create is not: the peer receives one body, Start fails with the
@@ -564,8 +567,19 @@ func TestReceiptCreateHTTP2Reset(t *testing.T) {
 				b := newReceiptBackendConfig(t, f.dir, config)
 				ref := receiptRef(b, kind)
 				err := f.run("start", func() error { return b.Start(context.Background(), ref.ID, ref.Task) }).wait(t)
-				if err == nil || errors.Is(err, backend.ErrIdentityMismatch) || !strings.Contains(err.Error(), "after Request.Body was written") {
+				if err == nil || errors.Is(err, backend.ErrIdentityMismatch) {
 					t.Fatalf("start: %v", err)
+				}
+				switch code {
+				case http2.ErrCodeRefusedStream:
+					if !strings.Contains(err.Error(), "after Request.Body was written") {
+						t.Fatalf("start retry: %v", err)
+					}
+				case http2.ErrCodeProtocol:
+					var reset http2.StreamError
+					if !errors.As(err, &reset) || reset.Code != code || reset.StreamID == 0 {
+						t.Fatalf("start reset: %v", err)
+					}
 				}
 				peer.close(t)
 				bodies, paths, types, protos, errs := peer.received()

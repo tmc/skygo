@@ -544,7 +544,7 @@ func TestReceiptIdentityStrictDecode(t *testing.T) {
 		ok   bool
 	}{
 		{"known", `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"},"spec":{"containers":[{"name":"task","image":"image"}]},"status":{"phase":"Pending","futureStatus":1}}`, true},
-		{"unknown-spec-field", `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"},"spec":{"hostnameOverride":"x","containers":[{"name":"task","image":"image"}]}}`, false},
+		{"unknown-spec-field", `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"},"spec":{"futureSpecField":"x","containers":[{"name":"task","image":"image"}]}}`, false},
 		{"unknown-container-field", `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"},"spec":{"containers":[{"name":"task","image":"image","futureField":true}]}}`, false},
 		{"unknown-top-level", `{"apiVersion":"v1","kind":"Pod","metadata":{"name":"p"},"spec":{},"extra":{}}`, false},
 		{"wrong-kind", `{"apiVersion":"v1","kind":"Service","metadata":{"name":"p"},"spec":{}}`, false},

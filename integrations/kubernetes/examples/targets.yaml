@@ -25,6 +25,23 @@ targets:
           resource_name: nvidia.com/gpu
           required_node_selector:
             skygo.test/model: a100
+  # An experimental DRA target maps a portable accelerator name to one
+  # standalone ResourceClaim and one Pod per attempt. It requires
+  # --execution-state and --dra-state, a dedicated trusted namespace, and the
+  # permissions in dra-rbac.yaml; see docs/dra.md.
+  #
+  # - name: dra-d
+  #   in_cluster: true
+  #   namespace: skygo-dra
+  #   resources:
+  #     max_accelerators: 8
+  #     accelerators:
+  #       h100:
+  #         dra:
+  #           device_class: gpu.example.com
+  #           selectors:
+  #             - 'device.attributes["gpu.example.com"].model == "H100"'
+  #
   # A data target names its native qualification explicitly; without one it
   # refuses every data task. See the README.
   #

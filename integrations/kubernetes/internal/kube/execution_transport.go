@@ -27,7 +27,8 @@ import (
 // receiptTransport passes it to the layers below with GetBody removed, so
 // that no layer can obtain its body again, and records the status of a 3xx
 // response and the exact bytes client-go reads from its body. Without
-// GetBody, in the pinned sources (Go net/http, x/net/http2 v0.30.0):
+// GetBody, in the pinned sources (Go net/http, x/net/http2 v0.56.0,
+// http2/transport_common.go):
 //
 //   - net/http's HTTP/1 transport retries a POST only after nothingWrittenError,
 //     and then only with GetBody or an empty body; it never rewinds a body
@@ -85,8 +86,8 @@ func receiptHTTP(rc rest.Interface) (*rest.RESTClient, error) {
 }
 
 // receiptTransport is the transport of the receipt client. Requests tagged
-// with a receiptExchange or a logCustody are admitted once each; untagged
-// requests pass through unchanged.
+// with a draCall, a receiptExchange or a logCustody are admitted once each;
+// untagged requests pass through unchanged.
 type receiptTransport struct {
 	base http.RoundTripper
 }
@@ -94,6 +95,10 @@ type receiptTransport struct {
 type receiptExchangeKey struct{}
 
 func (t *receiptTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// DRA requests only: see draCall (dra_receipt_http.go).
+	if c, _ := req.Context().Value(draCallKey{}).(*draCall); c != nil {
+		return c.roundTrip(t.base, req)
+	}
 	if x, _ := req.Context().Value(receiptExchangeKey{}).(*receiptExchange); x != nil {
 		return x.roundTrip(t.base, req)
 	}

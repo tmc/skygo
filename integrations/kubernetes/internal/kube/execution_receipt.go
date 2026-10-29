@@ -623,6 +623,36 @@ func checkObjects(r *executionReceipt) error {
 
 // readLocked returns the attempt's record, or nil if it has none.
 func (s *receiptStore) readLocked(id string) (*executionReceipt, error) {
+	data, err := s.readEntryLocked(id)
+	if err != nil || data == nil {
+		return nil, err
+	}
+	r := new(executionReceipt)
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(r); err != nil {
+		return nil, errReceiptCorrupt
+	}
+	// Only the canonical encoding is accepted. This refuses trailing data,
+	// duplicate keys, reordering and partial writes.
+	canonical, err := json.Marshal(r)
+	if err != nil || !bytes.Equal(canonical, data) {
+		return nil, errReceiptCorrupt
+	}
+	if err := s.check(r, id); err != nil {
+		return nil, err
+	}
+	if r.Generation < s.seen[id] {
+		return nil, fmt.Errorf("%w: kubernetes execution receipt generation rolled back", backend.ErrIdentityMismatch)
+	}
+	s.seen[id] = r.Generation
+	return r, nil
+}
+
+// readEntryLocked returns the bytes of the attempt's record file, at most
+// maxReceiptBytes, or nil if it has none. It does not decode them. The DRA
+// journal (dra_receipt.go) shares it with readLocked.
+func (s *receiptStore) readEntryLocked(id string) ([]byte, error) {
 	name, err := receiptEntry(id, "json")
 	if err != nil {
 		return nil, err
@@ -651,26 +681,7 @@ func (s *receiptStore) readLocked(id string) (*executionReceipt, error) {
 	if len(data) > maxReceiptBytes {
 		return nil, errReceiptCorrupt
 	}
-	r := new(executionReceipt)
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(r); err != nil {
-		return nil, errReceiptCorrupt
-	}
-	// Only the canonical encoding is accepted. This refuses trailing data,
-	// duplicate keys, reordering and partial writes.
-	canonical, err := json.Marshal(r)
-	if err != nil || !bytes.Equal(canonical, data) {
-		return nil, errReceiptCorrupt
-	}
-	if err := s.check(r, id); err != nil {
-		return nil, err
-	}
-	if r.Generation < s.seen[id] {
-		return nil, fmt.Errorf("%w: kubernetes execution receipt generation rolled back", backend.ErrIdentityMismatch)
-	}
-	s.seen[id] = r.Generation
-	return r, nil
+	return data, nil
 }
 
 // writeLocked durably replaces the attempt's record with r: write a private
@@ -681,14 +692,21 @@ func (s *receiptStore) writeLocked(r *executionReceipt) error {
 	if err != nil {
 		return err
 	}
+	return s.writeEntryLocked(r.Attempt, r.Generation, data, r)
+}
+
+// writeEntryLocked is writeLocked for data, the encoded record of attempt id
+// at generation. r, which may be nil, is passed to the test fault hook. The
+// DRA journal shares it with writeLocked.
+func (s *receiptStore) writeEntryLocked(id string, generation uint64, data []byte, r *executionReceipt) error {
 	if len(data) > maxReceiptBytes {
 		return errReceiptCapacity
 	}
-	final, err := receiptEntry(r.Attempt, "json")
+	final, err := receiptEntry(id, "json")
 	if err != nil {
 		return err
 	}
-	tmp, _ := receiptEntry(r.Attempt, "tmp")
+	tmp, _ := receiptEntry(id, "tmp")
 	// A temporary file is only ever left by an interrupted write under this
 	// lock; its rename never happened.
 	if err := removeAt(s.held, tmp); err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -720,7 +738,7 @@ func (s *receiptStore) writeLocked(r *executionReceipt) error {
 	if err := renameAt(s.held, tmp, final); err != nil {
 		return receiptUncertain{err}
 	}
-	s.seen[r.Attempt] = r.Generation
+	s.seen[id] = generation
 	err = s.step("dirsync", r)
 	if err == nil {
 		err = syncAt(s.held)

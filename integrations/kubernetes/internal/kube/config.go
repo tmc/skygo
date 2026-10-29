@@ -102,11 +102,14 @@ type ResourcePolicy struct {
 	NodeSelectors   map[string][]string          `yaml:"node_selectors"`
 }
 
-// AcceleratorPolicy maps a portable name to a Kubernetes extended resource.
-// RequiredNodeSelector must be included explicitly by a task using this name.
+// AcceleratorPolicy maps a portable name to a Kubernetes extended resource,
+// or, with DRA, to dynamic resource allocation. Exactly one of ResourceName
+// and DRA is set. RequiredNodeSelector must be included explicitly by a task
+// using an extended resource; DRA accelerators have none.
 type AcceleratorPolicy struct {
 	ResourceName         string            `yaml:"resource_name"`
 	RequiredNodeSelector map[string]string `yaml:"required_node_selector"`
+	DRA                  *DRAPolicy        `yaml:"dra,omitempty"`
 }
 
 // ReadConfig reads one strict version-1 YAML document, bounded to 1 MiB and 32
@@ -238,6 +241,9 @@ func validateTarget(t TargetConfig) error {
 	if err := validatePolicy(t.Resources); err != nil {
 		return err
 	}
+	if t.Data != nil && t.Resources.hasDRA() {
+		return errors.New("dra accelerators conflict with a data block")
+	}
 	_, err := newDataProfile(t.Data)
 	return err
 }
@@ -350,6 +356,17 @@ func validatePolicy(p ResourcePolicy) error {
 		if name == "" || len(validation.IsValidLabelValue(name)) != 0 {
 			return errors.New("invalid accelerator name")
 		}
+		if a.DRA != nil {
+			// DRA never falls back to an extended resource, and the
+			// allocation, not a node selector, places the Pod.
+			if a.ResourceName != "" || len(a.RequiredNodeSelector) != 0 {
+				return errors.New("dra accelerator conflicts with resource_name or required_node_selector")
+			}
+			if err := validateDRAPolicy(*a.DRA); err != nil {
+				return err
+			}
+			continue
+		}
 		prefix, _, qualified := strings.Cut(a.ResourceName, "/")
 		if !qualified || len(validation.IsQualifiedName(a.ResourceName)) != 0 || prefix == "kubernetes.io" || strings.HasSuffix(prefix, ".kubernetes.io") || prefix == "k8s.io" || strings.HasSuffix(prefix, ".k8s.io") || strings.HasPrefix(a.ResourceName, "requests.") {
 			return errors.New("invalid accelerator extended resource name")
@@ -390,6 +407,7 @@ func (c Config) Targets() []TargetConfig {
 		t.Resources.Accelerators = maps.Clone(t.Resources.Accelerators)
 		for k, v := range t.Resources.Accelerators {
 			v.RequiredNodeSelector = maps.Clone(v.RequiredNodeSelector)
+			v.DRA = cloneDRAPolicy(v.DRA)
 			t.Resources.Accelerators[k] = v
 		}
 		t.Data = cloneDataConfig(t.Data)

@@ -215,5 +215,12 @@ The root Dockerfile builds the local-only executable. See the
 [deployment guide](../../docs/kubernetes.md) for singleton storage, credentials,
 workload boundaries, and upgrade procedures.
 
-DRA support is planned separately; see the [DRA integration design](docs/dra.md)
-for device policy, claim ownership, module requirements and validation gates.
+An experimental first DRA mode runs a task that names a `dra` accelerator as
+one standalone ResourceClaim and then one Pod, with
+`--execution-state DIR --dra-state DIR2` and a dedicated trusted namespace. It
+refuses retry, data, workers, environments and service profiles, and keeps every
+unusual outcome in HOLD, including a complete non-`201` create reply, a failed
+response `Close` and a canceled Pod that vanished without a witnessed terminal
+state. It is not natively qualified. See [DRA](docs/dra.md) for policy, ownership,
+cleanup and remaining qualification, and
+[`examples/dra-rbac.yaml`](examples/dra-rbac.yaml) for its permissions.

@@ -109,8 +109,42 @@ type bindingDataReferenceV1 struct {
 	AllowWrite   bool     `json:"allow_write"`
 }
 
-// targetBinding returns the canonical identity of a target. With d nil it is
-// exactly the legacy format and q is ignored; otherwise it is the data format,
+// kubeDRABindingV1 is the binding of a target with at least one DRA
+// accelerator. The embedded legacy fields encode first, in their legacy
+// order; a DRA accelerator's legacy entry has an empty resource name.
+type kubeDRABindingV1 struct {
+	kubeBindingV1
+	DRA map[string]bindingDRAV1 `json:"dra"`
+}
+
+// bindingDRAV1 binds one DRA accelerator: its operator class and selectors,
+// in order, and the fixed claim shape of this mode (dra_identity.go).
+type bindingDRAV1 struct {
+	DeviceClass    string   `json:"device_class"`
+	Selectors      []string `json:"selectors"`
+	AllocationMode string   `json:"allocation_mode"`
+	Request        string   `json:"request"`
+	Reference      string   `json:"reference"`
+}
+
+func bindingDRA(p ResourcePolicy) map[string]bindingDRAV1 {
+	m := make(map[string]bindingDRAV1)
+	for name, a := range p.Accelerators {
+		if a.DRA == nil {
+			continue
+		}
+		selectors := slices.Clone(a.DRA.Selectors)
+		if selectors == nil {
+			selectors = []string{}
+		}
+		m[name] = bindingDRAV1{a.DRA.DeviceClass, selectors, draAllocationMode, draRequestName, draReference}
+	}
+	return m
+}
+
+// targetBinding returns the canonical identity of a target. With d nil and no
+// DRA accelerator it is exactly the legacy format and q is ignored; with a
+// DRA accelerator it is the DRA format; otherwise it is the data format,
 // which also binds d and the qualification identity of q, if any.
 func targetBinding(t TargetConfig, config *rest.Config, d *dataProfile, q *dataQualification) (string, error) {
 	raw, err := bindingJSON(t, config, d, q)
@@ -148,6 +182,14 @@ func bindingJSON(t TargetConfig, config *rest.Config, d *dataProfile, q *dataQua
 		Namespace: t.Namespace, Labels: labels, TLSServerName: config.ServerName,
 		CASHA256: ca, Insecure: config.Insecure,
 		Policy: bindingPolicyV1{p.MaxCPUMillis, p.MaxMemoryBytes, p.MaxAccelerators, accelerators, selectors},
+	}
+	if p.hasDRA() {
+		// validateTarget refuses DRA with a data block.
+		if d != nil {
+			return nil, errors.New("dra accelerators conflict with a data block")
+		}
+		v.Format = "skygo-kubernetes-dra-target-v1"
+		return json.Marshal(kubeDRABindingV1{v, bindingDRA(p)})
 	}
 	if d == nil {
 		return json.Marshal(v)

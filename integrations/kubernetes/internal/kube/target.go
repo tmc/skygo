@@ -149,9 +149,12 @@ func fromRESTFrozen(ctx context.Context, t TargetConfig, owner string, config *r
 	if err != nil {
 		return backend.Target{}, nil, err
 	}
+	// Only the DRA integration enforces DRA accelerators and advertises them.
 	names := make([]string, 0, len(t.Resources.Accelerators))
-	for name := range t.Resources.Accelerators {
-		names = append(names, name)
+	for name, a := range t.Resources.Accelerators {
+		if a.DRA == nil {
+			names = append(names, name)
+		}
 	}
 	slices.Sort(names)
 	b := &Backend{client: client, namespace: t.Namespace, owner: owner, binding: binding,
@@ -202,6 +205,7 @@ func clonePolicy(p ResourcePolicy) ResourcePolicy {
 	p.Accelerators = maps.Clone(p.Accelerators)
 	for name, a := range p.Accelerators {
 		a.RequiredNodeSelector = maps.Clone(a.RequiredNodeSelector)
+		a.DRA = cloneDRAPolicy(a.DRA)
 		p.Accelerators[name] = a
 	}
 	p.NodeSelectors = maps.Clone(p.NodeSelectors)

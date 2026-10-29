@@ -25,7 +25,9 @@ func (b *Backend) podSpec(t backend.Task) corev1.PodSpec {
 	if t.MemoryLimitBytes > 0 {
 		limits[corev1.ResourceMemory] = *resource.NewQuantity(t.MemoryLimitBytes, resource.BinarySI)
 	}
-	if t.AcceleratorCount > 0 {
+	// A DRA accelerator is requested through its claim (dra_identity.go),
+	// never as an extended resource.
+	if t.AcceleratorCount > 0 && b.policy.Accelerators[t.Accelerator].DRA == nil {
 		q := *resource.NewQuantity(int64(t.AcceleratorCount), resource.DecimalSI)
 		name := corev1.ResourceName(b.policy.Accelerators[t.Accelerator].ResourceName)
 		resources[name] = q

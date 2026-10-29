@@ -1,0 +1,74 @@
+# Source-only; NOT_RUN. Routing of the server command for --dra-state. The
+# server callback prints the route it was given and returns; it never calls
+# Install, so no state directory is created by any case.
+
+# Help lists the flags.
+skygo-kubernetes server --help
+stdout '--dra-state'
+stdout '--dra-log-retention'
+! stdout 'route'
+
+# --dra-state requires --targets and --execution-state, before any file is read.
+! skygo-kubernetes server --targets $WORK/absent.yaml --dra-state $WORK/dra
+stderr '--dra-state requires --targets and --execution-state'
+! stderr 'absent'
+! stdout 'route'
+
+! skygo-kubernetes server --namespace tasks --dra-state ''
+stderr '--dra-state requires --targets and --execution-state'
+! stdout 'route'
+
+! skygo-kubernetes server --targets $WORK/absent.yaml --execution-state $WORK/state --dra-log-retention 1h
+stderr '--dra-log-retention requires --dra-state'
+! stderr 'absent'
+! stdout 'route'
+
+# Environment profiles still conflict with execution state.
+! skygo-kubernetes server --targets $WORK/absent.yaml --execution-state $WORK/state --dra-state $WORK/dra --environment-profiles $WORK/absent.yaml --auth-file auth.json
+stderr '--execution-state conflicts with --environment-profiles'
+! stdout 'route'
+
+# A DRA accelerator without --dra-state is refused after the file is read and
+# before the server runs: no target silently drops or reroutes it.
+! skygo-kubernetes server --targets $WORK/dra.yaml
+stderr 'dra accelerators require --dra-state'
+! stdout 'route'
+
+! skygo-kubernetes server --targets $WORK/dra.yaml --execution-state $WORK/state
+stderr 'dra accelerators require --dra-state'
+! stdout 'route'
+
+# The DRA route hands the server an Install and no Targets callback.
+skygo-kubernetes server --targets $WORK/dra.yaml --execution-state $WORK/state --dra-state $WORK/dra --dra-log-retention 24h
+stdout 'install route'
+! stdout 'targets route'
+
+# Positive control: ordinary configuration keeps the Targets route unchanged,
+# with or without execution state.
+skygo-kubernetes server --targets $WORK/plain.yaml
+stdout 'targets route'
+! stdout 'install route'
+
+skygo-kubernetes server --targets $WORK/plain.yaml --execution-state $WORK/state
+stdout 'targets route'
+
+! exists $WORK/state
+! exists $WORK/dra
+
+-- dra.yaml --
+version: 1
+targets:
+- name: gpu
+  in_cluster: true
+  namespace: skygo-dra
+  resources:
+    accelerators:
+      h100:
+        dra:
+          device_class: gpu.example.com
+-- plain.yaml --
+version: 1
+targets:
+- name: plain
+  in_cluster: true
+  namespace: skygo
