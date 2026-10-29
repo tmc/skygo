@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -75,6 +76,30 @@ func TestCoverageWorkload(t *testing.T) {
 			fmt.Fprintln(os.Stderr, "chatter")
 			time.Sleep(time.Millisecond)
 		}
+	case "interruptible":
+		// The stop fixtures' workload. It records whether it started with
+		// SIGINT ignored, as under test2json or an asynchronous shell, then
+		// handles os.Interrupt explicitly, which restores delivery even
+		// then, before marking itself ready. A received interrupt is
+		// acknowledged and ends the workload with the cooperative exit
+		// status workloadInterrupted; its Wait status is that exit, not a
+		// death by SIGINT. Not being interrupted is a different failure.
+		if signal.Ignored(os.Interrupt) {
+			mark("started-ignored")
+		}
+		interrupt := make(chan os.Signal, 1)
+		signal.Notify(interrupt, os.Interrupt)
+		fmt.Println("holding")
+		mark("notified")
+		select {
+		case <-interrupt:
+			fmt.Println("interrupted")
+			mark("interrupted")
+			os.Exit(workloadInterrupted)
+		case <-time.After(time.Minute):
+			fmt.Fprintln(os.Stderr, "workload not interrupted")
+			os.Exit(workloadUninterrupted)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "unknown workload %q\n", mode)
 		os.Exit(1)
@@ -82,6 +107,14 @@ func TestCoverageWorkload(t *testing.T) {
 	time.Sleep(time.Minute)
 	os.Exit(0)
 }
+
+// Exit statuses of the interruptible workload. Only workloadInterrupted,
+// written after the "interrupted" acknowledgement, means it handled an
+// interrupt; other failures exit 1.
+const (
+	workloadInterrupted   = 130
+	workloadUninterrupted = 3
+)
 
 // TestCoverage runs testdata/coverage scripts against the production CLI and
 // the production server executable. Each script owns a data directory, a
@@ -513,7 +546,12 @@ type stopFixture struct {
 	modelSignal, modelKill bool  // count the operation but never deliver it
 }
 
-func startStopFixture(t *testing.T, mode string, gated bool) *stopFixture {
+// If ignoreInterrupt is set, the workload starts with SIGINT ignored, set by
+// a fixed shell wrapper that then execs it, so the original process is still
+// the workload. An interruptible workload is awaited until its interrupt
+// handler is installed, after its cleanups are registered and before any
+// stop.
+func startStopFixture(t *testing.T, mode string, gated, ignoreInterrupt bool) *stopFixture {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("stop sends os.Interrupt")
@@ -543,7 +581,11 @@ func startStopFixture(t *testing.T, mode string, gated bool) *stopFixture {
 			return errors.Join(pr.Kill(), f.killErr)
 		},
 	}
-	f.cmd = exec.Command(exe, "-test.run=^TestCoverageWorkload$")
+	argv := []string{exe, "-test.run=^TestCoverageWorkload$"}
+	if ignoreInterrupt {
+		argv = append([]string{"/bin/sh", "-c", `trap "" INT; exec "$@"`, "sh"}, argv...)
+	}
+	f.cmd = exec.Command(argv[0], argv[1:]...)
 	f.cmd.Env = append(os.Environ(), "SKYGO_COVERAGE_WORKLOAD="+mode, "SKYGO_COVERAGE_DIR="+f.dir)
 	f.cmd.Stdout = &f.p.out
 	f.cmd.Stderr = &f.p.diag
@@ -570,6 +612,9 @@ func startStopFixture(t *testing.T, mode string, gated bool) *stopFixture {
 	f.report = func(err error) { t.Errorf("fixture server: %v", err) }
 	t.Cleanup(func() { f.cleanup(f.report) })
 	t.Cleanup(f.open)
+	if mode == "interruptible" {
+		f.awaitMark(t, "notified")
+	}
 	return f
 }
 
@@ -604,19 +649,57 @@ func (f *stopFixture) awaitWaited(t *testing.T) {
 	}
 }
 
-// awaitReady waits for the workload's ready marker.
-func (f *stopFixture) awaitReady(t *testing.T) {
+// marked reports whether the workload has written the named marker.
+func (f *stopFixture) marked(name string) bool {
+	_, err := os.Stat(filepath.Join(f.dir, name))
+	return err == nil
+}
+
+// awaitMark waits for the workload's named marker. A workload that exits
+// without writing it fails the wait.
+func (f *stopFixture) awaitMark(t *testing.T, name string) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		if _, err := os.Stat(filepath.Join(f.dir, "ready")); err == nil {
+		exited := false
+		select {
+		case <-f.waited:
+			exited = true
+		default:
+		}
+		if f.marked(name) {
 			return
 		}
+		if exited {
+			t.Fatalf("workload exited without marking %s", name)
+		}
 		if time.Now().After(deadline) {
-			t.Fatal("workload not ready")
+			t.Fatalf("workload did not mark %s", name)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// checkInterrupted requires err to carry the original Wait result of a
+// workload that acknowledged its interrupt and exited with
+// workloadInterrupted, and returns that result.
+func (f *stopFixture) checkInterrupted(t *testing.T, err error) *exec.ExitError {
+	t.Helper()
+	if !f.marked("interrupted") {
+		t.Error("workload did not acknowledge the interrupt")
+	}
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) {
+		t.Errorf("%v; want the interrupted Wait result", err)
+		return nil
+	}
+	if exit.ExitCode() != workloadInterrupted {
+		t.Errorf("%v; want exit status %d", err, workloadInterrupted)
+	}
+	if exit.ProcessState != f.cmd.ProcessState {
+		t.Errorf("%v; want the original process's Wait result", err)
+	}
+	return exit
 }
 
 // checkJoined requires stop to have received the original Wait result before
@@ -651,7 +734,7 @@ func (f *stopFixture) checkOwned(t *testing.T) {
 // stop must still receive the original one, and report the Signal failure
 // with it.
 func TestServerProcessStopExited(t *testing.T) {
-	f := startStopFixture(t, "success", false)
+	f := startStopFixture(t, "success", false, false)
 	f.awaitWaited(t)
 	_, _, err := f.p.stop(os.Interrupt)
 	if !errors.Is(err, os.ErrProcessDone) {
@@ -667,16 +750,67 @@ func TestServerProcessStopExited(t *testing.T) {
 // stop returns the interrupted process's own Wait result, and a repeated stop
 // returns that same outcome without touching the process.
 func TestServerProcessStopRunning(t *testing.T) {
-	f := startStopFixture(t, "hold", false)
+	f := startStopFixture(t, "interruptible", false, false)
+	checkStopInterrupted(t, f)
+}
+
+// TestServerProcessStopInheritedIgnoredInterrupt starts the interruptible
+// workload with SIGINT ignored. It must witness that it started so, and its
+// own handler must still let one Signal end it, with no Kill.
+func TestServerProcessStopInheritedIgnoredInterrupt(t *testing.T) {
+	f := startStopFixture(t, "interruptible", false, true)
+	if !f.marked("started-ignored") {
+		t.Error("workload did not start with SIGINT ignored")
+	}
+	checkStopInterrupted(t, f)
+}
+
+// checkStopInterrupted stops f's running workload twice. Each stop must
+// return only the acknowledged interrupt's original Wait result, the same
+// one each time, after one Signal and no Kill.
+func checkStopInterrupted(t *testing.T, f *stopFixture) {
+	t.Helper()
+	var first *exec.ExitError
 	for i := range 2 {
 		_, _, err := f.p.stop(os.Interrupt)
-		var exit *exec.ExitError
-		if errors.Is(err, os.ErrProcessDone) || !errors.As(err, &exit) {
+		exit := f.checkInterrupted(t, err)
+		if i == 0 {
+			first = exit
+		} else if exit != first {
+			t.Errorf("stop %d: %v; want the first stop's Wait result", i, err)
+		}
+		if st := f.p.stopped; st.signal != nil || st.late || st.kill != nil {
 			t.Errorf("stop %d: %v; want only the interrupted Wait result", i, err)
 		}
 	}
 	if f.signals != 1 || f.kills != 0 {
 		t.Errorf("%d signals, %d kills; want 1, 0", f.signals, f.kills)
+	}
+	f.checkJoined(t)
+}
+
+// TestServerProcessStopIgnoredInterruptKilled is the counterexample: a
+// workload with no handler that started with SIGINT ignored outlives its one
+// interrupt, unacknowledged, and stop's one real Kill ends it.
+func TestServerProcessStopIgnoredInterruptKilled(t *testing.T) {
+	f := startStopFixture(t, "hold", false, true)
+	f.p.drainBound = 100 * time.Millisecond
+	f.awaitMark(t, "ready")
+	_, _, err := f.p.stop(os.Interrupt)
+	var exit *exec.ExitError
+	if !errors.As(err, &exit) || exit.ExitCode() != -1 || exit.Error() != "signal: killed" {
+		t.Errorf("stop: %v; want the killed Wait result", err)
+	} else if exit.ProcessState != f.cmd.ProcessState {
+		t.Errorf("stop: %v; want the original process's Wait result", err)
+	}
+	if st := f.p.stopped; st.signal != nil || !st.late || st.kill != nil {
+		t.Errorf("stop: %v; want a clean Signal outlived and a clean Kill", err)
+	}
+	if f.marked("interrupted") {
+		t.Error("ignoring workload acknowledged an interrupt")
+	}
+	if f.signals != 1 || f.kills != 1 {
+		t.Errorf("%d signals, %d kills; want 1, 1", f.signals, f.kills)
 	}
 	f.checkJoined(t)
 }
@@ -687,7 +821,7 @@ func TestServerProcessStopRunning(t *testing.T) {
 // Later stops must neither signal nor kill again, only wait for the same
 // Wait result, and return it with the recorded failures.
 func TestServerProcessStopKillTimeout(t *testing.T) {
-	f := startStopFixture(t, "hold", true)
+	f := startStopFixture(t, "interruptible", true, false)
 	f.signalErr = errors.New("modeled signal failure")
 	f.killErr = errors.New("modeled kill failure")
 	f.modelKill = true
@@ -700,13 +834,25 @@ func TestServerProcessStopKillTimeout(t *testing.T) {
 		}
 		f.checkOwned(t)
 	}
+	// The workload has acknowledged the interrupt and its Wait has
+	// returned, but stop has not received that result: it stays owned.
 	f.awaitWaited(t)
+	if !f.marked("interrupted") {
+		t.Error("workload exited without acknowledging the interrupt")
+	}
+	f.checkOwned(t)
 	f.open()
+	var first *exec.ExitError
 	for i := range 2 {
 		_, _, err := f.p.stop(os.Interrupt)
-		var exit *exec.ExitError
-		if !errors.Is(err, f.signalErr) || !errors.Is(err, f.killErr) || !errors.As(err, &exit) {
+		if !errors.Is(err, f.signalErr) || !errors.Is(err, f.killErr) {
 			t.Errorf("joined stop %d: %v; want the recorded failures with the original Wait result", i, err)
+		}
+		exit := f.checkInterrupted(t, err)
+		if i == 0 {
+			first = exit
+		} else if exit != first {
+			t.Errorf("joined stop %d: %v; want the first joined stop's Wait result", i, err)
 		}
 	}
 	if f.signals != 1 || f.kills != 1 {
@@ -718,15 +864,18 @@ func TestServerProcessStopKillTimeout(t *testing.T) {
 // TestServerProcessFinish is the positive control for the held namespace:
 // a joined server's owned data directory is removed, with no hold.
 func TestServerProcessFinish(t *testing.T) {
-	f := startStopFixture(t, "hold", false)
+	f := startStopFixture(t, "interruptible", false, false)
 	f.withData(t)
 	err := f.p.finish(false)
-	var exit *exec.ExitError
-	if errors.Is(err, errServerHeld) || !errors.As(err, &exit) {
+	if errors.Is(err, errServerHeld) {
 		t.Errorf("finish: %v; want only the interrupted Wait result", err)
 	}
+	f.checkInterrupted(t, err)
 	if _, err := os.Stat(f.p.data); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("data directory after the join: %v; want it removed", err)
+	}
+	if f.signals != 1 || f.kills != 0 {
+		t.Errorf("%d signals, %d kills; want 1, 0", f.signals, f.kills)
 	}
 	f.checkJoined(t)
 }
@@ -736,7 +885,7 @@ func TestServerProcessFinish(t *testing.T) {
 // hold is reported. Once the same Wait result arrives, a later finish
 // removes the directory.
 func TestServerProcessHeldNamespace(t *testing.T) {
-	f := startStopFixture(t, "hold", true)
+	f := startStopFixture(t, "interruptible", true, false)
 	f.withData(t)
 	f.modelKill = true
 	f.p.drainBound = 100 * time.Millisecond
@@ -748,11 +897,25 @@ func TestServerProcessHeldNamespace(t *testing.T) {
 		t.Errorf("held data directory: %v", err)
 	}
 	f.checkOwned(t)
+	// The interrupted workload's Wait has returned, but its result is not
+	// yet delivered: the server and its data directory stay retained.
 	f.awaitWaited(t)
+	if !f.marked("interrupted") {
+		t.Error("workload exited without acknowledging the interrupt")
+	}
+	if err := f.p.finish(false); !errors.Is(err, errServerHeld) {
+		t.Errorf("finish before the join: %v; want the hold reported", err)
+	}
+	if _, err := os.Stat(f.p.data); err != nil {
+		t.Errorf("held data directory before the join: %v", err)
+	}
+	f.checkOwned(t)
 	f.open()
-	if err := f.p.finish(false); errors.Is(err, errServerHeld) {
+	err := f.p.finish(false)
+	if errors.Is(err, errServerHeld) {
 		t.Errorf("finish after the join: %v; want no hold", err)
 	}
+	f.checkInterrupted(t, err)
 	if _, err := os.Stat(f.p.data); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("data directory after the join: %v; want it removed", err)
 	}
@@ -768,11 +931,11 @@ func TestServerProcessHeldNamespace(t *testing.T) {
 // run with -race to check that. After the fixture's real Kill, the joined
 // stop returns the output.
 func TestServerProcessStopLiveOutput(t *testing.T) {
-	f := startStopFixture(t, "chatter", false)
+	f := startStopFixture(t, "chatter", false, false)
 	f.modelSignal, f.modelKill = true, true
 	f.p.drainBound = 100 * time.Millisecond
 	f.p.killBound = 100 * time.Millisecond
-	f.awaitReady(t)
+	f.awaitMark(t, "ready")
 	out, diag, err := f.p.stop(os.Interrupt)
 	if out != "" || diag != "" || err == nil {
 		t.Errorf("unjoined stop: output %q, %q, error %v; want no output and an error", out, diag, err)
@@ -803,15 +966,21 @@ func TestServerProcessFixtureCleanupReports(t *testing.T) {
 	var reported []error
 	var f *stopFixture
 	t.Run("unstopped", func(t *testing.T) {
-		f = startStopFixture(t, "hold", false)
+		f = startStopFixture(t, "interruptible", false, false)
 		f.signalErr = signalErr
-		f.report = func(err error) { reported = append(reported, err) }
+		f.report = func(err error) {
+			reported = append(reported, err)
+			f.checkInterrupted(t, err)
+		}
 	})
 	if f == nil {
 		return
 	}
 	if len(reported) != 1 || !errors.Is(reported[0], signalErr) {
-		t.Errorf("registered cleanup reported %v; want the stop failure", reported)
+		t.Fatalf("registered cleanup reported %v; want the stop failure", reported)
+	}
+	if f.signals != 1 || f.kills != 0 {
+		t.Errorf("%d signals, %d kills; want 1, 0", f.signals, f.kills)
 	}
 	f.checkJoined(t)
 }
@@ -820,14 +989,18 @@ func TestServerProcessFixtureCleanupReports(t *testing.T) {
 // directory it is told to keep: the directory stays and its retention is
 // reported.
 func TestServerProcessFinishKeepData(t *testing.T) {
-	f := startStopFixture(t, "hold", false)
+	f := startStopFixture(t, "interruptible", false, false)
 	f.withData(t)
 	err := f.p.finish(true)
 	if !errors.Is(err, errServerDataKept) || errors.Is(err, errServerHeld) {
 		t.Errorf("finish: %v; want the kept data directory reported", err)
 	}
+	f.checkInterrupted(t, err)
 	if _, err := os.Stat(f.p.data); err != nil {
 		t.Errorf("kept data directory: %v", err)
+	}
+	if f.signals != 1 || f.kills != 0 {
+		t.Errorf("%d signals, %d kills; want 1, 0", f.signals, f.kills)
 	}
 	f.checkJoined(t)
 }
