@@ -19,15 +19,16 @@ var ErrNotCurrent = errors.New("not an existing current installation")
 // longer matches the facts InspectExisting read.
 var ErrInstallationChanged = errors.New("existing installation changed")
 
-// ErrCloseUncertain means InspectExisting or OpenExisting attempted to close an
-// original database and did not prove closure. This includes a failed bbolt
-// Open after the descriptor was handed to bbolt, which closes it and discards
-// the result. The caller must keep the error and stop; it must not reopen,
+// ErrCloseUncertain means an existing-installation or Backup/Restore operation
+// did not prove closure of an original database, snapshot or directory file.
+// This includes a failed bbolt Open after descriptor handoff, or a failed
+// snapshot copy whose reader Close result bbolt discards. The caller must keep the error and stop; it must not reopen,
 // retry or clean up beneath it. Use errors.Is.
 var ErrCloseUncertain = errors.New("job database closure is uncertain")
 
 // closeError retains the original database and descriptor whose Close did not
-// prove closure. db is nil when bbolt closed the descriptor itself.
+// prove closure. db is nil for ordinary files and when bbolt discarded the
+// descriptor after a failed Open. A snapshot descriptor also retains its name.
 type closeError struct {
 	db   *bolt.DB
 	file *os.File

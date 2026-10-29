@@ -390,21 +390,21 @@ func Compact(dir, output string) (err error) {
 	}
 	return syncDirectory(filepath.Dir(output))
 }
-func freshenRestored(path string) error {
-	lineage, e := newID()
-	if e != nil {
-		return e
+func freshenRestored(path string, closes snapshotOps) (result error) {
+	lineage, err := newID()
+	if err != nil {
+		return err
 	}
-	db, e := bolt.Open(path, 0600, &bolt.Options{NoFreelistSync: true})
-	if e != nil {
-		return e
+	owner, err := openOwnedSnapshot(path, true)
+	if err != nil {
+		return err
 	}
-	defer db.Close()
-	if e = db.View(validateSnapshot); e != nil {
-		return e
+	defer func() { result = errors.Join(result, owner.close(closes)) }()
+	if err := owner.db.View(validateSnapshot); err != nil {
+		return err
 	}
 	now := time.Now().UTC()
-	return db.Update(func(tx *bolt.Tx) error {
+	return owner.db.Update(func(tx *bolt.Tx) error {
 		return freshenRestoredTx(tx, lineage, now)
 	})
 }
