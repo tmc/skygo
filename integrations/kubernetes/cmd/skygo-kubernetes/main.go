@@ -65,14 +65,14 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			}
 			// The integration constructs and owns every configured target.
 			return run(ctx, server.Config{
-				DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
+				DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, OIDCFile: o.OIDCFile, OIDCJWKSURL: o.OIDCJWKSURL, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
 				Install: func(s *store.Store, engine *auth.Engine) (server.Integration, error) {
 					return kube.NewEnvironmentIntegration(ctx, s, engine, config, profiles)
 				},
 			})
 		}
 		return run(ctx, server.Config{
-			DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
+			DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, OIDCFile: o.OIDCFile, OIDCJWKSURL: o.OIDCJWKSURL, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
 			Targets: func(owner string) ([]backend.Target, error) {
 				if named {
 					var targets []backend.Target

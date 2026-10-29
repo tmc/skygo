@@ -35,6 +35,6 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("locate supervisor executable: %w", err)
 		}
-		return run(ctx, server.Config{DurableLocal: true, LocalSupervisor: exe, DisableLocal: o.DisableLocal, DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, TargetFacts: o.TargetFacts})
+		return run(ctx, server.Config{DurableLocal: true, LocalSupervisor: exe, DisableLocal: o.DisableLocal, DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, OIDCFile: o.OIDCFile, OIDCJWKSURL: o.OIDCJWKSURL, TargetFacts: o.TargetFacts})
 	})
 }

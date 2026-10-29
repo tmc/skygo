@@ -27,6 +27,8 @@ import (
 // ServerOptions configures the server callback.
 type ServerOptions struct {
 	DataDir, Listen, Token, AuthFile, TargetFacts string
+	// OIDCFile and OIDCJWKSURL configure scoped ID-token authentication.
+	OIDCFile, OIDCJWKSURL string
 	// ArtifactDir opens an initialized artifact directory; empty disables it.
 	ArtifactDir  string
 	DisableLocal bool
@@ -116,6 +118,8 @@ func NewWithClient(server func(context.Context, ServerOptions) error, client *ht
 	srv.Flags().StringVar(&s.Listen, "listen", "127.0.0.1:8080", "HTTP listen address")
 	srv.Flags().StringVar(&s.TargetFacts, "target-facts", "", "Configured advisory quote and capacity facts (Linux and macOS)")
 	srv.Flags().StringVar(&s.AuthFile, "auth-file", "", "Private scoped authentication file")
+	srv.Flags().StringVar(&s.OIDCFile, "oidc-file", "", "Private OpenID Connect identity mapping (requires --auth-file)")
+	srv.Flags().StringVar(&s.OIDCJWKSURL, "oidc-jwks-url", "", "The one allowed HTTPS key set URL (requires --oidc-file)")
 	srv.Flags().BoolVar(&s.RecoverStoppedArtifactReaders, "recover-stopped-artifact-readers", false, "Recover stopped readers only when ALL historical producers have no surviving descriptor copy or use and the same-domain kernel is qualified")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
 	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.workflowCommand(), o.dashboardCommand(), o.infoCommand(), o.stateCommand(), o.authCommand(), o.artifactsCommand(), o.environmentCommand())

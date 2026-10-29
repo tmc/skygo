@@ -51,6 +51,10 @@ type Config struct {
 	ArtifactDir                                   string
 	DataDir, Listen, Token, AuthFile, TargetFacts string
 
+	// OIDCFile enables ID tokens with AuthFile. OIDCJWKSURL is the one
+	// HTTPS key set URL that file may name; empty permits only a key file.
+	OIDCFile, OIDCJWKSURL string
+
 	// ExistingInstallation starts only an existing, current, scoped
 	// installation with installed artifacts; it never creates, initializes
 	// or migrates state. It requires AuthFile and ArtifactDir and conflicts
@@ -124,6 +128,9 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	}
 	if cfg.AuthFile != "" && cfg.Token != "" {
 		return errors.New("auth file conflicts with legacy token")
+	}
+	if cfg.OIDCFile != "" && cfg.AuthFile == "" || cfg.OIDCJWKSURL != "" && cfg.OIDCFile == "" {
+		return errors.New("oidc authentication requires an auth file and an oidc file")
 	}
 	if cfg.ExistingInstallation && (cfg.AuthFile == "" || cfg.ArtifactDir == "" || cfg.Artifacts != nil || cfg.RecoverStoppedArtifactReaders) {
 		return errors.New("existing installation requires an auth file and artifact directory, without borrowed files or reader recovery")
@@ -394,14 +401,15 @@ func (f *serverRun) openState(cfg Config) error {
 	if s.Scoped() != (cfg.AuthFile != "") {
 		return errors.New("scoped state requires its auth file; activate legacy state with auth init first")
 	}
-	engine := auth.NewLegacy(cfg.Token)
-	if cfg.AuthFile != "" {
-		engine, err = auth.NewFile(cfg.AuthFile, s.Owner())
-		if err != nil {
-			return fmt.Errorf("load authentication: %w", err)
-		}
+	f.engine = auth.NewLegacy(cfg.Token)
+	if cfg.OIDCFile != "" {
+		f.engine, err = auth.NewFileOIDC(cfg.AuthFile, s.Owner(), cfg.OIDCFile, cfg.OIDCJWKSURL)
+	} else if cfg.AuthFile != "" {
+		f.engine, err = auth.NewFile(cfg.AuthFile, s.Owner())
 	}
-	f.engine = engine
+	if err != nil {
+		return fmt.Errorf("load authentication: %w", err)
+	}
 	return nil
 }
 
@@ -414,7 +422,11 @@ func (f *serverRun) openExisting(cfg Config) error {
 	if err != nil {
 		return fmt.Errorf("inspect existing installation: %w", err)
 	}
-	f.engine, err = auth.NewFile(cfg.AuthFile, installed.Owner())
+	if cfg.OIDCFile != "" {
+		f.engine, err = auth.NewFileOIDC(cfg.AuthFile, installed.Owner(), cfg.OIDCFile, cfg.OIDCJWKSURL)
+	} else {
+		f.engine, err = auth.NewFile(cfg.AuthFile, installed.Owner())
+	}
 	if err != nil {
 		return fmt.Errorf("load authentication: %w", err)
 	}
