@@ -101,6 +101,16 @@ type closeOwner struct {
 	joined     bool  // closeIn, or a test's own Close of in, returned nil
 	retired    bool
 	retainOnce sync.Once
+
+	// expect, if a test sets it, names the one sentinel whose retention the
+	// test causes on purpose, such as a failed original response Close;
+	// originals then reports whether every original thread the test started
+	// has returned. retain reports that retention without failing the test
+	// only if expectedRetention accepts it, and sets expected; cleanup fails
+	// the test if the owner retires instead.
+	expect    error
+	originals func() error
+	expected  bool
 }
 
 // closeOwnerDirectory returns a new private directory under a persistent
@@ -204,16 +214,66 @@ func (o *closeOwner) cleanup(t *testing.T) {
 	t.Helper()
 	if err := o.retireJoined(); err != nil {
 		o.retain(t)
+		return
 	}
+	if o.expect != nil {
+		t.Errorf("retention for %v expected; the owner retired instead", o.expect)
+	}
+}
+
+// expectedRetention returns nil only if o's held error is, by errors.Is,
+// the sentinel the test named in expect, every original thread of the test
+// has returned, and o still holds the same integration and every
+// dependency: not retired, its Store open and readable, its Engine running
+// and its directory present.
+func (o *closeOwner) expectedRetention() error {
+	switch {
+	case o.expect == nil:
+		return errors.New("no retention expected")
+	case o.held == nil || !errors.Is(o.held, o.expect):
+		return fmt.Errorf("held %v, not the expected %v", o.held, o.expect)
+	case o.originals == nil:
+		return errors.New("no join of the originals")
+	case o.retired || o.joined || o.in == nil || o.s == nil || o.engine == nil || o.done == nil:
+		return errors.New("owner released its integration or a dependency")
+	}
+	if err := o.originals(); err != nil {
+		return fmt.Errorf("originals not joined: %w", err)
+	}
+	select {
+	case <-o.done:
+		return errors.New("auth Engine stopped")
+	default:
+	}
+	if _, err := o.s.Services(0, 1); err != nil {
+		return fmt.Errorf("Store unusable: %w", err)
+	}
+	if info, err := os.Stat(o.dir); err != nil || !info.IsDir() {
+		return fmt.Errorf("directory %s: %v", o.dir, err)
+	}
+	return nil
 }
 
 // retain reports the held error and keeps this owner reachable until the
 // test process exits, by one goroutine waiting on a channel that is never
-// closed. It replaces no operation and records no settlement.
+// closed. It replaces no operation and records no settlement. A retention
+// the test expected, as expectedRetention accepts it, is reported with
+// t.Logf; any other with t.Errorf.
 func (o *closeOwner) retain(t *testing.T) {
 	t.Helper()
 	o.retainOnce.Do(func() {
-		t.Errorf("retaining original integration fixture at %s: %v", o.dir, o.held)
+		if o.expect != nil {
+			if err := o.expectedRetention(); err != nil {
+				t.Errorf("expected retention for %v refused: %v", o.expect, err)
+			} else {
+				o.expected = true
+			}
+		}
+		if o.expected {
+			t.Logf("retaining original integration fixture at %s, as expected: %v", o.dir, o.held)
+		} else {
+			t.Errorf("retaining original integration fixture at %s: %v", o.dir, o.held)
+		}
 		processLifetime := make(chan struct{})
 		go func(original *closeOwner) {
 			<-processLifetime
@@ -797,5 +857,45 @@ func TestEnvironmentIntegrationCloseOwnerSetupFailure(t *testing.T) {
 	}
 	if _, err := os.Stat(o.dir); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("namespace not removed: %v", err)
+	}
+}
+
+// TestCloseOwnerExpectedRetentionRefuses (U02): expectedRetention accepts
+// only the named sentinel, by errors.Is, with every original joined and the
+// integration, Store, Engine and directory all kept. Each negative changes
+// one condition of the positive, on an owner made over the real Store and
+// Engine of another, which itself retires normally.
+func TestCloseOwnerExpectedRetentionRefuses(t *testing.T) {
+	o, _ := closeStore(t)
+	sentinel := errors.New("modeled test sentinel: expected retention")
+	for _, tt := range []struct {
+		name string
+		edit func(c *closeOwner)
+		ok   bool
+	}{
+		{"positive", func(*closeOwner) {}, true},
+		{"no expectation", func(c *closeOwner) { c.expect = nil }, false},
+		{"other cause", func(c *closeOwner) { c.held = errors.New("another cause") }, false},
+		{"nothing held", func(c *closeOwner) { c.held = nil }, false},
+		{"originals unjoined", func(c *closeOwner) { c.originals = func() error { return errors.New("original pending") } }, false},
+		{"no join of the originals", func(c *closeOwner) { c.originals = nil }, false},
+		{"integration joined", func(c *closeOwner) { c.joined = true }, false},
+		{"retired", func(c *closeOwner) { c.retired = true }, false},
+		{"engine stopped", func(c *closeOwner) {
+			done := make(chan struct{})
+			close(done)
+			c.done = done
+		}, false},
+		{"directory removed", func(c *closeOwner) { c.dir = filepath.Join(c.dir, "absent") }, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &closeOwner{dir: o.dir, s: o.s, engine: o.engine, done: o.done, in: &environmentIntegration{},
+				held: fmt.Errorf("original integration Close: %w", sentinel), expect: sentinel,
+				originals: func() error { return nil }}
+			tt.edit(c)
+			if err := c.expectedRetention(); (err == nil) != tt.ok {
+				t.Fatalf("expectedRetention = %v, want accepted %v", err, tt.ok)
+			}
+		})
 	}
 }

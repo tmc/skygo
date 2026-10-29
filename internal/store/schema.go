@@ -10,7 +10,7 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
-const schemaVersion = environmentRetirementSchema
+const schemaVersion = servingSchema
 
 var schemaKey = []byte("schema_version")
 
@@ -188,6 +188,11 @@ func initialize(tx *bolt.Tx, owner string) error {
 			return err
 		}
 	}
+	if schemaNumber(tx) == environmentRetirementSchema {
+		if err := migrateServing(tx); err != nil {
+			return err
+		}
+	}
 	return validateSnapshot(tx)
 }
 
@@ -350,5 +355,8 @@ func validateSnapshot(tx *bolt.Tx) error {
 	if err := validateEnvironments(tx); err != nil {
 		return err
 	}
-	return validateWorkerGroups(tx)
+	if err := validateWorkerGroups(tx); err != nil {
+		return err
+	}
+	return validateServing(tx)
 }

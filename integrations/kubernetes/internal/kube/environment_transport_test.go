@@ -79,9 +79,17 @@ func newFakeAPI(t *testing.T, protocol string) *fakeAPI {
 // TLS configuration before it starts.
 func newFakeAPIWith(t *testing.T, protocol string, edit func(*tls.Config)) *fakeAPI {
 	t.Helper()
+	return newFakeAPIProtocol(t, protocol, edit, false)
+}
+
+// newFakeAPIProtocol enables HTTP/2 only for tests that require independent
+// response and request-body Close progress. Existing SPDY fixtures keep HTTP/1.1.
+func newFakeAPIProtocol(t *testing.T, protocol string, edit func(*tls.Config), h2 bool) *fakeAPI {
+	t.Helper()
 	a := &fakeAPI{t: t, protocol: protocol, streams: make(chan httpstream.Stream, 16)}
 	t.Cleanup(a.cleanup)
 	a.server = httptest.NewUnstartedServer(a)
+	a.server.EnableHTTP2 = h2
 	if edit != nil {
 		a.server.TLS = &tls.Config{}
 		edit(a.server.TLS)

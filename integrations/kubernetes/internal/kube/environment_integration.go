@@ -12,6 +12,7 @@ import (
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/environmentcontrol"
 	"github.com/tmc/skygo/internal/server"
+	"github.com/tmc/skygo/internal/servingcontrol"
 	"github.com/tmc/skygo/internal/store"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -41,7 +42,8 @@ const environmentServiceAccount = "default"
 // volume_uid. It never creates, modifies or deletes them.
 //
 // An error with a non-nil Integration means the Integration owns state that
-// its Close must release, as server.Config.Install requires.
+// its Close must release, as server.Config.Install requires. It is
+// NewIntegration without services.
 func NewEnvironmentIntegration(ctx context.Context, s *store.Store, engine *auth.Engine, targets Config, profiles EnvironmentConfig) (server.Integration, error) {
 	if s == nil || engine == nil {
 		return nil, errors.New("kubernetes environments require a store and an auth engine")
@@ -49,60 +51,39 @@ func NewEnvironmentIntegration(ctx context.Context, s *store.Store, engine *auth
 	if len(profiles.profiles) == 0 {
 		return nil, errors.New("kubernetes environments require profiles")
 	}
+	return NewIntegration(ctx, s, engine, targets, profiles, ServiceConfig{})
+}
+
+// requireRetention refuses a store without scoped authentication and
+// enabled retention, which environments and services both require; what
+// names the feature in the errors.
+func requireRetention(s *store.Store, what string) error {
 	if !s.Scoped() {
-		return nil, errors.New("kubernetes environments require scoped authentication")
+		return fmt.Errorf("kubernetes %s require scoped authentication", what)
 	}
 	if _, enabled, err := s.RetentionPolicy(); err != nil {
-		return nil, fmt.Errorf("read retention policy: %w", err)
+		return fmt.Errorf("read retention policy: %w", err)
 	} else if !enabled {
-		return nil, errors.New("kubernetes environments require enabled retention")
+		return fmt.Errorf("kubernetes %s require enabled retention", what)
 	}
-	configs := targets.Targets()
-	selected := slices.IndexFunc(configs, func(t TargetConfig) bool { return t.Name == profiles.target })
-	if selected < 0 {
-		return nil, errors.New("kubernetes environment profiles name an unconfigured target")
-	}
-	in := &environmentIntegration{artifacts: profiles.artifacts}
-	frozen := make([]backend.Target, 0, len(configs))
-	for i, tc := range configs {
-		target, config, err := loadTarget(ctx, tc, s.Owner())
-		if err != nil {
-			if in.rt != nil {
-				return in, err
-			}
-			return nil, err
-		}
-		if i == selected {
-			b := target.Backend.(*Backend)
-			if profiles.artifacts && b.data == nil {
-				return nil, errors.New("kubernetes environment artifacts require a data helper image")
-			}
-			target.SupportsPersistentEnvironments = true
-			target.SupportsEnvironmentArtifacts = profiles.artifacts
-			in.rt, err = newEnvironmentRuntime(target, config, profiles.podProfiles())
-			if err != nil {
-				return nil, err
-			}
-		}
-		frozen = append(frozen, target)
-	}
-	in.targets = frozen
-	// From here in.rt owns its effects; Close releases them.
+	return nil
+}
+
+// newEnvironments constructs the environment Controller of in over its
+// runtime, after verifying the profiles' borrowed objects.
+func (in *environmentIntegration) newEnvironments(ctx context.Context, s *store.Store, engine *auth.Engine, profiles EnvironmentConfig) error {
 	check, cancel := context.WithTimeout(ctx, environmentReadTimeout)
 	err := in.rt.verifyProfiles(check)
 	cancel()
 	if err != nil {
-		return in, err
+		return err
 	}
 	var rt environmentcontrol.Runtime = environmentRuntimeOnly{in.rt}
 	if profiles.artifacts {
 		rt = in.rt
 	}
 	in.ctl, err = environmentcontrol.New(environmentcontrol.Config{Store: s, Auth: engine, Runtime: rt})
-	if err != nil {
-		return in, err
-	}
-	return in, nil
+	return err
 }
 
 // environmentRuntimeOnly is an environment runtime without its
@@ -110,20 +91,33 @@ func NewEnvironmentIntegration(ctx context.Context, s *store.Store, engine *auth
 // before any effect.
 type environmentRuntimeOnly struct{ environmentcontrol.Runtime }
 
-// environmentIntegration owns a set of targets and the environment Controller
-// and runtime of one of them.
+// environmentIntegration owns a set of targets, the environment Controller
+// and runtime of one of them, and the serving Controller and runtime of one
+// of them. Either pair may be absent.
 type environmentIntegration struct {
 	targets   []backend.Target
 	artifacts bool
-	rt        *environmentRuntime
-	ctl       *environmentcontrol.Controller // nil if construction failed first
+	rt        *environmentRuntime            // nil without environments
+	ctl       *environmentcontrol.Controller // nil without environments or if construction failed first
+	svc       *serviceRuntime                // nil without services
+	svcCtl    *servingcontrol.Controller     // nil without services or if construction failed first
+
+	// stopped, if set, is called by Close with services once both families
+	// are stopped and before anything is joined. Tests set it.
+	stopped func()
 }
 
 var (
 	_ server.EnvironmentProvider = (*environmentIntegration)(nil)
+	_ server.ServingProvider     = (*environmentIntegration)(nil)
 	_ server.ControlBinder       = (*environmentIntegration)(nil)
 	_ server.EffectStopper       = (*environmentIntegration)(nil)
 )
+
+// ServingController returns the integration's serving Controller, or nil.
+func (in *environmentIntegration) ServingController() *servingcontrol.Controller {
+	return in.svcCtl
+}
 
 // Targets returns the integration's targets.
 func (in *environmentIntegration) Targets() []backend.Target { return slices.Clone(in.targets) }
@@ -139,7 +133,7 @@ func (in *environmentIntegration) BindControl(c *control.Control) error {
 	if c == nil {
 		return errors.New("nil control")
 	}
-	if !in.artifacts {
+	if !in.artifacts || in.ctl == nil {
 		return nil
 	}
 	if !c.ArtifactsEnabled() {
@@ -148,8 +142,35 @@ func (in *environmentIntegration) BindControl(c *control.Control) error {
 	return in.ctl.BindArtifacts(c)
 }
 
-// Run runs the Controller until ctx ends.
-func (in *environmentIntegration) Run(ctx context.Context) error { return in.ctl.Run(ctx) }
+// Run runs each Controller until ctx ends or one returns, and returns once
+// both have returned, with the first one's error.
+func (in *environmentIntegration) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	errs := make(chan error, 2)
+	n := 0
+	if in.ctl != nil {
+		n++
+		go func() { errs <- in.ctl.Run(ctx) }()
+	}
+	if in.svcCtl != nil {
+		n++
+		go func() { errs <- in.svcCtl.Run(ctx) }()
+	}
+	if n == 0 {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	var err error
+	for i := range n {
+		e := <-errs
+		if i == 0 {
+			err = e
+			cancel()
+		}
+	}
+	return err
+}
 
 // StopEffects stops the Controller's materializations. The runtime's other
 // frames continue until Close.
@@ -169,12 +190,75 @@ func (in *environmentIntegration) StopEffects() {
 // send is joined, not resolved: its declared nonce stays the only authority
 // on whether it applied. Close never stops or deletes an environment's Pod,
 // claim or volume.
+//
+// With services it first stops both families before it waits for either.
+// The serving Controller's admission and the service runtime stop first,
+// refusing every new call, pass and forward and cancelling those in
+// progress; then the environment Controller's materializations stop, and
+// environmentcontrol.Integration.Close refuses every new Exec and Forward
+// at entry and stops the environment runtime. Close waits for that stop
+// phase, which waits on no I/O, to be acknowledged by the StopRuntime
+// callback before it joins anything. It then joins both families
+// concurrently: the environment as above, and the serving Controller, every
+// call, pass and forward it admitted and any held result, and the service
+// runtime's frames. It never deletes a service's objects or the borrowed
+// namespace, service account or secrets. Without services it is unchanged.
 func (in *environmentIntegration) Close(ctx context.Context) error {
-	var err error
-	if in.ctl != nil {
-		err = environmentcontrol.Integration{Controller: in.ctl, StopRuntime: in.rt.stop}.Close(ctx)
+	if in.svc == nil && in.svcCtl == nil {
+		return in.closeEnvironments(ctx, nil)
 	}
-	return errors.Join(err, in.rt.join(ctx))
+	if in.svcCtl != nil {
+		in.svcCtl.Stop()
+	}
+	if in.svc != nil {
+		in.svc.stop()
+	}
+	if in.ctl != nil {
+		in.ctl.StopMaterializing()
+	}
+	stopped := make(chan struct{})
+	envDone := make(chan error, 1)
+	go func() { envDone <- in.closeEnvironments(ctx, stopped) }()
+	// The environment's stop phase takes locks and cancels; it never waits
+	// for an exchange, so this wait is not bounded by ctx.
+	<-stopped
+	if in.stopped != nil {
+		in.stopped()
+	}
+	var errs []error
+	if in.svcCtl != nil {
+		errs = append(errs, in.svcCtl.Close(ctx))
+	}
+	if in.svc != nil {
+		errs = append(errs, in.svc.join(ctx))
+	}
+	errs = append(errs, <-envDone)
+	return errors.Join(errs...)
+}
+
+// closeEnvironments closes the environment Controller and joins its
+// runtime, as Close does without services. If stopped is not nil it is
+// closed once the Controller refuses new sessions and the runtime is
+// stopped, before anything is joined.
+func (in *environmentIntegration) closeEnvironments(ctx context.Context, stopped chan<- struct{}) error {
+	stop := func() {
+		if in.rt != nil {
+			in.rt.stop()
+		}
+		if stopped != nil {
+			close(stopped)
+		}
+	}
+	var errs []error
+	if in.ctl != nil {
+		errs = append(errs, environmentcontrol.Integration{Controller: in.ctl, StopRuntime: stop}.Close(ctx))
+	} else {
+		stop()
+	}
+	if in.rt != nil {
+		errs = append(errs, in.rt.join(ctx))
+	}
+	return errors.Join(errs...)
 }
 
 // verifyProfiles reads the target's namespace and default service account

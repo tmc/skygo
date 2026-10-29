@@ -95,7 +95,7 @@ func artifactTablesFor(n uint64) (tables []struct {
 		return artifactTables[:len(artifactTables)-2], 7, nil
 	case artifactFormat, 9, 10:
 		return artifactTables[:len(artifactTables)-1], artifactFormat, nil
-	case environmentArtifactSchema, environmentRetirementSchema:
+	case environmentArtifactSchema, environmentRetirementSchema, servingSchema:
 		return artifactTables, artifactFormat, nil
 	}
 	return nil, 0, ErrUnsupportedSchema

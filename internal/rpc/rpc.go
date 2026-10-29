@@ -18,6 +18,7 @@ import (
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/environmentcontrol"
+	"github.com/tmc/skygo/internal/servingcontrol"
 	"github.com/tmc/skygo/internal/store"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -28,9 +29,12 @@ type handler struct {
 	// environments is the Controller this handler serves, or nil. Only a
 	// non-nil one advertises any environment capability.
 	environments *environmentcontrol.Controller
-	streams      chan struct{}
-	denialMu     sync.Mutex
-	lastDenial   time.Time
+	// services is the serving Controller this handler serves, or nil. Only
+	// a non-nil one advertises any service capability.
+	services   *servingcontrol.Controller
+	streams    chan struct{}
+	denialMu   sync.Mutex
+	lastDenial time.Time
 }
 
 type actorKey struct{}
@@ -40,7 +44,7 @@ type responseKey struct{}
 // encryption is the caller's responsibility. The control and handler must share
 // one Engine.
 func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
-	return newHandler(c, engine, nil)
+	return newHandler(c, engine, nil, nil)
 }
 
 // NewEnvironmentHandler is NewHandler that also serves EnvironmentService
@@ -58,11 +62,25 @@ func NewHandler(c *control.Control, engine *auth.Engine) *HTTPHandler {
 // capacity, readiness or native qualification. NewHandler reports none of
 // them, whatever its targets claim.
 func NewEnvironmentHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller) *HTTPHandler {
-	return newHandler(c, engine, environments)
+	return newHandler(c, engine, environments, nil)
 }
 
-func newHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller) *HTTPHandler {
-	h := &handler{control: c, engine: engine, environments: environments, streams: make(chan struct{}, 32)}
+// NewIntegratedHandler is NewEnvironmentHandler that also serves
+// ServingService over services, which must share c's Store and Engine, and
+// the authenticated HTTP route /services/<id>/forward/<application-path>.
+// Either controller may be nil; with both nil it is NewHandler.
+//
+// With services mounted, GetServerInfo reports CAPABILITY_SERVICES_V1 to a
+// scoped credential, which service creation requires, and
+// CAPABILITY_FIXED_SERVICES_V1 on services' configured target only. It
+// never reports CAPABILITY_SERVICE_DATA_V1 or
+// CAPABILITY_SERVICE_CPU_AUTOSCALING_V1: this endpoint refuses those specs.
+func NewIntegratedHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller, services *servingcontrol.Controller) *HTTPHandler {
+	return newHandler(c, engine, environments, services)
+}
+
+func newHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller, services *servingcontrol.Controller) *HTTPHandler {
+	h := &handler{control: c, engine: engine, environments: environments, services: services, streams: make(chan struct{}, 32)}
 	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10), connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
 		if artifactProcedure(info.Procedure) && info.Procedure != skyv1connect.ControlServiceSubmitWorkspaceJobProcedure {
 			limit := 16 << 10
@@ -90,6 +108,9 @@ func newHandler(c *control.Control, engine *auth.Engine, environments *environme
 	mux.Handle(workflowPath, workflowService)
 	if environments != nil {
 		mux.Handle(newEnvironmentService(environments))
+	}
+	if services != nil {
+		mux.Handle(newServingService(services))
 	}
 	lifetime := &HTTPHandler{owners: make(map[*artifactResponse]struct{}), terminal: make(chan struct{})}
 	lifetime.serve = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -119,6 +140,10 @@ func newHandler(c *control.Control, engine *auth.Engine, environments *environme
 		// and redirect its path.
 		if environments != nil && forwardRoute(r) {
 			serveEnvironmentForward(environments, w, r.WithContext(ctx))
+			return
+		}
+		if services != nil && serviceRoute(r) {
+			serveServiceForward(services, w, r.WithContext(ctx))
 			return
 		}
 		if artifactProcedure(r.URL.Path) {
@@ -342,10 +367,20 @@ func (h *handler) environmentsServed(ctx context.Context) bool {
 	return h.environments != nil && requestActor(ctx).TokenID() != ""
 }
 
+// servicesServed reports whether h serves ServingService and its forward
+// route to the caller of ctx, a scoped credential.
+func (h *handler) servicesServed(ctx context.Context) bool {
+	return h.services != nil && requestActor(ctx).TokenID() != ""
+}
+
 // target projects t for the caller of ctx, with environment support only
-// while h serves environments.
+// while h serves environments and fixed services only on the target h's
+// service controller serves.
 func (h *handler) target(ctx context.Context, t backend.Target) *v1.Target {
 	out := h.wireTarget(t)
+	if h.servicesServed(ctx) && t.Name == h.services.Target() {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_FIXED_SERVICES_V1)
+	}
 	if !h.environmentsServed(ctx) || !t.SupportsPersistentEnvironments {
 		return out
 	}
@@ -394,6 +429,9 @@ func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetSe
 	}
 	if h.environmentsServed(ctx) {
 		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_ENVIRONMENTS_V1)
+	}
+	if h.servicesServed(ctx) {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_SERVICES_V1)
 	}
 	for _, t := range targets {
 		out.Targets = append(out.Targets, h.target(ctx, t))

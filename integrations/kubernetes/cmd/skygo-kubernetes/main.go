@@ -20,7 +20,7 @@ import (
 )
 
 type targetFlags struct {
-	file, kubeconfig, context, namespace, environments, state string
+	file, kubeconfig, context, namespace, environments, services, state string
 }
 
 func command(run func(context.Context, server.Config) error) *cobra.Command {
@@ -32,6 +32,9 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 		// An explicit state directory, even an empty one, selects receipts;
 		// it never falls back to targets without them.
 		state := serverCommand.Flags().Changed("execution-state")
+		if state && serverCommand.Flags().Changed("service-profiles") {
+			return errors.New("--execution-state conflicts with --service-profiles")
+		}
 		if state && !named {
 			return errors.New("--execution-state requires --targets")
 		}
@@ -52,22 +55,44 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 		} else if flags.namespace == "" {
 			return errors.New("namespace is required for a Kubernetes target")
 		}
-		if serverCommand.Flags().Changed("environment-profiles") {
+		withEnvironments := serverCommand.Flags().Changed("environment-profiles")
+		withServices := serverCommand.Flags().Changed("service-profiles")
+		for _, f := range []struct {
+			name string
+			set  bool
+		}{{"--environment-profiles", withEnvironments}, {"--service-profiles", withServices}} {
+			if !f.set {
+				continue
+			}
 			if !named {
-				return errors.New("--environment-profiles requires --targets")
+				return fmt.Errorf("%s requires --targets", f.name)
 			}
 			if o.AuthFile == "" {
-				return errors.New("--environment-profiles requires --auth-file")
+				return fmt.Errorf("%s requires --auth-file", f.name)
 			}
-			profiles, err := kube.ReadEnvironmentConfig(flags.environments)
-			if err != nil {
-				return err
+		}
+		if withEnvironments || withServices {
+			var profiles kube.EnvironmentConfig
+			var services kube.ServiceConfig
+			var err error
+			if withEnvironments {
+				if profiles, err = kube.ReadEnvironmentConfig(flags.environments); err != nil {
+					return err
+				}
+			}
+			if withServices {
+				if services, err = kube.ReadServiceConfig(flags.services); err != nil {
+					return err
+				}
 			}
 			// The integration constructs and owns every configured target.
 			return run(ctx, server.Config{
 				DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, OIDCFile: o.OIDCFile, OIDCJWKSURL: o.OIDCJWKSURL, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
 				Install: func(s *store.Store, engine *auth.Engine) (server.Integration, error) {
-					return kube.NewEnvironmentIntegration(ctx, s, engine, config, profiles)
+					if !withServices {
+						return kube.NewEnvironmentIntegration(ctx, s, engine, config, profiles)
+					}
+					return kube.NewIntegration(ctx, s, engine, config, profiles, services)
 				},
 			})
 		}
@@ -114,6 +139,7 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			cmd.Flags().StringVar(&flags.namespace, "namespace", "", "Kubernetes namespace (required without --targets)")
 			cmd.Flags().StringVar(&flags.environments, "environment-profiles", "", "Private environment profiles file for one of --targets (requires --auth-file)")
 			cmd.Flags().StringVar(&flags.state, "execution-state", "", "Existing private 0700 directory for durable execution receipts of --targets")
+			cmd.Flags().StringVar(&flags.services, "service-profiles", "", "Private service profiles file for one of --targets (requires --auth-file)")
 		}
 	}
 	return root

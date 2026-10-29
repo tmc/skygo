@@ -55,7 +55,7 @@ default. Select one credential source: `--token-file`, deprecated `--token`, or
 
 Use `skygo --help` and each command's `--help` for flags. The main commands are
 `server`, `targets list`, `info`, `plan`, `run`, `jobs`, `workflow`, `artifacts`,
-`state`, `auth` and `dashboard`. `--json` selects JSON output. Job logs and
+`state`, `auth`, `serve` and `dashboard`. `--json` selects JSON output. Job logs and
 cancellation use `jobs logs JOB_ID` and `jobs cancel JOB_ID --yes`.
 
 Keep a submitted task, request ID, and any printed request domain together for
@@ -94,6 +94,14 @@ runs the existing CLI commands through SSH with a pinned TLS connection to the
 agent. See the [integration README](integrations/ssh/README.md) for host-key
 enrollment, client-key selection, and bootstrap requirements.
 
+## Services
+
+`serve up`, `serve status`, `serve down` and `serve forward` manage fixed
+one-replica services on configured Kubernetes service profiles. Forwarding
+requires a ready service and the service owner's credential. See the
+[integration README](integrations/kubernetes/README.md) for profile setup.
+Updates, rollback, data mounts and autoscaling remain unsupported.
+
 ## Local resources
 
 CPU and memory requests use host inventory and admission accounting. NVIDIA GPU
@@ -109,7 +117,7 @@ Not yet supported:
 - Cloud execution targets. The EC2 and Compute Engine lifecycle commands
   do not submit jobs and have not been qualified against their cloud services.
 - Multi-node jobs. The worker-group API is defined but not served.
-- Model serving. Only portable serving types exist.
+- Service updates, rollback, data mounts and autoscaling.
 - Pools, autostop and autodown.
 - `exec`, `stop`, `start` and `down` commands.
 - Enforced CPU or memory limits, container images, and node selectors on the

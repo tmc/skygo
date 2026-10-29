@@ -1,0 +1,436 @@
+syntax = "proto3";
+
+package skygo.v1;
+
+import "google/protobuf/timestamp.proto";
+import "skygo/v1/control.proto";
+
+option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
+
+// ServingService manages long-running services: immutable numbered
+// revisions, monotone rollout generations and observed status. It is a
+// separate endpoint. Clients call it only when GetServerInfo reports
+// CAPABILITY_SERVICES_V1 and never fall back to job submission; an endpoint
+// without the capability answers unimplemented. Forwarding a request to a
+// service is an authenticated HTTP route on the same endpoint,
+// /services/<id>/forward/<application-path>, not a method here; it takes no
+// host, port or URL from the caller and serves only the service's owner.
+//
+// Servers refuse, as invalid_argument, a request carrying unknown fields or
+// enum values outside those declared here, at any depth, so a field added
+// later is never silently dropped by an older server. No message carries
+// native object identity, delegated authority, secret values, raw native
+// manifests or a caller-chosen network destination.
+//
+// This endpoint accepts only fixed one-replica services: a spec with mounts,
+// workdir, setup, CPU scaling or a replica count other than one is refused
+// before acceptance. Update and rollback are not served. The message field
+// numbers below are those of the retained service protocol; methods added
+// later keep them.
+service ServingService {
+  // CreateService accepts or replays a service and its revision 1.
+  rpc CreateService(CreateServiceRequest) returns (CreateServiceResponse);
+  rpc GetService(GetServiceRequest) returns (GetServiceResponse);
+  rpc ListServices(ListServicesRequest) returns (ListServicesResponse);
+  // DeleteService latches the service absent. It reports deletion intent,
+  // not removal: phase DELETED requires observed absence.
+  rpc DeleteService(DeleteServiceRequest) returns (DeleteServiceResponse);
+}
+
+// ServiceSpec is the caller-owned definition bound into one revision. Zero
+// optional fields select documented defaults; a normalized spec, as returned
+// in every response, has them applied and env, node_selector and mounts
+// sorted. The encoded spec is at most 64 KiB.
+message ServiceSpec {
+  // Digest-pinned "registry/path@sha256:hex", without a tag.
+  string image = 1;
+  // At most 64 arguments and 16 KiB; argv[0] is required.
+  repeated string argv = 2;
+  // At most 64 variables and 32 KiB. Values are plain configuration visible
+  // to the service owner, never secrets. Duplicate names are refused.
+  repeated ServiceEnvVar env = 3;
+  // The one TCP port served, 1..65535.
+  int32 port = 4;
+  ServiceReadiness readiness = 5;
+  ServiceResources resources = 6;
+  // At most 16 labels; duplicate keys are refused.
+  repeated ServiceLabel node_selector = 7;
+  // At most 16 operator-approved aliases with disjoint destinations. Not
+  // accepted by this endpoint.
+  repeated ServiceMount mounts = 8;
+  ServiceRolloutPolicy rollout = 9;
+  ServiceScaling scaling = 10;
+  // The immutable input snapshot staged into each replica's private workdir.
+  // Not accepted by this endpoint.
+  ArtifactRef workdir = 11;
+  // One explicit argv run in each new replica before it can become ready;
+  // requires workdir. Not accepted by this endpoint.
+  repeated string setup = 12;
+  // Never part of a spec: native objects, credentials and caller volumes.
+  reserved "manifest", "native", "secrets", "service_account", "volumes";
+}
+
+message ServiceEnvVar {
+  string name = 1;
+  string value = 2;
+}
+
+message ServiceLabel {
+  string key = 1;
+  string value = 2;
+}
+
+// ServiceMount names an operator-defined data alias, always mounted
+// read-only at a destination below /mnt/skygo/. The reference is an alias,
+// not a native volume, secret or key name.
+message ServiceMount {
+  string reference = 1;
+  string destination = 2;
+  // Mounts are always read-only; there is no writable mode.
+  reserved "read_only";
+}
+
+// ServiceReadiness is an HTTP GET probe of path on the spec's port. Zero
+// period, timeout and failure threshold select 10, 15 and 3.
+message ServiceReadiness {
+  string path = 1;
+  int32 period_seconds = 2;
+  int32 timeout_seconds = 3;
+  int32 failure_threshold = 4;
+  int32 initial_delay_seconds = 5;
+}
+
+// ServiceResources are per-replica quantities. Requests are required; a zero
+// limit means none.
+message ServiceResources {
+  int64 cpu_millis = 1;
+  int64 memory_bytes = 2;
+  int64 cpu_limit_millis = 3;
+  int64 memory_limit_bytes = 4;
+}
+
+// ServiceRolloutPolicy bounds one rollout. Zero fields select a 600 second
+// progress deadline and a 30 second termination grace period.
+message ServiceRolloutPolicy {
+  int32 progress_deadline_seconds = 1;
+  int32 termination_grace_seconds = 2;
+}
+
+// ServiceScaling is the revision's replica policy. Without cpu, replicas is
+// a fixed count; this endpoint accepts only 1. A spec with cpu is refused.
+message ServiceScaling {
+  int32 replicas = 1;
+  ServiceCpuScaling cpu = 2;
+}
+
+// ServiceCpuScaling bounds CPU-utilization autoscaling. It is declared so
+// that a request carrying it is refused rather than dropped; this endpoint
+// accepts no CPU scaling.
+message ServiceCpuScaling {
+  int32 min_replicas = 1;
+  int32 max_replicas = 2;
+  int32 target_utilization_percent = 3;
+  int32 scale_up_stabilization_seconds = 4;
+  int32 scale_down_stabilization_seconds = 5;
+}
+
+// ServiceRevision is one immutable numbered spec. sha256 is the lowercase
+// hexadecimal digest of the normalized spec's canonical encoding; equal
+// digests mean equal specs.
+message ServiceRevision {
+  uint64 number = 1;
+  ServiceSpec spec = 2;
+  string sha256 = 3;
+}
+
+// ServiceRolloutKind records why a rollout was requested.
+enum ServiceRolloutKind {
+  SERVICE_ROLLOUT_KIND_UNSPECIFIED = 0;
+  SERVICE_ROLLOUT_KIND_CREATE = 1;
+  SERVICE_ROLLOUT_KIND_UPDATE = 2;
+  SERVICE_ROLLOUT_KIND_ROLLBACK = 3;
+  // Server-initiated rollout of the same revision after a target format
+  // change; never requested by a client. No server sends it yet, and a
+  // client treats it as unknown.
+  SERVICE_ROLLOUT_KIND_REAPPLY = 4;
+}
+
+// ServiceRolloutOutcome is a rollout's committed result. Only the current
+// rollout may be PENDING or ROLLING.
+enum ServiceRolloutOutcome {
+  SERVICE_ROLLOUT_OUTCOME_UNSPECIFIED = 0;
+  // Committed intent, not yet observed by the target.
+  SERVICE_ROLLOUT_OUTCOME_PENDING = 1;
+  SERVICE_ROLLOUT_OUTCOME_ROLLING = 2;
+  SERVICE_ROLLOUT_OUTCOME_COMPLETE = 3;
+  SERVICE_ROLLOUT_OUTCOME_FAILED = 4;
+  // Replaced while unfinished by a newer rollout.
+  SERVICE_ROLLOUT_OUTCOME_SUPERSEDED = 5;
+}
+
+// ServiceRollout is one numbered request to run a revision. Generation
+// increases by one for every rollout of a service.
+message ServiceRollout {
+  uint64 generation = 1;
+  uint64 revision = 2;
+  ServiceRolloutKind kind = 3;
+  ServiceRolloutOutcome outcome = 4;
+}
+
+// ServiceHistory holds at most 8 retained revisions and 32 rollouts, both
+// ascending. The last rollout is current.
+message ServiceHistory {
+  repeated ServiceRevision revisions = 1;
+  repeated ServiceRollout rollouts = 2;
+}
+
+enum ServiceDesired {
+  SERVICE_DESIRED_UNSPECIFIED = 0;
+  SERVICE_DESIRED_PRESENT = 1;
+  // Latched by DeleteService; never returns to PRESENT.
+  SERVICE_DESIRED_ABSENT = 2;
+}
+
+// ServicePhase is derived from desired state, history and the last
+// observation. HELD means native state is unknown or not the recorded one;
+// it is never READY or DELETED.
+enum ServicePhase {
+  SERVICE_PHASE_UNSPECIFIED = 0;
+  SERVICE_PHASE_CREATING = 1;
+  SERVICE_PHASE_PROGRESSING = 2;
+  SERVICE_PHASE_READY = 3;
+  SERVICE_PHASE_DEGRADED = 4;
+  SERVICE_PHASE_ROLLOUT_FAILED = 5;
+  SERVICE_PHASE_UNAVAILABLE = 6;
+  SERVICE_PHASE_DELETING = 7;
+  SERVICE_PHASE_DELETED = 8;
+  SERVICE_PHASE_HELD = 9;
+}
+
+// ServiceReason classifies an observation. The zero value means none.
+enum ServiceReason {
+  SERVICE_REASON_UNSPECIFIED = 0;
+  SERVICE_REASON_PROGRESS_DEADLINE = 1;
+  SERVICE_REASON_IMAGE_PULL = 2;
+  SERVICE_REASON_IMAGE_PULL_BACK_OFF = 3;
+  SERVICE_REASON_CRASH_LOOP = 4;
+  SERVICE_REASON_CONTAINER_CONFIG = 5;
+  SERVICE_REASON_INVALID_IMAGE = 6;
+  // Native objects are not the recorded ones.
+  SERVICE_REASON_IDENTITY_CONFLICT = 7;
+}
+
+// ServiceObservation is one target read, counting only objects of the
+// recorded identity. ready_generation is the newest rollout generation whose
+// replicas are all updated, ready and available. absent reports that every
+// owned object was observed gone; a failed read is never absent.
+message ServiceObservation {
+  uint64 observed_generation = 1;
+  uint64 ready_generation = 2;
+  int32 desired_replicas = 3;
+  int32 updated_replicas = 4;
+  int32 ready_replicas = 5;
+  int32 available_replicas = 6;
+  int32 ready_endpoints = 7;
+  ServiceReason reason = 8;
+  bool absent = 9;
+  // The autoscaler's state. On a fixed revision any nonzero value holds the
+  // service. This endpoint reports only fixed revisions.
+  ServiceScalingCondition scaling = 10;
+}
+
+// ServiceScalingCondition is the observed state of a CPU revision's
+// autoscaler. The zero value is never healthy.
+enum ServiceScalingCondition {
+  SERVICE_SCALING_CONDITION_UNSPECIFIED = 0;
+  SERVICE_SCALING_CONDITION_HEALTHY = 1;
+  SERVICE_SCALING_CONDITION_MISSING_METRICS = 2;
+  SERVICE_SCALING_CONDITION_API_UNAVAILABLE = 3;
+  SERVICE_SCALING_CONDITION_ADMISSION_DENIED = 4;
+  SERVICE_SCALING_CONDITION_CONFLICT = 5;
+}
+
+// ServiceConditionCode is a bounded diagnostic, never native error text.
+// Clients treat a code they do not know as unknown, never as healthy.
+enum ServiceConditionCode {
+  SERVICE_CONDITION_CODE_UNSPECIFIED = 0;
+  // The outcome of an issued target operation is not yet accounted for.
+  SERVICE_CONDITION_CODE_OPERATION_UNCERTAIN = 1;
+  // The target could not be read; the last state is kept.
+  SERVICE_CONDITION_CODE_TARGET_UNAVAILABLE = 2;
+  // The owner's authority could not be checked; no new rollout starts.
+  SERVICE_CONDITION_CODE_AUTHORITY_UNAVAILABLE = 3;
+  // The owner lost authority; no new rollout starts, cleanup continues.
+  SERVICE_CONDITION_CODE_AUTHORITY_REVOKED = 4;
+  // New forwarded requests are refused until the current generation is
+  // reconciled, or because the service is deleting.
+  SERVICE_CONDITION_CODE_FORWARD_DISABLED = 5;
+  // Owned objects or obligations remain after deletion intent.
+  SERVICE_CONDITION_CODE_CLEANUP_PENDING = 6;
+}
+
+message ServiceCondition {
+  ServiceConditionCode code = 1;
+  // The rollout generation the condition was recorded against.
+  uint64 generation = 2;
+  google.protobuf.Timestamp since = 3;
+}
+
+// ServiceStatus keeps desired, observed and ready generations distinct. A
+// stored spec or a successful target call is never readiness.
+message ServiceStatus {
+  ServicePhase phase = 1;
+  // The current rollout's generation.
+  uint64 desired_generation = 2;
+  // Absent before the first observation.
+  ServiceObservation observation = 3;
+  google.protobuf.Timestamp observed_at = 4;
+  // At most 16 entries, at most one per code.
+  repeated ServiceCondition conditions = 5;
+}
+
+// Service is one principal's service. record_revision increases with every
+// committed change to the record and is the expected_record_revision of the
+// next mutation.
+message Service {
+  // 32 lowercase hexadecimal characters.
+  string id = 1;
+  string name = 2;
+  // The configured target name; the server-side binding is not exposed.
+  string target = 3;
+  uint64 record_revision = 4;
+  ServiceDesired desired = 5;
+  ServiceHistory history = 6;
+  ServiceStatus status = 7;
+  google.protobuf.Timestamp created_at = 8;
+  google.protobuf.Timestamp updated_at = 9;
+  // Only in a replayed mutation's response: the service was retired after
+  // its deletion was observed and its record no longer exists. A retired
+  // view is desired ABSENT and phase DELETED, with an empty history.
+  // GetService of a retired service is not_found and ListServices omits it.
+  bool retired = 10;
+  // Server-only state that no response carries.
+  reserved "binding", "delegation", "native", "nonce", "owner";
+}
+
+// ServiceSummary is the list projection of a Service. It omits the history;
+// current and sha256 identify the current rollout and its revision.
+message ServiceSummary {
+  string id = 1;
+  string name = 2;
+  string target = 3;
+  uint64 record_revision = 4;
+  ServiceDesired desired = 5;
+  ServiceRollout current = 6;
+  // The digest of the current rollout's revision.
+  string sha256 = 7;
+  ServiceStatus status = 8;
+  google.protobuf.Timestamp created_at = 9;
+  google.protobuf.Timestamp updated_at = 10;
+}
+
+// Every mutation's request_id is 1..128 ASCII letters, digits, '_' or '-',
+// and its domain is required: services need retention, and epoch zero is
+// never accepted. Reuse both on retries. Replay is keyed by principal,
+// domain and request_id: a request equal to the one first accepted under
+// that key returns the service's current view, or its retired view, before
+// the existence, deletion and expected_record_revision checks, so an exact
+// replay is never DELETED or stale. A different request with the same key
+// is refused. A retired or closed epoch, or another lineage, is refused
+// with a RetentionExpiry detail. Every refusal writes nothing. A new ID
+// never retries an ambiguous mutation. A request ID can be replayed until
+// its epoch retires.
+message CreateServiceRequest {
+  string request_id = 1;
+  // A DNS label: 1..63 bytes matching ^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$.
+  // It is held from acceptance until the service is retired, not merely
+  // deleted; a name held by another of the principal's services is a
+  // NAME_IN_USE conflict.
+  string name = 2;
+  // Required configured target name; there is no placement fallback.
+  string target = 3;
+  ServiceSpec spec = 4;
+  RequestDomain domain = 5;
+}
+
+message CreateServiceResponse {
+  Service service = 1;
+}
+
+message GetServiceRequest {
+  string id = 1;
+}
+
+message GetServiceResponse {
+  Service service = 1;
+}
+
+// Pages follow creation order and are live, not a snapshot. Zero page_size
+// selects 50; the maximum is 200. page_token is opaque, at most 512 bytes,
+// and valid only for the principal that received it.
+message ListServicesRequest {
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListServicesResponse {
+  repeated ServiceSummary services = 1;
+  string next_page_token = 2;
+}
+
+// DeleteService commits only when expected_record_revision equals the
+// service's current record_revision, unless it is an exact replay.
+message DeleteServiceRequest {
+  string request_id = 1;
+  string id = 2;
+  uint64 expected_record_revision = 3;
+  RequestDomain domain = 4;
+}
+
+message DeleteServiceResponse {
+  Service service = 1;
+}
+
+enum ServiceConflictReason {
+  SERVICE_CONFLICT_REASON_UNSPECIFIED = 0;
+  // expected_record_revision is not the current record_revision.
+  SERVICE_CONFLICT_REASON_STALE_RECORD_REVISION = 1;
+  // The request ID was used for a different request.
+  SERVICE_CONFLICT_REASON_REQUEST_REUSED = 2;
+  // The service is latched absent.
+  SERVICE_CONFLICT_REASON_DELETED = 3;
+  // The name is held by another of the principal's services.
+  SERVICE_CONFLICT_REASON_NAME_IN_USE = 4;
+}
+
+// ServiceConflict is carried in a Connect aborted error detail.
+// record_revision is set only for STALE_RECORD_REVISION.
+message ServiceConflict {
+  ServiceConflictReason reason = 1;
+  uint64 record_revision = 2;
+}
+
+enum ServiceQuotaDomain {
+  SERVICE_QUOTA_DOMAIN_UNSPECIFIED = 0;
+  SERVICE_QUOTA_DOMAIN_PRINCIPAL_SERVICES = 1;
+  // Active services, or unretired service records, installation-wide.
+  SERVICE_QUOTA_DOMAIN_INSTALLATION_SERVICES = 2;
+  // Replicas, CPU and memory are reserved per target binding.
+  SERVICE_QUOTA_DOMAIN_REPLICAS = 3;
+  SERVICE_QUOTA_DOMAIN_CPU_MILLIS = 4;
+  SERVICE_QUOTA_DOMAIN_MEMORY_BYTES = 5;
+  // Retained revisions or service metadata; live history is never evicted
+  // to make room.
+  SERVICE_QUOTA_DOMAIN_REVISIONS = 6;
+  // Retained request witnesses or retired-service tombstones.
+  SERVICE_QUOTA_DOMAIN_REQUESTS = 7;
+}
+
+// ServiceCapacity is carried in a Connect resource_exhausted error detail.
+// It reports an admission reservation, not enforced target capacity.
+message ServiceCapacity {
+  ServiceQuotaDomain domain = 1;
+  uint64 used = 2;
+  uint64 requested = 3;
+  uint64 limit = 4;
+}

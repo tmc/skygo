@@ -6,6 +6,7 @@ import (
 	"github.com/tmc/skygo/internal/backend"
 	"github.com/tmc/skygo/internal/control"
 	"github.com/tmc/skygo/internal/environmentcontrol"
+	"github.com/tmc/skygo/internal/servingcontrol"
 )
 
 // An Integration is a set of targets, and the work behind them, whose
@@ -63,6 +64,21 @@ type ControlBinder interface {
 type EnvironmentProvider interface {
 	Integration
 	EnvironmentController() *environmentcontrol.Controller
+}
+
+// A ServingProvider is an Integration that owns a serving Controller, which
+// must share the server's Store and authentication Engine. Where the server
+// calls EnvironmentController it also calls ServingController once, and
+// serves ServingService and the authenticated /services/ forward route over
+// a non-nil result. The server neither runs nor closes the Controller: the
+// integration's Run and Close own it, and Close joins it before anything it
+// borrows closes. An integration that is both providers may return a nil
+// environment Controller when it serves services and none of its targets
+// claims environment support; a provider with neither Controller fails
+// startup.
+type ServingProvider interface {
+	Integration
+	ServingController() *servingcontrol.Controller
 }
 
 // An EffectStopper is an Integration whose work can hold Control's artifact

@@ -18,6 +18,7 @@ import (
 	"github.com/tmc/skygo/internal/environmentcontrol"
 	"github.com/tmc/skygo/internal/local"
 	"github.com/tmc/skygo/internal/rpc"
+	"github.com/tmc/skygo/internal/servingcontrol"
 	"github.com/tmc/skygo/internal/store"
 )
 
@@ -257,8 +258,12 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		}
 		targets = append(targets, extra...)
 	}
+	// The integration's targets, read once: Targets is called exactly once
+	// per startup, and every later decision uses this slice.
+	var installed []backend.Target
 	if f.integration != nil {
 		extra := f.integration.Targets()
+		installed = extra
 		if _, ok := f.integration.(EnvironmentProvider); !ok && environmentTargets(extra) {
 			return errors.New("install integration: environment support requires an environment integration")
 		}
@@ -289,9 +294,18 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 	}
 	// The integration keeps owning the Controller; the handler only serves it.
 	var environments *environmentcontrol.Controller
+	var services *servingcontrol.Controller
+	if provider, ok := f.integration.(ServingProvider); ok {
+		services = provider.ServingController()
+		if services == nil {
+			if _, ok := f.integration.(EnvironmentProvider); !ok {
+				return errors.New("install integration: serving integration has no controller")
+			}
+		}
+	}
 	if provider, ok := f.integration.(EnvironmentProvider); ok {
 		environments = provider.EnvironmentController()
-		if environments == nil {
+		if environments == nil && (services == nil || environmentTargets(installed)) {
 			return errors.New("install integration: environment integration has no controller")
 		}
 	}
@@ -337,7 +351,10 @@ func (f *serverRun) start(ctx context.Context, cfg Config) error {
 		w.WriteHeader(http.StatusOK)
 	})
 	rpcHTTP := rpc.NewHandler(c, engine)
-	if environments != nil {
+	switch {
+	case services != nil:
+		rpcHTTP = rpc.NewIntegratedHandler(c, engine, environments, services)
+	case environments != nil:
 		rpcHTTP = rpc.NewEnvironmentHandler(c, engine, environments)
 	}
 	f.rpcHTTP = rpcHTTP

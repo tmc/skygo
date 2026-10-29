@@ -173,7 +173,7 @@ const (
 	// Reserved fact for WORKER_MODE_TCP_RENDEZVOUS, withheld on the same terms.
 	// No worker retry capability exists.
 	Capability_CAPABILITY_TCP_RENDEZVOUS_V1 Capability = 14
-	// Reserved endpoint fact for ServiceService and its authenticated forward
+	// Reserved endpoint fact for ServingService and its authenticated forward
 	// route. Not advertised until both are mounted on a qualified service
 	// controller with at least one configured service runtime.
 	Capability_CAPABILITY_SERVICES_V1 Capability = 15

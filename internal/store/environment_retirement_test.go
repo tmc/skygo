@@ -91,6 +91,9 @@ func TestEnvironmentRetirementMigration(t *testing.T) {
 		if err := b.Put(environmentRequestKey("alice", "old-1"), []byte(r.Identity.ID)); err != nil {
 			return err
 		}
+		if err := servingStripModel(tx); err != nil {
+			return err
+		}
 		return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(environmentArtifactSchema))
 	}); err != nil {
 		t.Fatal(err)
@@ -99,6 +102,16 @@ func TestEnvironmentRetirementMigration(t *testing.T) {
 	f.reopen(t)
 	f.valid(t)
 	after := workflowDatabase(t, f.s)
+	// The schema13 step that follows adds only the serving tag and the
+	// empty serving family.
+	if after[string(metadataBucket)+"/"+string(servingStorageFormatKey)] != servingStorageFormat {
+		t.Error("migration omitted the serving storage format tag")
+	}
+	delete(after, string(metadataBucket)+"/"+string(servingStorageFormatKey))
+	if after[string(servingServicesBucket)+"\x00sequence"] != "0" {
+		t.Error("migration omitted the empty serving family")
+	}
+	delete(after, string(servingServicesBucket)+"\x00sequence")
 	for k, v := range before {
 		if k != string(metadataBucket)+"/"+string(schemaKey) && after[k] != v {
 			t.Errorf("migration changed %q", k)
@@ -108,7 +121,7 @@ func TestEnvironmentRetirementMigration(t *testing.T) {
 		t.Errorf("migration wrote %d rows, had %d", len(after), len(before))
 	}
 	if err := f.s.db.View(func(tx *bolt.Tx) error {
-		if schemaNumber(tx) != environmentRetirementSchema {
+		if schemaNumber(tx) != schemaVersion {
 			return fmt.Errorf("marker %d", schemaNumber(tx))
 		}
 		return nil
@@ -731,6 +744,9 @@ func TestEnvironmentRetirementCorruption(t *testing.T) {
 		}},
 		// MODEL: a pre-retirement marker under retirement rows.
 		{"marker 11 with witness", func(b *bolt.Bucket, d RequestDomain, gone, live Environment) error {
+			if err := servingStripModel(b.Tx()); err != nil {
+				return err
+			}
 			return b.Tx().Bucket(metadataBucket).Put(schemaKey, sequenceKey(environmentArtifactSchema))
 		}},
 	} {

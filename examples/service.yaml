@@ -1,0 +1,12 @@
+# A fixed one-replica service for `skygo serve up`. Every key is the wire
+# field name. The image must be digest pinned and granted to you by the
+# target's service profile.
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web, --listen, ":8080"]
+env:
+- {name: MODE, value: production}
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+rollout: {progress_deadline_seconds: 600}
+scaling: {replicas: 1}

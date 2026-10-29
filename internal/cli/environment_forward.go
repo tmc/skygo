@@ -74,11 +74,17 @@ func checkLoopback(addr string) error {
 // forwardURL returns the forward route of environment id at endpoint:
 // /environments/<id>/forward below the endpoint's own path.
 func forwardURL(endpoint, id string) (*url.URL, error) {
+	return routeURL(endpoint, "environments", id)
+}
+
+// routeURL returns the forward route /<kind>/<id>/forward below endpoint's
+// own path.
+func routeURL(endpoint, kind, id string) (*url.URL, error) {
 	u, err := url.Parse(endpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
 		return nil, errors.New("endpoint must be an http or https URL without user, query or fragment")
 	}
-	u.Path = strings.TrimSuffix(u.Path, "/") + "/environments/" + id + "/forward"
+	u.Path = strings.TrimSuffix(u.Path, "/") + "/" + kind + "/" + id + "/forward"
 	u.RawPath = ""
 	return u, nil
 }

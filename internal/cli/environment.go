@@ -78,8 +78,9 @@ func suppliedEnvRequest(id, domain string) (envRequest, error) {
 }
 
 // newEnvRequest returns a new request: the current domain, sampled once,
-// and a fresh ID.
-func (o *options) newEnvRequest(ctx context.Context) (envRequest, error) {
+// and a fresh ID. op names the mutation in its errors, as in "environment
+// create".
+func (o *options) newEnvRequest(ctx context.Context, op string) (envRequest, error) {
 	r, err := o.client().GetRetention(ctx, request(o, &skyv1.GetRetentionRequest{}))
 	if err != nil {
 		return envRequest{}, err
@@ -88,7 +89,7 @@ func (o *options) newEnvRequest(ctx context.Context) (envRequest, error) {
 		return envRequest{}, errors.New("server returned no retention information")
 	}
 	if !r.Msg.Enabled {
-		return envRequest{}, errors.New("server retains no request domain; environment create requires one")
+		return envRequest{}, fmt.Errorf("server retains no request domain; %s requires one", op)
 	}
 	text, err := domainText(r.Msg.Domain)
 	if err != nil {
@@ -108,7 +109,7 @@ func (o *options) newEnvRequest(ctx context.Context) (envRequest, error) {
 // createError reports a failed create. A retired domain refuses even an
 // exact replay, so the original request's outcome stays unknown and it is
 // not to be resubmitted.
-func createError(req envRequest, err error) error {
+func createError(what string, req envRequest, err error) error {
 	var rpc *connect.Error
 	if errors.As(err, &rpc) {
 		for _, detail := range rpc.Details() {
@@ -117,11 +118,11 @@ func createError(req envRequest, err error) error {
 				continue
 			}
 			if e, ok := v.(*skyv1.RetentionExpiry); ok && (e.Reason == skyv1.RetentionExpiryReason_RETENTION_EXPIRY_REASON_REQUEST_EPOCH_EXPIRED || e.Reason == skyv1.RetentionExpiryReason_RETENTION_EXPIRY_REASON_REQUEST_LINEAGE_CHANGED) {
-				return fmt.Errorf("create environment outcome unknown; request %s retired, do not resubmit: %w", req.id, retentionDiagnostic(err))
+				return fmt.Errorf("create %s outcome unknown; request %s retired, do not resubmit: %w", what, req.id, retentionDiagnostic(err))
 			}
 		}
 	}
-	return fmt.Errorf("create environment (retry with %s): %w", req.retry(), retentionDiagnostic(err))
+	return fmt.Errorf("create %s (retry with %s): %w", what, req.retry(), retentionDiagnostic(err))
 }
 
 func (o *options) environmentClient() skyv1connect.EnvironmentServiceClient {
@@ -190,7 +191,7 @@ func (o *options) environmentCommand() *cobra.Command {
 			return err
 		}
 		if !retry {
-			if req, err = o.newEnvRequest(ctx); err != nil {
+			if req, err = o.newEnvRequest(ctx, "environment create"); err != nil {
 				return err
 			}
 		}
@@ -202,7 +203,7 @@ func (o *options) environmentCommand() *cobra.Command {
 		}
 		r, err := o.environmentClient().CreateEnvironment(ctx, request(o, &skyv1.CreateEnvironmentRequest{RequestId: req.id, Spec: environmentwire.SpecToProto(spec), Domain: req.domain}))
 		if err != nil {
-			return createError(req, err)
+			return createError("environment", req, err)
 		}
 		if err := checkResponse(r.Msg); err != nil {
 			return fmt.Errorf("create environment (retry with %s): %w", req.retry(), err)

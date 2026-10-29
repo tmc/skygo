@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 )
 
 // ErrUnsupported means a target cannot run a spec feature. Check returns it
@@ -217,11 +218,48 @@ func (r Reason) String() string {
 // resulting observation, Absent only once every owned object is gone.
 //
 // Forward serves one authorized request from a ready endpoint of ref's
-// service. It never takes a destination from the caller.
+// service. It never takes a destination from the caller, and sends the
+// workload only the headers ForwardHeader keeps. It returns only once every
+// original owner of the exchange — its request body, response body and
+// connections — has returned, whether or not ctx has ended.
 type Runtime interface {
 	Check(Spec) error
 	Apply(ctx context.Context, ref Ref, rev Revision, generation uint64) (Native, error)
 	Observe(ctx context.Context, ref Ref) (Observation, error)
 	Delete(ctx context.Context, ref Ref) (Observation, error)
 	Forward(ctx context.Context, ref Ref, w http.ResponseWriter, r *http.Request) error
+}
+
+// ForwardHeader returns a copy of the header of a request forwarded to a
+// service's workload without the control plane's credentials and proofs:
+// Authorization, Proxy-Authorization and Cookie; the dashboard's session
+// proof and login marker and every other header of the X-Skygo- and Skygo-
+// control namespaces; and Kubernetes impersonation, Impersonate-User,
+// Impersonate-Uid, Impersonate-Group and every Impersonate-Extra- field.
+// Every other header is kept as it is.
+func ForwardHeader(h http.Header) http.Header {
+	out := h.Clone()
+	if out == nil {
+		out = http.Header{}
+	}
+	for name := range out {
+		if controlHeader(http.CanonicalHeaderKey(name)) {
+			delete(out, name)
+		}
+	}
+	return out
+}
+
+func controlHeader(name string) bool {
+	switch name {
+	case "Authorization", "Proxy-Authorization", "Cookie",
+		"Impersonate-User", "Impersonate-Uid", "Impersonate-Group":
+		return true
+	}
+	for _, prefix := range []string{"Impersonate-Extra-", "X-Skygo-", "Skygo-"} {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
 }

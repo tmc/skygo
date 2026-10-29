@@ -1,0 +1,99 @@
+# Serve client script against a fixture server; NOT_RUN. Counts of create
+# and delete calls are checked by TestServeScripts.
+
+# Invalid input is refused before any request.
+! skygo serve up unknown.yaml --name web --target kube
+stderr 'field color not found'
+! stderr 'request-id:'
+! skygo serve up setup.yaml --name web --target kube
+stderr 'unsupported service feature: setup'
+! stderr 'request-id:'
+! skygo serve up web.yaml --name web
+stderr 'requires --name and --target'
+! skygo serve up web.yaml --name web --target kube --request-id req-1
+stderr 'given together'
+! skygo serve status not-an-id
+stderr '32 lowercase hexadecimal'
+! skygo serve forward 00000000000000000000000000000001 --listen 0.0.0.0:0
+stderr 'loopback IP address'
+
+# A new create needs the target's fixed-services capability.
+! skygo serve up web.yaml --name web --target jobs
+stderr 'target "jobs" does not advertise fixed-services-v1'
+! stderr 'request-id:'
+
+# Create prints its request domain and ID first. The same pair and request
+# replays the same service; the same pair with another spec is refused and
+# not retried.
+skygo serve up web.yaml --name web --target kube --request-id req-1 --request-domain $DOMAIN
+stderr '^request-domain: '$DOMAIN'$'
+stderr '^request-id: req-1$'
+stdout '^0{31}1 +web +kube +1 +present +creating +1 +0 +-$'
+skygo serve up web.yaml --name web --target kube --request-id req-1 --request-domain $DOMAIN
+stdout '^0{31}1 +web'
+! skygo serve up other.yaml --name web --target kube --request-id req-1 --request-domain $DOMAIN
+stderr 'retry with --request-domain '$DOMAIN' --request-id req-1'
+stderr 'request_reused'
+
+# A new request samples the current domain once and picks a fresh ID.
+skygo serve up other.yaml --name other --target kube
+stderr '^request-id: [0-9a-f]{32}$'
+stdout '^0{31}2 +other +kube'
+
+skygo serve status 00000000000000000000000000000001
+stdout 'web +kube +1 +present +creating'
+skygo --json serve status 00000000000000000000000000000001
+stdout '"phase": *"SERVICE_PHASE_CREATING"'
+skygo serve status
+stdout '^0{31}1 +web +kube +present +creating +1 +0$'
+stdout '^0{31}2 +other +kube'
+
+# An undeclared enum value from the server is refused, not printed.
+! skygo serve status 22222222222222222222222222222222
+stderr 'invalid service phase'
+! stdout .
+! skygo --json serve status 22222222222222222222222222222222
+! stdout .
+
+# A name that would forge output columns is refused, not printed.
+! skygo serve status 33333333333333333333333333333333
+stderr 'invalid service name'
+! stdout .
+
+# Down latches the service absent under the revision it names and prints
+# the pair and revision to replay it; an exact replay returns the same view.
+skygo serve down 00000000000000000000000000000001 --request-id del-1 --request-domain $DOMAIN --record-revision 1
+stderr '^record-revision: 1$'
+stdout '^0{31}1 +web +kube +2 +absent +deleting'
+skygo serve down 00000000000000000000000000000001 --request-id del-1 --request-domain $DOMAIN --record-revision 1
+stdout '^0{31}1 +web +kube +2 +absent +deleting'
+! skygo serve down 00000000000000000000000000000001 --request-id del-2
+stderr 'given together'
+
+-- web.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web]
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+scaling: {replicas: 1}
+-- other.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web, --other]
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+scaling: {replicas: 1}
+-- unknown.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web]
+port: 8080
+color: blue
+-- setup.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web]
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+scaling: {replicas: 1}
+setup: [make]

@@ -122,7 +122,7 @@ func NewWithClient(server func(context.Context, ServerOptions) error, client *ht
 	srv.Flags().StringVar(&s.OIDCJWKSURL, "oidc-jwks-url", "", "The one allowed HTTPS key set URL (requires --oidc-file)")
 	srv.Flags().BoolVar(&s.RecoverStoppedArtifactReaders, "recover-stopped-artifact-readers", false, "Recover stopped readers only when ALL historical producers have no surviving descriptor copy or use and the same-domain kernel is qualified")
 	srv.Flags().BoolVar(&s.DisableLocal, "disable-local", false, "Disable execution inside the server process environment")
-	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.workflowCommand(), o.dashboardCommand(), o.infoCommand(), o.stateCommand(), o.authCommand(), o.artifactsCommand(), o.environmentCommand())
+	root.AddCommand(srv, o.taskCommand(false), o.taskCommand(true), o.jobs(), o.workflowCommand(), o.dashboardCommand(), o.infoCommand(), o.stateCommand(), o.authCommand(), o.artifactsCommand(), o.environmentCommand(), o.serveCommand())
 	targets := &cobra.Command{Use: "targets", Short: "Inspect configured execution targets"}
 	targets.AddCommand(&cobra.Command{Use: "list", Short: "List execution targets", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		ctx, cancel := context.WithTimeout(cmd.Context(), o.timeout)

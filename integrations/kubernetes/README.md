@@ -147,6 +147,47 @@ API strings. Quiesce and requalify before changing them. A record is trusted
 operator configuration: this server consumes it but neither produces one nor
 qualifies a cluster.
 
+## Fixed services
+
+`--service-profiles FILE` serves fixed one-replica services on one of the
+`--targets`; it requires `--targets` and `--auth-file` and may be combined with
+`--environment-profiles`. See [the service profile example](examples/services.yaml).
+The file is strict version-1 YAML of mode 0400 or 0600. It names the target,
+the UIDs of its namespace and `default` service account, the image pull
+secrets that account uses, per-service CPU and memory ceilings, admission
+limits for the target binding, and the digest-pinned images each principal may
+run. At startup the server reads the namespace, service account and secrets
+and refuses any difference; it never creates, modifies or deletes them.
+
+Each service is one owned Deployment (one replica, `maxSurge: 0`) and one
+ClusterIP Service in the target namespace. Each create is declared in the
+service's committed record before it is sent, and is sent once, without client
+retries. An object is the service's only by its recorded UID, or by the
+declaration it carries; names and labels never confer ownership. A create
+whose outcome cannot be resolved holds the service rather than being retried
+or reported absent. Readiness requires the recorded Deployment's observed
+generation, owned ready Pods and ready endpoints of the owned Service.
+
+```sh
+skygo serve up examples/service.yaml --name web --target kube
+skygo serve status
+skygo serve forward ID --listen 127.0.0.1:8081
+skygo serve down ID
+```
+
+`serve forward` relays a loopback listener to
+`/services/ID/forward/` on the server, which serves only the service's owner,
+only while its current generation is ready, and removes the bearer token and
+hop-by-hop headers before the request reaches the application. Upgrades and
+CONNECT are refused. Update, rollback, data mounts, workdir, setup and CPU
+scaling are not served.
+
+This path needs namespaced `create`, `get`, `list` and `delete` on
+Deployments, `get` and `list` on ReplicaSets and Pods, `create`, `get` and
+`delete` on Services, `list` on EndpointSlices, `get` on the namespace, the
+`default` ServiceAccount and the listed Secrets, and `create` on
+`pods/portforward`.
+
 The local `replace github.com/tmc/skygo => ../..` supports development from this
 checkout. This is not an independently released module: publishing it requires
 a published root-module version and removal of the local replacement.

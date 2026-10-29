@@ -20,7 +20,21 @@ const (
 	// environmentRetirementSchema adds request witnesses, tombstones and
 	// reclaimed counts.
 	environmentRetirementSchema = 12
+	// servingSchema adds the empty serving_services bucket and the serving
+	// storage format tag.
+	servingSchema = 13
 )
+
+// servingStorageFormatKey names the metadata scalar that the schema13
+// migration writes in the same transaction as the serving_services bucket and
+// marker13. Other storage lines reused ordinal 13 for different contents, so
+// at schema13 the ordinal alone does not identify this format: the tag must
+// be present with exactly servingStorageFormat, as well as the environment
+// tag. Below schema13 it must be absent. A database at 13 without it is never
+// tagged after the fact.
+var servingStorageFormatKey = []byte("serving_storage_format")
+
+const servingStorageFormat = "skygo-serving-store-v1"
 
 // environmentStorageFormatKey names the metadata scalar that the schema11
 // migration writes in the same transaction as marker11. Another storage line
@@ -99,6 +113,9 @@ func checkFixedStorageFormat(tx *bolt.Tx, n uint64) error {
 		}
 	} else if n >= environmentArtifactSchema {
 		return foreignFormat("missing storage format tag")
+	}
+	if err := checkServingFormat(tx, n); err != nil {
+		return err
 	}
 	// These are the actual family ordinals: published schema9 already
 	// requires environments, while worker_groups first appears at schema10.

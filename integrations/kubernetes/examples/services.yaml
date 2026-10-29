@@ -1,0 +1,19 @@
+# Service profile for skygo-kubernetes --service-profiles. Keep this file
+# private (mode 0400 or 0600). Replace every value with your cluster's.
+version: 1
+target: kube
+revision: services-1
+namespace_uid: 3f0c2d1e-0000-4000-8000-000000000001
+service_account_uid: 3f0c2d1e-0000-4000-8000-000000000002
+image_pull_secrets: [registry]
+ceilings: {cpu_millis: 2000, memory_bytes: 4294967296}
+limits:
+  principal_services: 4
+  installation_services: 32
+  replicas: 16
+  cpu_millis: 8000
+  memory_bytes: 17179869184
+grants:
+- principal: alice
+  images:
+  - registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef

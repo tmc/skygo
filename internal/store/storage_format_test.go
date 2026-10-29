@@ -90,18 +90,31 @@ func TestFixturePair(t *testing.T) {
 }
 
 // formatStrip removes from an exported database the storage format tag and
-// the empty environment pin table that the schema11 migration adds, and
-// reports whether the tag was present. A tag must have exactly the known
-// value and the pin table must be empty.
+// the empty environment pin table that the schema11 migration adds, and the
+// serving storage format tag and empty serving_services family that the
+// schema13 migration adds, and reports whether the environment tag was
+// present. Each tag must have exactly its known value and each added table
+// must be empty.
 func formatStrip(t *testing.T, buckets []fixtureBucket) ([]fixtureBucket, bool) {
 	t.Helper()
 	tagged := false
 	out := make([]fixtureBucket, 0, len(buckets))
 	for _, b := range buckets {
 		switch {
+		case bytes.Equal(b.Name, servingServicesBucket):
+			if b.Sequence != 0 || len(b.Entries) != 0 || len(b.Buckets) != 0 {
+				t.Fatal("migration added serving contents or sequence")
+			}
+			continue
 		case bytes.Equal(b.Name, metadataBucket):
 			var entries []fixtureEntry
 			for _, e := range b.Entries {
+				if bytes.Equal(e.Key, servingStorageFormatKey) {
+					if string(e.Value) != servingStorageFormat {
+						t.Fatalf("serving storage format tag %q", e.Value)
+					}
+					continue
+				}
 				if bytes.Equal(e.Key, environmentStorageFormatKey) {
 					if string(e.Value) != environmentStorageFormat {
 						t.Fatalf("storage format tag %q", e.Value)
@@ -134,6 +147,9 @@ func formatStrip(t *testing.T, buckets []fixtureBucket) ([]fixtureBucket, bool) 
 // removes the storage format tag and, with artifacts, the empty environment
 // pin table. It refuses a populated pin table. The caller sets the marker.
 func environmentArtifactStripModel(tx *bolt.Tx) error {
+	if err := servingStripModel(tx); err != nil {
+		return err
+	}
 	if err := tx.Bucket(metadataBucket).Delete(environmentStorageFormatKey); err != nil {
 		return err
 	}
@@ -151,11 +167,32 @@ func environmentArtifactStripModel(tx *bolt.Tx) error {
 	return b.DeleteBucket([]byte("environment_pins"))
 }
 
+// servingStripModel is a MODEL of the schema12 format over a current
+// database: it removes the serving storage format tag and the empty
+// serving_services family. It refuses a populated family. The caller sets
+// the marker.
+func servingStripModel(tx *bolt.Tx) error {
+	if err := tx.Bucket(metadataBucket).Delete(servingStorageFormatKey); err != nil {
+		return err
+	}
+	b := tx.Bucket(servingServicesBucket)
+	if b == nil {
+		return nil
+	}
+	if k, _ := b.Cursor().First(); k != nil || b.Sequence() != 0 {
+		return errors.New("model cannot strip populated serving metadata")
+	}
+	return tx.DeleteBucket(servingServicesBucket)
+}
+
 // lowerMarkerModel is a MODEL corruption: it lowers the marker to n and
-// removes the storage format tag, so that the ordinal fence and not the
-// format fence is the first refusal.
+// removes the storage format tags and the empty serving family, so that the
+// ordinal fence and not the format fence is the first refusal.
 func lowerMarkerModel(n uint64) func(*bolt.Tx) error {
 	return func(tx *bolt.Tx) error {
+		if err := servingStripModel(tx); err != nil {
+			return err
+		}
 		m := tx.Bucket(metadataBucket)
 		if err := m.Delete(environmentStorageFormatKey); err != nil {
 			return err
@@ -476,6 +513,9 @@ func TestStorageFormatNeverAutoTagged(t *testing.T) {
 		t.Run(fmt.Sprint(n), func(t *testing.T) {
 			dir, _, _ := environmentPopulated(t)
 			editFixture(t, dir, false, func(tx *bolt.Tx) error {
+				if err := servingStripModel(tx); err != nil {
+					return err
+				}
 				m := tx.Bucket(metadataBucket)
 				if err := m.Delete(environmentStorageFormatKey); err != nil {
 					return err
@@ -494,6 +534,9 @@ func TestStorageFormatNeverAutoTagged(t *testing.T) {
 func TestStorageFormatElevenMigrates(t *testing.T) {
 	dir, _, _ := environmentPopulated(t)
 	editFixture(t, dir, false, func(tx *bolt.Tx) error {
+		if err := servingStripModel(tx); err != nil {
+			return err
+		}
 		return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(environmentArtifactSchema))
 	})
 	s, err := Open(dir)
@@ -532,6 +575,9 @@ func TestMigrationStagesAtomic(t *testing.T) {
 		t.Helper()
 		dir := formatArtifactPopulated(t)
 		editFixture(t, dir, false, func(tx *bolt.Tx) error {
+			if err := servingStripModel(tx); err != nil {
+				return err
+			}
 			if n < environmentArtifactSchema {
 				if err := environmentArtifactStripModel(tx); err != nil {
 					return err
@@ -552,7 +598,7 @@ func TestMigrationStagesAtomic(t *testing.T) {
 		return db
 	}
 	injected := errors.New("injected after migration")
-	for _, n := range []uint64{9, workerGroupSchema, environmentArtifactSchema} {
+	for _, n := range []uint64{9, workerGroupSchema, environmentArtifactSchema, environmentRetirementSchema} {
 		t.Run(fmt.Sprintf("chain from %d", n), func(t *testing.T) {
 			db := source(t, n)
 			before := formatLogical(t, db)
@@ -560,7 +606,7 @@ func TestMigrationStagesAtomic(t *testing.T) {
 				if err := initialize(tx, "unused"); err != nil {
 					return err
 				}
-				if schemaNumber(tx) != schemaVersion || string(tx.Bucket(metadataBucket).Get(environmentStorageFormatKey)) != environmentStorageFormat || tx.Bucket(workerGroupsBucket) == nil {
+				if schemaNumber(tx) != schemaVersion || string(tx.Bucket(metadataBucket).Get(environmentStorageFormatKey)) != environmentStorageFormat || tx.Bucket(workerGroupsBucket) == nil || string(tx.Bucket(metadataBucket).Get(servingStorageFormatKey)) != servingStorageFormat || tx.Bucket(servingServicesBucket) == nil {
 					t.Error("migration did not run")
 				}
 				return injected
@@ -584,6 +630,9 @@ func TestMigrationStagesAtomic(t *testing.T) {
 			_, err := tx.Bucket(artifactsBucket).CreateBucket([]byte("environment_pins"))
 			return err
 		}, migrateEnvironmentArtifactFence},
+		{"serving stage", []func(*bolt.Tx) error{migrateWorkerGroupFence, migrateEnvironmentArtifactFence, migrateEnvironmentRetirement}, func(tx *bolt.Tx) error {
+			return tx.Bucket(metadataBucket).Put(servingStorageFormatKey, []byte("unexpected-serving-format"))
+		}, migrateServing},
 		{"retirement stage", []func(*bolt.Tx) error{migrateWorkerGroupFence, migrateEnvironmentArtifactFence}, func(tx *bolt.Tx) error {
 			return tx.Bucket(environmentsBucket).Put([]byte("x/alice"), sequenceKey(1))
 		}, migrateEnvironmentRetirement},
@@ -758,6 +807,9 @@ func TestStorageFormatIncompleteLayout(t *testing.T) {
 			return a.Put([]byte("environment_pins"), []byte("{}"))
 		}},
 		{"pins before eleven", func(tx *bolt.Tx) error {
+			if err := servingStripModel(tx); err != nil {
+				return err
+			}
 			m := tx.Bucket(metadataBucket)
 			if err := m.Delete(environmentStorageFormatKey); err != nil {
 				return err
@@ -813,16 +865,30 @@ func TestStorageFormatFamilyMatrix(t *testing.T) {
 	// support is unknown rather than false.
 	const markerBucket = "schema marker bucket"
 	cases := []struct {
-		name string
-		edit func(*bolt.Tx) error
+		name     string
+		schema13 bool // the serving-family fault needs a valid schema13 base
+		edit     func(*bolt.Tx) error
 	}{
-		{"tag before nine", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(8)) }},
-		{"tag at nine", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(9)) }},
-		{"tag at ten", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(10)) }},
-		{"future thirteen", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(13)) }},
-		{"future fourteen", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(14)) }},
-		{"future max", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(math.MaxUint64)) }},
-		{markerBucket, func(tx *bolt.Tx) error {
+		{"tag before nine", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(8)) }},
+		{"tag at nine", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(9)) }},
+		{"tag at ten", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(10)) }},
+		{"future fourteen", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(14)) }},
+		{"future max", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(math.MaxUint64)) }},
+		{"serving tag absent", true, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Delete(servingStorageFormatKey) }},
+		{"serving tag unknown", true, func(tx *bolt.Tx) error {
+			return tx.Bucket(metadataBucket).Put(servingStorageFormatKey, []byte("skygo-serving-store-v2"))
+		}},
+		{"serving tag bucket", true, func(tx *bolt.Tx) error {
+			m := tx.Bucket(metadataBucket)
+			if err := m.Delete(servingStorageFormatKey); err != nil {
+				return err
+			}
+			_, err := m.CreateBucket(servingStorageFormatKey)
+			return err
+		}},
+		{"serving family absent", true, func(tx *bolt.Tx) error { return tx.DeleteBucket(servingServicesBucket) }},
+		{"serving at twelve", true, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(12)) }},
+		{markerBucket, false, func(tx *bolt.Tx) error {
 			m := tx.Bucket(metadataBucket)
 			if err := m.Delete(schemaKey); err != nil {
 				return err
@@ -830,23 +896,23 @@ func TestStorageFormatFamilyMatrix(t *testing.T) {
 			_, err := m.CreateBucket(schemaKey)
 			return err
 		}},
-		{"environments absent", func(tx *bolt.Tx) error { return tx.DeleteBucket(environmentsBucket) }},
-		{"workers absent", func(tx *bolt.Tx) error { return tx.DeleteBucket(workerGroupsBucket) }},
-		{"both absent", func(tx *bolt.Tx) error {
+		{"environments absent", false, func(tx *bolt.Tx) error { return tx.DeleteBucket(environmentsBucket) }},
+		{"workers absent", false, func(tx *bolt.Tx) error { return tx.DeleteBucket(workerGroupsBucket) }},
+		{"both absent", false, func(tx *bolt.Tx) error {
 			if err := tx.DeleteBucket(environmentsBucket); err != nil {
 				return err
 			}
 			return tx.DeleteBucket(workerGroupsBucket)
 		}},
-		{"tag absent", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Delete(environmentStorageFormatKey) }},
-		{"tag empty", func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(environmentStorageFormatKey, []byte{}) }},
-		{"tag unknown", func(tx *bolt.Tx) error {
+		{"tag absent", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Delete(environmentStorageFormatKey) }},
+		{"tag empty", false, func(tx *bolt.Tx) error { return tx.Bucket(metadataBucket).Put(environmentStorageFormatKey, []byte{}) }},
+		{"tag unknown", false, func(tx *bolt.Tx) error {
 			return tx.Bucket(metadataBucket).Put(environmentStorageFormatKey, []byte("other"))
 		}},
-		{"tag trailing", func(tx *bolt.Tx) error {
+		{"tag trailing", false, func(tx *bolt.Tx) error {
 			return tx.Bucket(metadataBucket).Put(environmentStorageFormatKey, []byte(environmentStorageFormat+"\x00"))
 		}},
-		{"tag bucket", func(tx *bolt.Tx) error {
+		{"tag bucket", false, func(tx *bolt.Tx) error {
 			m := tx.Bucket(metadataBucket)
 			if err := m.Delete(environmentStorageFormatKey); err != nil {
 				return err
@@ -854,9 +920,9 @@ func TestStorageFormatFamilyMatrix(t *testing.T) {
 			_, err := m.CreateBucket(environmentStorageFormatKey)
 			return err
 		}},
-		{"services empty", func(tx *bolt.Tx) error { _, err := tx.CreateBucket([]byte("services")); return err }},
-		{"compat empty", func(tx *bolt.Tx) error { _, err := tx.CreateBucket([]byte("compat_requests")); return err }},
-		{"foreign family and missing environment", func(tx *bolt.Tx) error {
+		{"services empty", false, func(tx *bolt.Tx) error { _, err := tx.CreateBucket([]byte("services")); return err }},
+		{"compat empty", false, func(tx *bolt.Tx) error { _, err := tx.CreateBucket([]byte("compat_requests")); return err }},
+		{"foreign family and missing environment", false, func(tx *bolt.Tx) error {
 			if _, err := tx.CreateBucket([]byte("services")); err != nil {
 				return err
 			}
@@ -864,11 +930,19 @@ func TestStorageFormatFamilyMatrix(t *testing.T) {
 		}},
 	}
 	for _, artifacts := range []bool{false, true} {
-		for _, n := range []uint64{environmentArtifactSchema, environmentRetirementSchema} {
+		for _, n := range []uint64{environmentArtifactSchema, environmentRetirementSchema, servingSchema} {
 			for _, tt := range cases {
+				if tt.schema13 && n != servingSchema {
+					continue
+				}
 				t.Run(fmt.Sprintf("artifacts=%v/schema=%d/%s", artifacts, n, tt.name), func(t *testing.T) {
 					dir := formatFamilyFixture(t, artifacts)
 					editFixture(t, dir, false, func(tx *bolt.Tx) error {
+						if n < servingSchema {
+							if err := servingStripModel(tx); err != nil {
+								return err
+							}
+						}
 						if err := tx.Bucket(metadataBucket).Put(schemaKey, sequenceKey(n)); err != nil {
 							return err
 						}
@@ -954,10 +1028,15 @@ func formatFamilyRefused(t *testing.T, dir string, markerInvalid bool) {
 // entirely empty transaction is the valid uninitialized ordinal zero.
 func TestStorageFormatFamilyControls(t *testing.T) {
 	for _, artifacts := range []bool{false, true} {
-		for _, n := range []uint64{8, 9, 10, 11, 12} {
+		for _, n := range []uint64{8, 9, 10, 11, 12, servingSchema} {
 			t.Run(fmt.Sprintf("artifacts=%v/schema=%d", artifacts, n), func(t *testing.T) {
 				dir := formatFamilyFixture(t, artifacts)
 				editFixture(t, dir, false, func(tx *bolt.Tx) error {
+					if n < servingSchema {
+						if err := servingStripModel(tx); err != nil {
+							return err
+						}
+					}
 					if n < environmentArtifactSchema {
 						if err := environmentArtifactStripModel(tx); err != nil {
 							return err
