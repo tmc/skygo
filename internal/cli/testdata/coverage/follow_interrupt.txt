@@ -10,6 +10,7 @@ taskfile release.json release
 skygo --json run -f release.json --request-id follow
 job-id JOB
 await-file ready
+await-state $JOB running
 
 # Attach, wait until the client has printed live output, then interrupt it.
 ! skygo jobs logs $JOB --follow &

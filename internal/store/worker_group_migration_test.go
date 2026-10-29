@@ -121,7 +121,7 @@ func workerMigrated(t *testing.T, dir string, want []byte) {
 			t.Fatalf("migration changed state or omitted the bucket (found %v)", found)
 		}
 		if err := s.db.View(func(tx *bolt.Tx) error {
-			if schemaNumber(tx) != schemaVersion || schemaVersion != 13 {
+			if schemaNumber(tx) != schemaVersion {
 				t.Errorf("marker %d, schema %d", schemaNumber(tx), schemaVersion)
 			}
 			return validateSnapshot(tx)

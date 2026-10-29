@@ -117,12 +117,12 @@ func sameRows(a, b map[string]string) bool {
 	return true
 }
 
-func TestServingSchema13Installed(t *testing.T) {
+func TestServingSchemaInstalled(t *testing.T) {
 	f := newServingFixture(t)
 	if err := f.s.db.View(func(tx *bolt.Tx) error {
 		m := tx.Bucket(metadataBucket)
 		switch {
-		case schemaNumber(tx) != 13 || schemaVersion != 13:
+		case schemaNumber(tx) != schemaVersion:
 			t.Errorf("marker %d, schema %d", schemaNumber(tx), schemaVersion)
 		case string(m.Get(servingStorageFormatKey)) != "skygo-serving-store-v1":
 			t.Errorf("serving tag %q", m.Get(servingStorageFormatKey))
@@ -139,8 +139,9 @@ func TestServingSchema13Installed(t *testing.T) {
 
 // TestServingMigrationFromSchema12 strips a current installation to the
 // schema12 shape (a MODEL, not a genuine signed9f4 writer) and checks that
-// Open adds exactly the empty family, the tag and marker13, and that a
-// populated or tagged schema12 database is refused unchanged.
+// Open adds exactly the empty serving family, its v1 tag, the artifact Begin
+// format tag and the current marker. A populated or tagged schema12 database
+// is refused unchanged.
 func TestServingMigrationFromSchema12(t *testing.T) {
 	dir, _, _ := environmentPopulated(t)
 	editFixture(t, dir, false, func(tx *bolt.Tx) error {
@@ -158,14 +159,35 @@ func TestServingMigrationFromSchema12(t *testing.T) {
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
+	marker := string(metadataBucket) + "/" + string(schemaKey)
+	added := map[string]string{
+		string(metadataBucket) + "/" + string(servingStorageFormatKey):       servingStorageFormat,
+		string(servingServicesBucket) + "\x00sequence":                       "0",
+		string(metadataBucket) + "/" + string(artifactBeginStorageFormatKey): artifactBeginStorageFormat,
+	}
+	if before[marker] != string(sequenceKey(environmentRetirementSchema)) {
+		t.Fatal("model does not have the schema12 marker")
+	}
 	for k, v := range before {
-		if k != string(metadataBucket)+"/"+string(schemaKey) && after[k] != v {
+		if k == marker {
+			continue
+		}
+		if got, ok := after[k]; !ok || got != v {
 			t.Errorf("migration changed %q", k)
 		}
 	}
-	if after[string(metadataBucket)+"/"+string(schemaKey)] != string(sequenceKey(13)) ||
-		after[string(metadataBucket)+"/"+string(servingStorageFormatKey)] != servingStorageFormat ||
-		after[string(servingServicesBucket)+"\x00sequence"] != "0" || len(after) != len(before)+2 {
+	if after[marker] != string(sequenceKey(schemaVersion)) {
+		t.Error("migration did not install the current marker")
+	}
+	for k, v := range added {
+		if _, ok := before[k]; ok {
+			t.Errorf("schema12 model already has %q", k)
+		}
+		if got, ok := after[k]; !ok || got != v {
+			t.Errorf("migration did not add exactly %q", k)
+		}
+	}
+	if len(after) != len(before)+len(added) {
 		t.Fatalf("migration added other rows: %d -> %d", len(before), len(after))
 	}
 
