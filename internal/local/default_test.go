@@ -499,6 +499,27 @@ func TestDefaultFinalSignalError(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { b.Close() }) // Each expected cleanup result is asserted below.
+			id := strings.Repeat("d", 32)
+			ops := b.defaultOps
+			b.defaultOps.wait = func(c *exec.Cmd) error {
+				if err := ops.wait(c); err != nil {
+					return err
+				}
+				b.mu.Lock()
+				e := b.jobs[id]
+				b.mu.Unlock()
+				if e == nil || e.cmd != c {
+					return errors.New("missing original final-signal execution")
+				}
+				// This test covers final signal failure. Let the real output
+				// reader reach EOF before the separate output grace starts.
+				select {
+				case <-e.owned.readDone:
+					return nil
+				case <-time.After(5 * time.Second):
+					return errors.New("final-signal output reader did not finish")
+				}
+			}
 			deliveryErr := errors.New("group delivery denied")
 			probeErr := errors.New("group probe denied")
 			signals, probes := 0, 0
@@ -516,7 +537,6 @@ func TestDefaultFinalSignalError(t *testing.T) {
 				}
 				return errors.New("numeric group exists or was reused")
 			}
-			id := strings.Repeat("d", 32)
 			if err := b.Start(context.Background(), id, defaultTask(0)); err != nil {
 				t.Fatal(err)
 			}
