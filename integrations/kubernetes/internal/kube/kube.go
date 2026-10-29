@@ -297,7 +297,19 @@ func (b *Backend) jobStatus(ctx context.Context, j *batchv1.Job, id string) (bac
 			return backend.Status{State: backend.Succeeded, ExitCode: int32ptr(0)}, nil
 		}
 		if c.Type == batchv1.JobFailed {
-			return backend.Status{State: backend.Failed, Reason: c.Reason + ": " + c.Message}, nil
+			status := backend.Status{State: backend.Failed, Reason: c.Reason + ": " + c.Message}
+			// A controller failure need not have a workload exit code. Only
+			// report one from the task of a single, owned Pod, not an init
+			// container, a sidecar, or an earlier container incarnation.
+			pods, err := b.pods(ctx, j, id)
+			if err == nil && len(pods) == 1 {
+				for _, c := range pods[0].Status.ContainerStatuses {
+					if c.Name == "task" && c.State.Terminated != nil && c.State.Terminated.ExitCode != 0 {
+						status.ExitCode = int32ptr(c.State.Terminated.ExitCode)
+					}
+				}
+			}
+			return status, nil
 		}
 	}
 	pods, err := b.pods(ctx, j, id)

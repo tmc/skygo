@@ -442,3 +442,83 @@ func TestMissingJobLogs(t *testing.T) {
 		t.Fatalf("missing job logs: %v", err)
 	}
 }
+
+// TestFailedJobExitCode observes only the workload's known, current exit.
+// Job failure alone, including an init or scheduling failure, proves no exit.
+func TestFailedJobExitCode(t *testing.T) {
+	terminated := func(name string, code int32) corev1.ContainerStatus {
+		return corev1.ContainerStatus{Name: name, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: code}}}
+	}
+	for _, tt := range []struct {
+		name      string
+		statuses  []corev1.ContainerStatus
+		init      []corev1.ContainerStatus
+		phase     corev1.PodPhase
+		multiple  bool
+		foreign   bool
+		listError bool
+		want      int32
+	}{
+		{name: "exit7", statuses: []corev1.ContainerStatus{terminated("task", 7)}, want: 7},
+		{name: "sidecar first", statuses: []corev1.ContainerStatus{terminated("proxy", 9), terminated("task", 7)}, want: 7},
+		{name: "sidecar only", statuses: []corev1.ContainerStatus{terminated("proxy", 9)}},
+		{name: "init failed", init: []corev1.ContainerStatus{terminated("task", 9)}},
+		{name: "task succeeded", statuses: []corev1.ContainerStatus{terminated("task", 0), terminated("proxy", 9)}},
+		{name: "pending", phase: corev1.PodPending},
+		{name: "running", statuses: []corev1.ContainerStatus{{Name: "task", State: corev1.ContainerState{Running: &corev1.ContainerStateRunning{}}}}},
+		{name: "previous exit", statuses: []corev1.ContainerStatus{{Name: "task", LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 7}}}}},
+		{name: "multiple pods", statuses: []corev1.ContainerStatus{terminated("task", 7)}, multiple: true},
+		{name: "foreign owner", statuses: []corev1.ContainerStatus{terminated("task", 7)}, foreign: true},
+		{name: "list unavailable", statuses: []corev1.ContainerStatus{terminated("task", 7)}, listError: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx := context.Background()
+			client := fake.NewSimpleClientset()
+			b, err := testBackend(client, "workloads", "test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			task := backend.Task{Argv: []string{"sh", "-c", "exit 7"}, Image: "busybox"}
+			if err := b.Start(ctx, testID, task); err != nil {
+				t.Fatal(err)
+			}
+			j, err := client.BatchV1().Jobs("workloads").Get(ctx, "skygo-"+testID, metav1.GetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.UID = "job-uid"
+			j.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, Reason: "BackoffLimitExceeded", Message: "job failed"}}
+			if _, err := client.BatchV1().Jobs("workloads").Update(ctx, j, metav1.UpdateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			controller := true
+			p := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Labels: j.Labels, OwnerReferences: []metav1.OwnerReference{{UID: j.UID, Name: j.Name, Kind: "Job", Controller: &controller}}}, Status: corev1.PodStatus{Phase: tt.phase, ContainerStatuses: tt.statuses, InitContainerStatuses: tt.init}}
+			if tt.foreign {
+				p.OwnerReferences[0].UID = "replacement-job"
+			}
+			if _, err := client.CoreV1().Pods("workloads").Create(ctx, p, metav1.CreateOptions{}); err != nil {
+				t.Fatal(err)
+			}
+			if tt.multiple {
+				p.Name = "second"
+				if _, err := client.CoreV1().Pods("workloads").Create(ctx, p, metav1.CreateOptions{}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if tt.listError {
+				client.PrependReactor("list", "pods", func(ktesting.Action) (bool, runtime.Object, error) { return true, nil, errors.New("api unavailable") })
+			}
+			status, err := b.Observe(ctx, backend.Reference{Binding: testBinding, ID: testID, Task: task})
+			if err != nil || status.State != backend.Failed || status.Reason != "BackoffLimitExceeded: job failed" {
+				t.Fatalf("observe = %+v, %v", status, err)
+			}
+			if tt.want == 0 {
+				if status.ExitCode != nil {
+					t.Fatalf("invented exit code %d", *status.ExitCode)
+				}
+			} else if status.ExitCode == nil || *status.ExitCode != tt.want {
+				t.Fatalf("exit code = %v, want %d", status.ExitCode, tt.want)
+			}
+		})
+	}
+}
