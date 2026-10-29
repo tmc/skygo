@@ -49,6 +49,7 @@ func TestDial(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.waitHandshake()
 	if f.handshakeCount() != 1 {
 		t.Errorf("handshakes = %d, want 1", f.handshakeCount())
 	}

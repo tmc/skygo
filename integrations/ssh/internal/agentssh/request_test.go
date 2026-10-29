@@ -44,20 +44,21 @@ const (
 // A fixture is a loopback SSH server that forwards direct-tcpip channels
 // to one allowed TLS agent serving the generated ControlService.
 type fixture struct {
-	t       *testing.T
-	dir     string
-	cfg     config
-	token   string
-	hostKey ssh.Signer
-	userKey ssh.Signer
-	caPEM   []byte
-	service *service
-	agent   *httptest.Server
-	ln      net.Listener
-	server  *ssh.ServerConfig
-	wg      sync.WaitGroup // every server goroutine
-	arrived chan string    // gate names of held HTTP requests
-	holding chan struct{}  // receives when a channel open is held
+	t              *testing.T
+	dir            string
+	cfg            config
+	token          string
+	hostKey        ssh.Signer
+	userKey        ssh.Signer
+	caPEM          []byte
+	service        *service
+	agent          *httptest.Server
+	ln             net.Listener
+	server         *ssh.ServerConfig
+	wg             sync.WaitGroup // every server goroutine
+	arrived        chan string    // gate names of held HTTP requests
+	holding        chan struct{}  // receives when a channel open is held
+	firstHandshake chan struct{}  // closed after the first server handshake is counted
 
 	mu         sync.Mutex
 	accepts    int
@@ -79,14 +80,15 @@ type recorded struct {
 func newFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := &fixture{
-		t:       t,
-		dir:     t.TempDir(),
-		token:   "test-bearer-" + randomHex(t, 16),
-		hostKey: newSigner(t),
-		userKey: newSigner(t),
-		arrived: make(chan string, 16),
-		holding: make(chan struct{}, 16),
-		gates:   make(map[string]chan struct{}),
+		t:              t,
+		dir:            t.TempDir(),
+		token:          "test-bearer-" + randomHex(t, 16),
+		hostKey:        newSigner(t),
+		userKey:        newSigner(t),
+		arrived:        make(chan string, 16),
+		holding:        make(chan struct{}, 16),
+		firstHandshake: make(chan struct{}),
+		gates:          make(map[string]chan struct{}),
 	}
 	f.service = &service{fixture: f, domain: &v1.RequestDomain{Lineage: testLineage, Epoch: testEpoch}, accepted: make(chan struct{}, 4), release: make(chan struct{})}
 
@@ -166,6 +168,9 @@ func (f *fixture) handleSSH(c net.Conn) {
 	}
 	f.mu.Lock()
 	f.handshakes++
+	if f.handshakes == 1 {
+		close(f.firstHandshake)
+	}
 	f.mu.Unlock()
 	defer conn.Close()
 	f.wg.Add(1)
@@ -232,6 +237,17 @@ func (f *fixture) forward(nc ssh.NewChannel) {
 	ch.Close()
 	agent.Close()
 	copies.Wait()
+}
+
+// waitHandshake waits for the actual server handshake to be counted. Client
+// authentication can finish before the server publishes that result.
+func (f *fixture) waitHandshake() {
+	f.t.Helper()
+	select {
+	case <-f.firstHandshake:
+	case <-time.After(requestBudget):
+		f.t.Error("server did not publish its completed handshake")
+	}
 }
 
 func (f *fixture) handshakeCount() int {

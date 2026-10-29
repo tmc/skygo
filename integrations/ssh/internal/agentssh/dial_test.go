@@ -196,6 +196,7 @@ func TestDialOwnedClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	f.waitHandshake()
 	if f.handshakeCount() != 1 {
 		t.Errorf("handshakes = %d, want 1", f.handshakeCount())
 	}
@@ -278,6 +279,9 @@ func TestDialLateHandshake(t *testing.T) {
 		dial: countingDial(&cc, "", func(c *countingConn) { c.gate, c.closeErr = gate, closeErr }),
 		handshake: func(c net.Conn, addr string, config *ssh.ClientConfig) (ssh.Conn, <-chan ssh.NewChannel, <-chan *ssh.Request, error) {
 			conn, chans, reqs, err := ssh.NewClientConn(c, addr, config)
+			if err == nil {
+				f.waitHandshake()
+			}
 			cancel()
 			<-cc.entered // the callback is closing the connection
 			close(returned)
@@ -374,11 +378,12 @@ func TestDialDeadlineResetRefused(t *testing.T) {
 		wc := newWaitConn(nil)
 		d := dialer{
 			dial:      countingDial(&cc, "", func(c *countingConn) { c.resetErr, c.closeErr = resetErr, closeErr }),
-			handshake: wrapHandshake(wc, nil),
+			handshake: wrapHandshake(wc, f.waitHandshake),
 		}
 		client, err := d.dialSSH(context.Background(), f.cfg)
 		if client != nil {
 			client.Close()
+			client.Wait()
 			t.Fatal("Dial returned a client whose deadline was not cleared")
 		}
 		e := dialError(t, err)
