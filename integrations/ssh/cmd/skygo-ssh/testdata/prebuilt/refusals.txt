@@ -1,0 +1,8 @@
+# Missing prebuilt bytes fail before ssh -G, signer or a source build.
+! skygo-ssh --host dgx --known-hosts kh --agent-binary $WORK/missing --agent-commit $COMMIT --agent-digest $DIGEST jobs list
+stderr 'agentbinary:'
+! stderr 'MODELED'
+# Configuration shape is checked even for commands that need no agent.
+! skygo-ssh --host dgx --known-hosts kh --agent-binary $WORK/missing --agent-commit HEAD --agent-digest $DIGEST help
+stderr commit
+! stderr 'MODELED'

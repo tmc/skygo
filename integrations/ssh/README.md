@@ -29,10 +29,46 @@ go install ./cmd/skygo-ssh
 Run `skygo-ssh` from inside a skygo checkout, or pass `--source DIR`. Each
 command builds `integrations/ssh/cmd/skygo-ssh` from that checkout with
 `GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOWORK=off GOTOOLCHAIN=local`, so
-the agent is always your current source. Without `--source` the checkout
+in source mode the agent is your current source. Without `--source` the checkout
 must have no uncommitted changes; with it, uncommitted changes are built
 too. Builds are cached under the user cache directory (`~/Library/Caches`
 on macOS) in `skygo-ssh/build/COMMIT/SHA256/`.
+
+## Use a prebuilt agent
+
+The installed client also works outside a checkout, without Go or Git on
+its PATH. Build the Linux arm64 agent separately from the intended source:
+
+```
+make agent-linux-arm64
+shasum -a 256 bin/skygo-ssh-linux-arm64
+```
+
+Record the actual clean source commit and the binary's SHA-256, then run:
+
+```
+skygo-ssh --host dgx --known-hosts KNOWN_HOSTS \
+    --agent-binary BINARY --agent-commit COMMIT --agent-digest SHA256 targets list
+```
+
+All three binary flags are required together and are exclusive with
+`--source`. Relative binary paths are accepted by the CLI; Go callers use
+an absolute path in `Config.Prebuilt`.
+
+The binary must be a regular, read-only executable, at most 256 MiB,
+containing a static Linux arm64 Go build of this module's `skygo-ssh`
+command with `CGO_ENABLED=0`. PIE and dynamic executables are refused.
+The client copies and verifies the bytes, then atomically publishes a
+read-only snapshot under `skygo-ssh/build/prebuilt/COMMIT/SHA256/`.
+An existing snapshot must match; it is never replaced. The cache must be
+private and trusted. Another process of the same user can change its
+permissions: mode 0555 is not hostile-process isolation.
+
+The commit is your assertion of the clean source used to build the agent.
+The digest verifies the selected bytes, and the ELF and Go metadata check
+the format and target; none proves source provenance. Missing embedded
+VCS metadata is accepted, but contradictory metadata is refused. This
+mode preserves the existing remote identity, record and bootstrap checks.
 
 ## Enroll the host
 
@@ -329,6 +365,15 @@ fixed file is hashed and transferred, the script's operands are
 interpreted in memory, and an in-process Connect server stands in for the
 agent. None builds or starts an agent or runs the script. The `sshagent`
 tests use a MODEL SSH agent connection and a MODEL transport.
+
+Prebuilt tests consume a separately compiled real agent; no test builds
+one implicitly. Set `SKYGO_SSH_AGENT_BINARY`, `SKYGO_SSH_AGENT_COMMIT` and
+`SKYGO_SSH_AGENT_SHA256` to its absolute path, asserted clean source commit
+and actual digest. With `SKYGO_REQUIRE_FIXTURES=1`, missing pins fail; any
+partial or incorrect pins always fail. Without the required-fixture mode,
+missing all three pins skips only the positive prebuilt tests. Qualification
+supplies every pin and requires zero skips. Corrupted executable fixtures
+and the refusing `ssh -G` sentinel are modeled faults, not native runs.
 
 ## Native installation check (HOLD)
 

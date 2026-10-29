@@ -45,3 +45,21 @@ func ExampleSession_Close() {
 	// Output:
 	// <nil>
 }
+
+// A partial prebuilt selection fails before token, cache or SSH access.
+func ExampleOpen_prebuilt() {
+	cfg := sshagent.Config{
+		Address: "dgx.example:22", User: "skygo", KnownHostsFile: "/home/u/known_hosts",
+		KeyFile: "/home/u/id_ed25519", IdentityDir: "/home/u/agents", CacheDir: "/home/u/cache", Target: "dgx",
+		Prebuilt: sshagent.Binary{Path: "/home/u/skygo-ssh-linux-arm64"},
+	}
+	_, err := sshagent.Open(context.Background(), cfg)
+	fmt.Println(err)
+	// Output: agentbinary: commit must be a full lowercase hex commit
+}
+
+func ExampleBinary() {
+	var binary sshagent.Binary
+	fmt.Println(binary.Path == "", binary.Commit == "", binary.Digest == "")
+	// Output: true true true
+}

@@ -2,7 +2,8 @@
 // SSH, as the skygo-ssh command does, and returns a session whose control
 // client is authenticated to it.
 //
-// Open builds the agent from a local skygo checkout, installs it in the
+// Open builds the agent from a local skygo checkout or verifies an explicit
+// Config.Prebuilt binary, installs it in the
 // remote ~/skygo-test directory with a fixed bootstrap script, starts it
 // unless a running agent is recorded there, and waits until it answers an
 // authorized GetServerInfo for the expected target. The SSH host key is
@@ -17,6 +18,12 @@
 //	}
 //	info, err := s.Control().GetServerInfo(ctx, connect.NewRequest(&v1.GetServerInfoRequest{}))
 //	err = errors.Join(err, s.Close())
+//
+// Prebuilt mode needs neither a checkout nor Go or Git on the client. It
+// accepts a read-only static Linux arm64 Go executable and checks its
+// digest before acquiring a signer or SSH connection. The supplied commit
+// is an operator assertion, not a source-to-binary attestation. Source
+// mode keeps the existing build and cache behavior.
 //
 // A Session owns each Control request until it returned and its response
 // body closed cleanly; a stream, with its connection, until its first

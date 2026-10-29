@@ -1,0 +1,12 @@
+# Every partial or explicit empty group fails before any external command.
+! skygo-ssh --host dgx --known-hosts kh --agent-binary agent jobs list
+stderr 'go together'
+! skygo-ssh --host dgx --known-hosts kh --agent-commit $COMMIT jobs list
+stderr 'go together'
+! skygo-ssh --host dgx --known-hosts kh --agent-digest $DIGEST jobs list
+stderr 'go together'
+! skygo-ssh --host dgx --known-hosts kh --agent-binary= jobs list
+stderr 'go together'
+! skygo-ssh --host dgx --known-hosts kh --source= --agent-binary agent --agent-commit $COMMIT --agent-digest $DIGEST jobs list
+stderr exclusive
+! stderr 'MODELED'

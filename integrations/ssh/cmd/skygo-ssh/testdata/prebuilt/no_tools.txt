@@ -1,0 +1,5 @@
+# The actual compiler-produced fixture is consumed from a non-checkout cwd.
+# The MODELED ssh -G stop proves this reaches resolution without Go/Git.
+! skygo-ssh --host dgx --known-hosts kh --agent-binary $BINARY --agent-commit $REAL_COMMIT --agent-digest $REAL_DIGEST jobs list
+stderr 'MODELED ssh -G refusal'
+! stderr 'agentbinary:'

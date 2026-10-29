@@ -8,13 +8,19 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/tmc/skygo/integrations/ssh/internal/agentbinary"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentsession"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentssh"
 	"github.com/tmc/skygo/integrations/ssh/internal/bootstrap"
 	"github.com/tmc/skygo/integrations/ssh/internal/sshconfig"
 )
 
-// A Config names one SSH host and how to build, install and reach the
+// A Binary names a read-only Linux arm64 skygo-ssh executable. Commit is
+// the operator's assertion of its clean source commit; Digest is its actual
+// SHA-256. The executable format and digest do not attest source provenance.
+type Binary struct{ Path, Commit, Digest string }
+
+// A Config names one SSH host and how to select, install and reach the
 // skygo agent on it. Every file and directory is a clean absolute path.
 // Open checks the whole Config before it reads, builds or connects to
 // anything.
@@ -42,6 +48,11 @@ type Config struct {
 	// built too.
 	Source     string
 	AllowDirty bool
+
+	// Prebuilt selects a local binary instead of building Source. All three
+	// fields must be set, Source empty and AllowDirty false. Its zero value
+	// keeps source-build mode.
+	Prebuilt Binary
 
 	// IdentityDir holds the local TLS identity and token of each agent
 	// build, in a private directory COMMIT/SHA256 below it. CacheDir holds
@@ -115,7 +126,19 @@ func (c Config) check() error {
 	case c.AgentSocket != "" && !agentssh.ValidFingerprint(c.Fingerprint):
 		return errors.New("sshagent: an agent socket needs a SHA256 key fingerprint")
 	}
-	for _, d := range []struct{ name, path string }{{"source", c.Source}, {"identity directory", c.IdentityDir}, {"cache directory", c.CacheDir}} {
+	if c.Prebuilt == (Binary{}) {
+		if !cleanAbs(c.Source) {
+			return errors.New("sshagent: source must be a clean absolute path")
+		}
+	} else {
+		if c.Source != "" || c.AllowDirty {
+			return errors.New("sshagent: prebuilt binary and source build options are exclusive")
+		}
+		if err := (agentbinary.Spec(c.Prebuilt)).Check(); err != nil {
+			return err
+		}
+	}
+	for _, d := range []struct{ name, path string }{{"identity directory", c.IdentityDir}, {"cache directory", c.CacheDir}} {
 		if !cleanAbs(d.path) {
 			return fmt.Errorf("sshagent: %s must be a clean absolute path", d.name)
 		}

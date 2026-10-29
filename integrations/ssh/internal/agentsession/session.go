@@ -17,6 +17,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/tmc/skygo/integrations/ssh/internal/agentbinary"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentbuild"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentidentity"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentssh"
@@ -68,8 +69,9 @@ type Options struct {
 	// current directory; AllowDirty builds its uncommitted changes too.
 	Source      string
 	AllowDirty  bool
-	CacheDir    string // build cache
-	IdentityDir string // local agent identities, in COMMIT/DIGEST below it
+	Prebuilt    agentbinary.Artifact // verified snapshot; exclusive with Source/AllowDirty/build
+	CacheDir    string               // build cache
+	IdentityDir string               // local agent identities, in COMMIT/DIGEST below it
 
 	Target         string // name of the remote built-in target
 	Port           int    // remote loopback port of the agent
@@ -252,6 +254,19 @@ func Open(ctx context.Context, o Options) (*Session, error) {
 }
 
 func (s *Session) open(ctx context.Context, o Options, u *UnsettledError) error {
+	// Only prebuilt mode checks the selected bytes before acquiring a signer.
+	// Keep the source path's signer-before-build order and test hook unchanged.
+	var build agentbuild.Build
+	if !o.Prebuilt.IsZero() {
+		if o.Source != "" || o.AllowDirty || o.build != nil {
+			return errors.New("skygo-ssh: prebuilt binary and source build options are exclusive")
+		}
+		var err error
+		build, err = o.Prebuilt.Build()
+		if err != nil {
+			return err
+		}
+	}
 	log := o.Log
 	if log == nil {
 		log = io.Discard
@@ -276,13 +291,16 @@ func (s *Session) open(ctx context.Context, o Options, u *UnsettledError) error 
 		}
 	}
 
-	buildFunc := o.build
-	if buildFunc == nil {
-		buildFunc = buildAgent
-	}
-	build, err := buildFunc(ctx, o.Source, o.CacheDir, o.AllowDirty, log)
-	if err != nil {
-		return err
+	if o.Prebuilt.IsZero() {
+		buildFunc := o.build
+		if buildFunc == nil {
+			buildFunc = buildAgent
+		}
+		var err error
+		build, err = buildFunc(ctx, o.Source, o.CacheDir, o.AllowDirty, log)
+		if err != nil {
+			return err
+		}
 	}
 	id, err := agentidentity.Load(filepath.Join(o.IdentityDir, build.Commit, build.Digest), AgentName)
 	if err != nil {

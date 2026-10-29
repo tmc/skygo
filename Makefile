@@ -2,7 +2,7 @@ TOOLS := $(CURDIR)/.tools
 export GOWORK := off
 export PATH := $(TOOLS):$(PATH)
 
-.PHONY: tools generate check test test-fixtures race build
+.PHONY: tools generate check test test-fixtures race build agent-linux-arm64
 
 tools:
 	GOBIN=$(TOOLS) go install github.com/bufbuild/buf/cmd/buf@v1.50.0
@@ -45,7 +45,13 @@ race:
 build:
 	CGO_ENABLED=0 go build -o bin/skygo ./cmd/skygo
 	cd integrations/ssh && CGO_ENABLED=0 go build ./...
+	cd integrations/ssh && CGO_ENABLED=0 go build -o ../../bin/skygo-ssh ./cmd/skygo-ssh
 	cd integrations/ec2 && CGO_ENABLED=0 go build ./...
 	cd integrations/kubernetes && CGO_ENABLED=0 go build -o ../../bin/skygo-kubernetes ./cmd/skygo-kubernetes
 	cd integrations/skycompat && CGO_ENABLED=0 go build ./...
 	cd integrations/skycompat && CGO_ENABLED=0 go build -o ../../bin/skycompat ./cmd/skycompat
+
+# The commit and digest supplied by the operator are separate provenance inputs.
+agent-linux-arm64:
+	cd integrations/ssh && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 GOWORK=off go build -trimpath -buildvcs=false -o ../../bin/skygo-ssh-linux-arm64 ./cmd/skygo-ssh
+	chmod 0555 bin/skygo-ssh-linux-arm64

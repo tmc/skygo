@@ -8,6 +8,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/tmc/skygo/gen/skygo/v1/skyv1connect"
+	"github.com/tmc/skygo/integrations/ssh/internal/agentbinary"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentidentity"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentsession"
 )
@@ -38,9 +39,9 @@ type Binding struct {
 	Fingerprint    string // pinned SSH agent key, "" with a key file
 	AgentAddress   string // the agent's loopback address on the host
 	Target         string
-	Commit         string // full hex commit of the agent's source
+	Commit         string // source commit; an operator assertion with Prebuilt
 	Digest         string // hex SHA-256 of the agent binary
-	Dirty          bool   // the source had uncommitted changes
+	Dirty          bool   // source build was dirty; false is asserted with Prebuilt
 	AgentDir       string // agent directory, relative to the remote home
 	Installation   Installation
 
@@ -49,7 +50,8 @@ type Binding struct {
 	PID int
 }
 
-// Open builds the agent from cfg.Source, installs and starts it on the
+// Open builds the agent from cfg.Source or verifies cfg.Prebuilt, installs
+// and starts it on the
 // host if needed, and waits until it answers as itself. It checks cfg and
 // then reads the scoped token, if any, before anything else. The SSH
 // connection Open uses for the bootstrap commands is closed, and joined,
@@ -70,6 +72,13 @@ func Open(ctx context.Context, cfg Config) (*Session, error) {
 		var err error
 		if o.Bearer, err = agentidentity.ReadToken(o.TokenFile); err != nil {
 			return nil, fmt.Errorf("sshagent: scoped token: %w", err)
+		}
+	}
+	if cfg.Prebuilt != (Binary{}) {
+		var err error
+		o.Prebuilt, err = agentbinary.Prepare(ctx, cfg.CacheDir, agentbinary.Spec(cfg.Prebuilt))
+		if err != nil {
+			return nil, err
 		}
 	}
 	s, err := agentsession.Open(ctx, o)

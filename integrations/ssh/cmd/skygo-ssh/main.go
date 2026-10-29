@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
+	"github.com/tmc/skygo/integrations/ssh/internal/agentbinary"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentidentity"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentsession"
 	"github.com/tmc/skygo/integrations/ssh/internal/agentssh"
@@ -64,6 +65,7 @@ type flags struct {
 	fingerprint    string // pinned client key, SHA256:...
 	keyFile        string // unencrypted private key instead of the SSH agent
 	source         string // explicit skygo checkout
+	prebuilt       agentbinary.Spec
 	target         string // name of the remote built-in target
 	port           int    // remote loopback port of the agent
 	restartStopped bool
@@ -88,6 +90,9 @@ func parseFlags(args []string, stderr io.Writer) (flags, []string, error) {
 	fs.StringVar(&f.fingerprint, "identity-fingerprint", "", "SHA256 `fingerprint` of the SSH agent key to use (default: the one IdentityFile.pub)")
 	fs.StringVar(&f.keyFile, "key-file", "", "unencrypted private key `file` to use instead of the SSH agent")
 	fs.StringVar(&f.source, "source", "", "skygo checkout to build the agent from, uncommitted changes included (default: the checkout holding the current directory, which must be clean)")
+	fs.StringVar(&f.prebuilt.Path, "agent-binary", "", "read-only Linux arm64 agent executable `file` (with --agent-commit and --agent-digest)")
+	fs.StringVar(&f.prebuilt.Commit, "agent-commit", "", "asserted clean source `commit` of --agent-binary")
+	fs.StringVar(&f.prebuilt.Digest, "agent-digest", "", "SHA-256 `digest` of --agent-binary")
 	fs.StringVar(&f.target, "target-name", "", "`name` of the remote target (default: the host alias)")
 	fs.IntVar(&f.port, "agent-port", defaultPort, "remote loopback `port` of the agent")
 	fs.BoolVar(&f.restartStopped, "restart-stopped", false, "start a new agent process if the recorded one has exited")
@@ -97,6 +102,31 @@ func parseFlags(args []string, stderr io.Writer) (flags, []string, error) {
 	fs.StringVar(&f.scopedToken, "scoped-token-file", "", "local private `file` holding a token issued by the installation's auth file")
 	if err := fs.Parse(args); err != nil {
 		return flags{}, nil, err
+	}
+	var prebuiltSet, sourceSet bool
+	fs.Visit(func(f *flag.Flag) {
+		switch f.Name {
+		case "agent-binary", "agent-commit", "agent-digest":
+			prebuiltSet = true
+		case "source":
+			sourceSet = true
+		}
+	})
+	if prebuiltSet {
+		if sourceSet {
+			return flags{}, nil, errors.New("skygo-ssh: --source and --agent-binary are exclusive")
+		}
+		if countSet(f.prebuilt.Path, f.prebuilt.Commit, f.prebuilt.Digest) != 3 {
+			return flags{}, nil, errors.New("skygo-ssh: --agent-binary, --agent-commit and --agent-digest go together")
+		}
+		var err error
+		f.prebuilt.Path, err = filepath.Abs(f.prebuilt.Path)
+		if err != nil {
+			return flags{}, nil, err
+		}
+		if err := f.prebuilt.Check(); err != nil {
+			return flags{}, nil, err
+		}
 	}
 	in := f.installation
 	if set := countSet(in.DataDir, in.AuthFile, in.ArtifactDir, f.scopedToken); set != 0 && set != 4 {
@@ -264,6 +294,17 @@ func startAgent(ctx context.Context, f flags, stderr io.Writer) (*agentsession.S
 			return nil, fmt.Errorf("skygo-ssh: scoped token: %w", err)
 		}
 	}
+	if f.prebuilt != (agentbinary.Spec{}) {
+		if f.source != "" {
+			return nil, errors.New("skygo-ssh: prebuilt binary and source build options are exclusive")
+		}
+		if o.IdentityDir, o.CacheDir, err = localDirs(f.host); err != nil {
+			return nil, err
+		}
+		if o.Prebuilt, err = agentbinary.Prepare(ctx, o.CacheDir, f.prebuilt); err != nil {
+			return nil, err
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, err
@@ -295,8 +336,10 @@ func startAgent(ctx context.Context, f flags, stderr io.Writer) (*agentsession.S
 			o.AgentSocket = host.IdentityAgent
 		}
 	}
-	if o.IdentityDir, o.CacheDir, err = localDirs(f.host); err != nil {
-		return nil, err
+	if o.Prebuilt.IsZero() {
+		if o.IdentityDir, o.CacheDir, err = localDirs(f.host); err != nil {
+			return nil, err
+		}
 	}
 	return agentsession.Open(ctx, o)
 }
