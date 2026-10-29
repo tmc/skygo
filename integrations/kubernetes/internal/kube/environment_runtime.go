@@ -1321,8 +1321,8 @@ func (rt *environmentRuntime) Exec(ref environmentcontrol.Ref, req environmentco
 		case got == nil || got.UID != r.native.Pod.UID:
 			e.changed = errEnvironmentPodChanged
 		}
-		rt.release(r.id, key)
 		close(e.done)
+		rt.release(r.id, key)
 	}()
 	return e, nil
 }
