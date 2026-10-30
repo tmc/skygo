@@ -1,0 +1,32 @@
+{
+  "upstream": "922a9f046c4a2714edf2b76fec3d1862dcd56ae3",
+  "api_version": 67,
+  "source_files": {
+    "sky/server/requests/payloads.py": "1e0d56a562041b95035426bd03b980cfad72252e9160d3beb0cf5977cf634578",
+    "sky/client/sdk.py": "677a6d553c753c11d64698a0b42b0059aa92674365fab0b90435e3f8cba8469b",
+    "sky/utils/common.py": "5831690bdd627bbce1b6e9216ddb0c69ac1ba99518a7bf1142b6f3cdca1c23f0"
+  },
+  "source_lines": {
+    "payloads.py": "154-223,304-387",
+    "sdk.py": "728-750,1094-1118,1190-1204",
+    "common.py": "92-94"
+  },
+  "license": "../../LICENSE",
+  "provenance": "Actual unmodified pinned LaunchBody/ExecBody constructors model_dump_json, explicit inert common context; no HTTP/launch/exec call or domain execution",
+  "oracle_script_sha256": "4fd43d925d213ca6087df891edf07c5d838efbe96862b81599d63b147ece6d56",
+  "normalizations": [],
+  "fixtures": [
+    {
+      "file": "launch-sdk-model.json",
+      "sha256": "8ed165a8206959e4f7daef001749a1c0ba2858128c5679aa6af8d9a25585ec4f",
+      "kind": "launch",
+      "status": "SDK_PAYLOAD_CAPTURED"
+    },
+    {
+      "file": "exec-sdk-model.json",
+      "sha256": "843e7bfad2f7037ebc5cd87664d1aa9a452fee474820ce7eae7a8fa2cbef43a5",
+      "kind": "exec",
+      "status": "SDK_PAYLOAD_CAPTURED"
+    }
+  ]
+}
