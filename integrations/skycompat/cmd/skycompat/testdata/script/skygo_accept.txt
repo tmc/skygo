@@ -90,7 +90,10 @@ resources:
     "printf '%s from %s\\n' \"$GREETING\" \"$(cat out/stage.txt)\" > out/result.txt\necho \"job: $GREETING\"\n"
   ],
   "env": {
-    "GREETING": "hello"
+    "GREETING": "hello",
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
   },
   "target": "local",
   "workdir": {
@@ -117,7 +120,10 @@ resources:
     "printf '%s from %s\\n' \"$GREETING\" \"$(cat out/stage.txt)\" > out/result.txt\necho \"job: $GREETING\"\n"
   ],
   "env": {
-    "GREETING": "hello"
+    "GREETING": "hello",
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
   },
   "image": "busybox:1.36.1",
   "cpu_millis": "100",
@@ -145,6 +151,11 @@ resources:
     "-c",
     "nvidia-smi"
   ],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "2",
+    "SKYPILOT_NUM_NODES": "1"
+  },
   "image": "nvcr.io/nvidia/cuda:12.4.1-base-ubuntu22.04",
   "cpu_millis": "2000",
   "memory_bytes": "1610612736",
@@ -162,7 +173,10 @@ resources:
     "echo \"it's $(date +%Y) \u2014 \u00fcn\u00efc\u00f8d\u00e9 \u2713\"\nprintf '%s\\t%s\\n' \"a b\" 'c \"d\"'\ncat <<'END'\n$HOME stays literal\nEND\n"
   ],
   "env": {
-    "QUOTE": "say \"hi\"\tnow"
+    "QUOTE": "say \"hi\"\tnow",
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
   }
 }
 -- exotic.received --
@@ -172,7 +186,12 @@ resources:
     "/bin/sh",
     "-c",
     "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th \u2014 \u2713 \ud83d\ude80"
-  ]
+  ],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
+  }
 }
 -- large.received --
 /skygo.v1.ControlService/PlanTask
@@ -182,6 +201,11 @@ resources:
     "-c",
     "x"
   ],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "2147483647",
+    "SKYPILOT_NUM_NODES": "1"
+  },
   "cpu_millis": "1000000000000000000",
   "memory_bytes": "9222246136947933184",
   "accelerator": "A",
@@ -197,5 +221,10 @@ run: "a b\x85c﻿d\x7fe\x01f\x1bg\th — ✓ 🚀"
     "/bin/sh",
     "-c",
     "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th \u2014 \u2713 \ud83d\ude80"
-  ]
+  ],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
+  }
 }

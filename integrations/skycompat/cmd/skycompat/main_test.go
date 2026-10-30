@@ -44,7 +44,7 @@ func TestRun(t *testing.T) {
 			name:   "stdin",
 			args:   []string{"import", "--shell", "/bin/sh", "--env", "B=2", "-"},
 			stdin:  "run: echo $A $B\nenvs: {A: 1}\n",
-			stdout: "{\n  \"argv\": [\"/bin/sh\", \"-c\", \"echo $A $B\"],\n  \"env\": {\n    \"A\": \"1\",\n    \"B\": \"2\"\n  }\n}\n",
+			stdout: "{\n  \"argv\": [\"/bin/sh\", \"-c\", \"echo $A $B\"],\n  \"env\": {\n    \"A\": \"1\",\n    \"B\": \"2\",\n    \"SKYPILOT_NODE_RANK\": \"0\",\n    \"SKYPILOT_NUM_GPUS_PER_NODE\": \"0\",\n    \"SKYPILOT_NUM_NODES\": \"1\"\n  }\n}\n",
 			stderr: "run\tlowered\targv is shell -c text\nenvs\tlowered\tenvironment\n",
 		},
 		{name: "refused", args: []string{"import", "--shell", "/bin/sh", "-"}, stdin: "run: x\nnum_nodes: 2\n", code: 1, stderr: "task yaml: unsupported num_nodes at 2:12\n"},

@@ -51,6 +51,9 @@ envs:
   "argv": ["/bin/sh", "-c", "echo \"$GREETING $TOKEN\""],
   "env": {
     "GREETING": "True",
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1",
     "TOKEN": "explicit"
   }
 }
@@ -61,11 +64,21 @@ envs	lowered	environment
 run: "a\u2028b\x85c\ufeffd\x7fe\x01f\x1bg\th — ✓ 🚀"
 -- exotic.json --
 {
-  "argv": ["/bin/sh", "-c", "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th — ✓ 🚀"]
+  "argv": ["/bin/sh", "-c", "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th — ✓ 🚀"],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
+  }
 }
 -- exotic-literal.yaml --
 run: "a b\x85c﻿d\x7fe\x01f\x1bg\th — ✓ 🚀"
 -- exotic-literal.json --
 {
-  "argv": ["/bin/sh", "-c", "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th — ✓ 🚀"]
+  "argv": ["/bin/sh", "-c", "a\u2028b\u0085c\ufeffd\u007fe\u0001f\u001bg\th — ✓ 🚀"],
+  "env": {
+    "SKYPILOT_NODE_RANK": "0",
+    "SKYPILOT_NUM_GPUS_PER_NODE": "0",
+    "SKYPILOT_NUM_NODES": "1"
+  }
 }
