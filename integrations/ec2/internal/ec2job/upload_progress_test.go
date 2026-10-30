@@ -6,11 +6,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"connectrpc.com/connect"
@@ -90,6 +90,12 @@ func (p *progressPeer) FinalizeArtifactUpload(_ context.Context, r *connect.Requ
 
 func newProgressPeer(t *testing.T, j *Job) (*progressPeer, skyv1connect.ControlServiceClient) {
 	t.Helper()
+	p, server := newProgressServer(t, j)
+	return p, skyv1connect.NewControlServiceClient(server.Client(), server.URL)
+}
+
+func newProgressServer(t *testing.T, j *Job) (*progressPeer, *httptest.Server) {
+	t.Helper()
 	next := j.st
 	next.Retention = RetentionDisabled
 	if err := j.commit(next); err != nil {
@@ -100,7 +106,7 @@ func newProgressPeer(t *testing.T, j *Job) (*progressPeer, skyv1connect.ControlS
 	_, h := skyv1connect.NewControlServiceHandler(p)
 	server := httptest.NewServer(h)
 	t.Cleanup(server.Close)
-	return p, skyv1connect.NewControlServiceClient(http.DefaultClient, server.URL)
+	return p, server
 }
 
 func (p *progressPeer) check(t *testing.T, j *Job, archive []byte, begins, chunks, finals int) {
@@ -237,32 +243,64 @@ func TestUploadBusyBadAcknowledgment(t *testing.T) {
 func TestUploadBusyDeadline(t *testing.T) {
 	for _, stage := range []string{"begin", "chunk", "finalize"} {
 		t.Run(stage, func(t *testing.T) {
-			j, _, _ := newJob(t)
-			archive, err := j.snapshot()
-			if err != nil {
-				t.Fatal(err)
-			}
-			p, c := newProgressPeer(t, j)
-			b, ch, f := 1, 0, 0
-			switch stage {
-			case "begin":
-				p.beginBusy = 1
-			case "chunk":
-				p.chunkBusy = 1
-				ch = 1
-			case "finalize":
-				p.finalizeBusy = 1
-				ch, f = 1, 1
-			}
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
-			defer cancel()
-			if err := j.upload(ctx, c); !errors.Is(err, context.DeadlineExceeded) {
-				t.Fatalf("upload = %v, want deadline", err)
-			}
-			p.check(t, j, archive, b, ch, f)
-			if j.st.Submit != submitNone {
-				t.Fatal("upload submitted after deadline")
-			}
+			synctest.Test(t, func(t *testing.T) {
+				j, _, _ := newJob(t)
+				archive, err := j.snapshot()
+				if err != nil {
+					t.Fatal(err)
+				}
+				p, server := newProgressServer(t, j)
+				defer server.Close()
+				b, ch, f := 1, 0, 0
+				procedure := skyv1connect.ControlServiceBeginArtifactUploadProcedure
+				phase, acknowledged := uploadNone, int64(0)
+				switch stage {
+				case "begin":
+					p.beginBusy = 1
+				case "chunk":
+					p.chunkBusy = 1
+					ch = 1
+					procedure = skyv1connect.ControlServiceWriteArtifactChunkProcedure
+					phase = uploadOpen
+				case "finalize":
+					p.finalizeBusy = 1
+					ch, f = 1, 1
+					procedure = skyv1connect.ControlServiceFinalizeArtifactUploadProcedure
+					phase, acknowledged = uploadFinalize, j.st.Snapshot.Size
+				}
+				// MODELED time cannot advance through the real HTTP/disk work.
+				// The selected Busy response closes the HTTP owners before the
+				// retry wait, so the same standard deadline expires at that phase.
+				start := time.Now()
+				ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+				defer cancel()
+				deadline, _ := ctx.Deadline()
+				httpClient := &deadlineProgressClient{server: server, procedure: procedure, ctx: ctx}
+				c := skyv1connect.NewControlServiceClient(httpClient, server.URL)
+				request, snapshot := j.st.RequestID, j.st.Snapshot
+				if err := j.upload(ctx, c); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("upload = %v, want deadline", err)
+				}
+				if !httpClient.closed || httpClient.beforeDeadline != nil || ctx.Err() != context.DeadlineExceeded || time.Since(start) != 100*time.Millisecond {
+					t.Fatalf("deadline did not follow the selected Busy response: closed=%t before=%v context=%v elapsed=%s", httpClient.closed, httpClient.beforeDeadline, ctx.Err(), time.Since(start))
+				}
+				if got, ok := ctx.Deadline(); !ok || !got.Equal(deadline) {
+					t.Fatal("context deadline changed")
+				}
+				if err := j.upload(ctx, c); !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("upload after deadline = %v", err)
+				}
+				p.check(t, j, archive, b, ch, f)
+				if httpClient.requests != b+ch+f || j.st.RequestID != request || j.st.Snapshot != snapshot || j.st.Upload != phase || j.st.Acknowledged != acknowledged {
+					t.Fatalf("deadline changed upload identity or progress: requests=%d status=%+v", httpClient.requests, j.Status())
+				}
+				if stage != "begin" && (j.st.UploadID != p.upload.Id || j.st.Workdir.ID != p.upload.Reference.Id || j.st.Workdir.SHA256 != snapshot.SHA256 || j.st.Workdir.Size != snapshot.Size) {
+					t.Fatal("deadline changed the accepted upload reference")
+				}
+				if j.st.Submit != submitNone {
+					t.Fatal("upload submitted after deadline")
+				}
+			})
 		})
 	}
 }
