@@ -37,8 +37,9 @@ const workerStepInterval = 250 * time.Millisecond
 // static credentials, not credential plugins or file refresh. Standard
 // InClusterConfig uses a token file and is refused by this worker profile.
 // Its ordinary
-// target client remains the original Backend's client. No worker capability
-// is advertised by constructing or mounting this integration.
+// target client remains the original Backend's client. After BindControl,
+// its mounted worker API advertises configured independent-worker support to
+// file-scoped callers. It advertises neither TCP nor native qualification.
 //
 // A non-nil Integration returned with an error owns original work: the server
 // must drain and join its Control and RPC calls, then Close it before
@@ -207,7 +208,10 @@ func (in *workerIntegration) BindControl(c *control.Control) error {
 		return errors.New("worker integration cannot bind control")
 	}
 	in.bound = true
-	w, err := control.NewWorkers(c, control.WorkerConfig{Budgets: map[string]workeradmission.Budget{in.target.Name: in.profile.budget}})
+	w, err := control.NewWorkers(c, control.WorkerConfig{
+		Budgets: map[string]workeradmission.Budget{in.target.Name: in.profile.budget},
+		Modes:   map[string][]backend.WorkerMode{in.target.Name: {backend.WorkerIndependent}},
+	})
 	if err != nil {
 		return err
 	}

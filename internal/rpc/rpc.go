@@ -32,6 +32,7 @@ type handler struct {
 	// services is the serving Controller this handler serves, or nil. Only
 	// a non-nil one advertises any service capability.
 	services   *servingcontrol.Controller
+	workers    *control.Workers // the same controller mounted on this handler
 	streams    chan struct{}
 	denialMu   sync.Mutex
 	lastDenial time.Time
@@ -80,15 +81,17 @@ func NewIntegratedHandler(c *control.Control, engine *auth.Engine, environments 
 }
 
 // NewWorkerHandler serves the dedicated WorkerGroupService over workers, which
-// must share c and engine. A nil workers is NewHandler. Mounting the service
-// advertises no worker capability or native qualification. The caller owns
-// workers and must stop admission and join its calls before closing Control.
+// must share c and engine. A nil workers is NewHandler. Mounting alone
+// advertises nothing: scoped callers see only the explicit configured modes of
+// these Workers on their exact targets. Those software capabilities promise
+// neither capacity nor native qualification. The caller owns workers and must
+// stop admission and join its calls before closing Control.
 func NewWorkerHandler(c *control.Control, engine *auth.Engine, workers *control.Workers) *HTTPHandler {
 	return newHandler(c, engine, nil, nil, workers)
 }
 
 func newHandler(c *control.Control, engine *auth.Engine, environments *environmentcontrol.Controller, services *servingcontrol.Controller, workers *control.Workers) *HTTPHandler {
-	h := &handler{control: c, engine: engine, environments: environments, services: services, streams: make(chan struct{}, 32)}
+	h := &handler{control: c, engine: engine, environments: environments, services: services, workers: workers, streams: make(chan struct{}, 32)}
 	path, service := skyv1connect.NewControlServiceHandler(h, connect.WithReadMaxBytes(512<<10), connect.WithConditionalHandlerOptions(func(info connect.Spec) []connect.HandlerOption {
 		if artifactProcedure(info.Procedure) && info.Procedure != skyv1connect.ControlServiceSubmitWorkspaceJobProcedure {
 			limit := 16 << 10
@@ -384,11 +387,20 @@ func (h *handler) servicesServed(ctx context.Context) bool {
 	return h.services != nil && requestActor(ctx).TokenID() != ""
 }
 
-// target projects t for the caller of ctx, with environment support only
-// while h serves environments and fixed services only on the target h's
-// service controller serves.
+// target projects t for the caller of ctx. Environment and service support
+// require their mounted controllers; worker modes require the same mounted
+// Workers and its explicit entry for t.
 func (h *handler) target(ctx context.Context, t backend.Target) *v1.Target {
 	out := h.wireTarget(t)
+	if h.workers != nil && requestActor(ctx).TokenID() != "" {
+		modes := h.workers.Modes(t.Name)
+		if slices.Contains(modes, backend.WorkerIndependent) {
+			out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_INDEXED_WORKERS_V1)
+		}
+		if slices.Contains(modes, backend.WorkerTCP) {
+			out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_TCP_RENDEZVOUS_V1)
+		}
+	}
 	if h.servicesServed(ctx) && t.Name == h.services.Target() {
 		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_FIXED_SERVICES_V1)
 	}
@@ -447,8 +459,18 @@ func (h *handler) GetServerInfo(ctx context.Context, r *connect.Request[v1.GetSe
 	if h.servicesServed(ctx) {
 		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_SERVICES_V1)
 	}
+	var indexed, tcp bool
 	for _, t := range targets {
-		out.Targets = append(out.Targets, h.target(ctx, t))
+		projected := h.target(ctx, t)
+		out.Targets = append(out.Targets, projected)
+		indexed = indexed || slices.Contains(projected.Capabilities, v1.Capability_CAPABILITY_INDEXED_WORKERS_V1)
+		tcp = tcp || slices.Contains(projected.Capabilities, v1.Capability_CAPABILITY_TCP_RENDEZVOUS_V1)
+	}
+	if indexed {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_INDEXED_WORKERS_V1)
+	}
+	if tcp {
+		out.Capabilities = append(out.Capabilities, v1.Capability_CAPABILITY_TCP_RENDEZVOUS_V1)
 	}
 	return connect.NewResponse(out), nil
 }

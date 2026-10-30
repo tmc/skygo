@@ -28,6 +28,14 @@ type WorkerConfig struct {
 	// budget. A zero field is zero capacity. Every named target must be
 	// configured, keep remote output and implement backend.WorkerBackend.
 	Budgets map[string]workeradmission.Budget
+
+	// Modes fixes each target's configured worker modes. Nil preserves legacy
+	// routing and advertises no worker support. A nonnil table denies new
+	// groups on omitted targets and targets with an empty entry; an empty
+	// table denies all new groups. A nonempty entry requires Independent and
+	// may also include TCP. Positive entries require scoped retention.
+	// NewWorkers copies the table; accepted requests keep their original route.
+	Modes map[string][]backend.WorkerMode
 }
 
 // Workers runs dedicated worker groups with durable main-start barriers.
@@ -44,6 +52,7 @@ type WorkerConfig struct {
 type Workers struct {
 	c       *Control
 	targets map[string]workerTarget
+	modes   map[string][]backend.WorkerMode // immutable; nil keeps legacy routing
 	now     func() time.Time
 
 	mu          sync.Mutex // serializes Step
@@ -65,7 +74,11 @@ func NewWorkers(c *Control, config WorkerConfig) (*Workers, error) {
 	if c == nil || len(config.Budgets) == 0 {
 		return nil, errors.New("control and worker budgets required")
 	}
-	w := &Workers{c: c, targets: make(map[string]workerTarget), now: time.Now, barriers: make(map[string]*workerBarriers), logs: make(map[string]int), logClosed: make(map[string]bool), logFailures: make(map[string][]*workerLogResult)}
+	modes, err := workerModes(c, config)
+	if err != nil {
+		return nil, err
+	}
+	w := &Workers{c: c, targets: make(map[string]workerTarget), modes: modes, now: time.Now, barriers: make(map[string]*workerBarriers), logs: make(map[string]int), logClosed: make(map[string]bool), logFailures: make(map[string][]*workerLogResult)}
 	for name, b := range config.Budgets {
 		t, ok := c.target(name)
 		if !ok {
@@ -146,7 +159,7 @@ func (w *Workers) Submit(actor auth.Actor, domain store.RequestDomain, requestID
 	if err := c.storageGuard(false, false); err != nil {
 		return backend.Job{}, nil, err
 	}
-	target, err := w.plan(t, demand)
+	target, err := w.plan(t, n.Mode, demand)
 	if err != nil {
 		return backend.Job{}, nil, err
 	}
@@ -188,13 +201,13 @@ func workerDemand(t backend.Task, count uint8) (workeradmission.Demand, error) {
 	}, nil
 }
 
-// plan returns the first worker target, in name order, that accepts t and
-// whose budget can hold d.
-func (w *Workers) plan(t backend.Task, d workeradmission.Demand) (backend.Target, error) {
+// plan returns the first worker target, in name order, that supports mode,
+// accepts t and whose budget can hold d.
+func (w *Workers) plan(t backend.Task, mode backend.WorkerMode, d workeradmission.Demand) (backend.Target, error) {
 	var reasons []string
 	for _, target := range w.c.targets {
 		wt, ok := w.targets[target.Name]
-		if !ok {
+		if !ok || !w.allowsMode(target.Name, mode) {
 			continue
 		}
 		if err := checkWorkspaceTarget(t, target, w.c.retention.enabled, w.c.workspace); err != nil {

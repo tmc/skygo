@@ -410,6 +410,13 @@ func TestWorkerIntegrationMountedSoftware(t *testing.T) {
 		if err := <-controlDone; err != nil && !errors.Is(err, context.Canceled) {
 			t.Error(err)
 		}
+		// The HTTP server has closed before this defer. Run returning does
+		// not join its original target and maintenance workers.
+		if err := c.Join(context.Background()); err != nil {
+			t.Error(err)
+			// Keep the fixture and its dependencies until the package timeout.
+			select {}
+		}
 	}()
 	workerIntegrationWait(t, c.StorageReady)
 	server := httptest.NewServer(rpc.NewWorkerHandler(c, engine, in.WorkerController()))
@@ -422,10 +429,38 @@ func TestWorkerIntegrationMountedSoftware(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	indexed := false
 	for _, cap := range info.Msg.Capabilities {
-		if cap == v1.Capability_CAPABILITY_INDEXED_WORKERS_V1 || cap == v1.Capability_CAPABILITY_TCP_RENDEZVOUS_V1 {
-			t.Fatal("unqualified profile advertised worker support")
+		if cap == v1.Capability_CAPABILITY_TCP_RENDEZVOUS_V1 {
+			t.Fatal("independent profile advertised TCP support")
 		}
+		indexed = indexed || cap == v1.Capability_CAPABILITY_INDEXED_WORKERS_V1
+	}
+	if !indexed || len(info.Msg.Targets) != 1 || info.Msg.Targets[0].Name != "kube" {
+		t.Fatal("mounted profile did not advertise its exact worker target")
+	}
+	indexed = false
+	for _, cap := range info.Msg.Targets[0].Capabilities {
+		if cap == v1.Capability_CAPABILITY_TCP_RENDEZVOUS_V1 {
+			t.Fatal("independent target advertised TCP support")
+		}
+		indexed = indexed || cap == v1.Capability_CAPABILITY_INDEXED_WORKERS_V1
+	}
+	if !indexed {
+		t.Fatal("independent target did not advertise indexed workers")
+	}
+	// Refusal is checked through the mounted RPC and the real Store. Audit
+	// rows may change; no group is accepted and no modeled API call starts.
+	mark := workersAPI.mark()
+	tcp := connect.NewRequest(&v1.SubmitWorkerJobRequest{Task: &v1.Task{Argv: []string{"train"}, Image: taskImage, Target: "kube", CpuMillis: 1000, MemoryBytes: 1 << 30}, RequestId: "unsupported-tcp",
+		Domain: &v1.RequestDomain{Lineage: domain.Lineage, Epoch: domain.Epoch}, Workers: &v1.WorkerSpec{Count: 2, Mode: v1.WorkerMode_WORKER_MODE_TCP_RENDEZVOUS}})
+	tcp.Header().Set("Authorization", "Bearer "+token)
+	if _, err := workers.SubmitWorkerJob(context.Background(), tcp); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("TCP request on independent profile = %v", err)
+	}
+	groups, err := s.WorkerGroups(0, 16)
+	if err != nil || len(groups) != 0 || len(workersAPI.since(mark)) != 0 {
+		t.Fatalf("refused TCP request accepted a group or called the API: groups=%d calls=%v error=%v", len(groups), workersAPI.since(mark), err)
 	}
 	submit := func(id string) (*v1.Job, error) {
 		req := connect.NewRequest(&v1.SubmitWorkerJobRequest{Task: &v1.Task{Argv: []string{"train"}, Image: taskImage, Target: "kube", CpuMillis: 1000, MemoryBytes: 1 << 30}, RequestId: id,
