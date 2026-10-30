@@ -445,17 +445,21 @@ func (s *Store) Directory() string { return filepath.Dir(s.db.Path()) }
 
 // ReusableBytes reports committed free database pages. Pending pages are not
 // included because a live read transaction can still prevent their reuse.
-func (s *Store) ReusableBytes() (uint64, error) {
-	stats := s.db.Stats()
-	size := s.db.Info().PageSize
-	if stats.FreePageN < 0 || size <= 0 {
-		return 0, errors.New("invalid database free-page statistics")
-	}
-	n := uint64(stats.FreePageN)
-	if n > ^uint64(0)/uint64(size) {
-		return 0, errors.New("database free-page statistics overflow")
-	}
-	return n * uint64(size), nil
+func (s *Store) ReusableBytes() (out uint64, err error) {
+	err = s.db.View(func(*bolt.Tx) error {
+		stats := s.db.Stats()
+		size := s.db.Info().PageSize
+		if stats.FreePageN < 0 || size <= 0 {
+			return errors.New("invalid database free-page statistics")
+		}
+		n := uint64(stats.FreePageN)
+		if n > ^uint64(0)/uint64(size) {
+			return errors.New("database free-page statistics overflow")
+		}
+		out = n * uint64(size)
+		return nil
+	})
+	return out, err
 }
 
 // InspectRetention reads stopped-state retention facts without migration or any
