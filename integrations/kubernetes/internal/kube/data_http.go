@@ -44,6 +44,8 @@ type dataFrameKey struct{}
 // under their own frames. A server restart releases a held frame only through
 // the qualified lifetime handoff that the coordinator owns.
 type dataFrame struct {
+	worker *workerHTTPCall // optional exact worker owner; nil for existing data operations
+
 	logs bool // the frame of the attempt's single log read
 
 	mu     sync.Mutex

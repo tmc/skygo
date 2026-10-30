@@ -9,5 +9,5 @@ import (
 
 func ExampleRun() {
 	remotehelper.Run(context.Background(), []string{"--help"}, nil, os.Stdout, os.Stderr)
-	// Output: usage: skygo-data stage | exec -- argv... | collect -- root...
+	// Output: usage: skygo-data stage | exec -- argv... | collect -- root... | install | worker -- argv... | worker-ready
 }

@@ -107,3 +107,25 @@ func ExampleMarshal() {
 	//   "outputs": ["out"]
 	// }
 }
+
+func ExampleLowerWorkers() {
+	src := "run: train\nnum_nodes: 2\nresources: {cpus: 1, memory: 1GB}\n"
+	d, err := taskyaml.Parse(strings.NewReader(src), taskyaml.Options{})
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	task, workers, _, err := tasklower.LowerWorkers(d, tasklower.Options{Shell: "/bin/sh"}, skyv1.WorkerMode_WORKER_MODE_INDEPENDENT)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	// Keep the common task and worker spec together for the worker API.
+	// The helper supplies the actual rank alias immediately before execution.
+	_, rankPresent := task.Env["SKYPILOT_NODE_RANK"]
+	fmt.Println(workers.Count, workers.Mode, task.CpuMillis, task.MemoryBytes)
+	fmt.Println(task.Env["SKYPILOT_NUM_NODES"], task.Env["SKYPILOT_NUM_GPUS_PER_NODE"], rankPresent)
+	// Output:
+	// 2 WORKER_MODE_INDEPENDENT 1000 1073741824
+	// 2 0 false
+}

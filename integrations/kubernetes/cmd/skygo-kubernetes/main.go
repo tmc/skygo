@@ -22,6 +22,7 @@ import (
 
 type targetFlags struct {
 	file, kubeconfig, context, namespace, environments, services, state string
+	workers                                                             string
 	draState                                                            string
 	draRetention                                                        time.Duration
 }
@@ -44,6 +45,32 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 	root := cli.New(func(ctx context.Context, o cli.ServerOptions) error {
 		var config kube.Config
 		named := serverCommand.Flags().Changed("targets")
+		withWorkers := serverCommand.Flags().Changed("worker-profile")
+		var workers kube.WorkerConfig
+		if withWorkers {
+			for _, name := range []string{"service-profiles", "environment-profiles", "execution-state", "dra-state", "dra-log-retention", "kubeconfig", "context", "namespace"} {
+				if serverCommand.Flags().Changed(name) {
+					return errors.New("--worker-profile conflicts with service, environment, execution-state, dra and legacy target flags")
+				}
+			}
+			if !named {
+				return errors.New("--worker-profile requires --targets")
+			}
+			if o.AuthFile == "" {
+				return errors.New("--worker-profile requires --auth-file")
+			}
+			if !o.DisableLocal {
+				return errors.New("--worker-profile requires --disable-local")
+			}
+			if flags.workers == "" {
+				return errors.New("--worker-profile requires a profile file")
+			}
+			var err error
+			workers, err = kube.ReadWorkerConfig(flags.workers)
+			if err != nil {
+				return err
+			}
+		}
 		// An explicit state directory, even an empty one, selects receipts;
 		// it never falls back to targets without them.
 		state := serverCommand.Flags().Changed("execution-state")
@@ -80,6 +107,21 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			}
 		} else if flags.namespace == "" {
 			return errors.New("namespace is required for a Kubernetes target")
+		}
+		if withWorkers {
+			targets := config.Targets()
+			if len(targets) != 1 || targets[0].Name != workers.Target() {
+				return errors.New("worker profile requires exactly its configured target")
+			}
+			if targets[0].Data != nil || len(targets[0].Resources.Accelerators) != 0 {
+				return errors.New("worker profile conflicts with data and accelerator targets")
+			}
+			return run(ctx, server.Config{
+				DataDir: o.DataDir, ArtifactDir: o.ArtifactDir, RecoverStoppedArtifactReaders: o.RecoverStoppedArtifactReaders, Listen: o.Listen, Token: o.Token, AuthFile: o.AuthFile, OIDCFile: o.OIDCFile, OIDCJWKSURL: o.OIDCJWKSURL, TargetFacts: o.TargetFacts, DisableLocal: o.DisableLocal,
+				Install: func(s *store.Store, engine *auth.Engine) (server.Integration, error) {
+					return kube.NewWorkerIntegration(ctx, s, engine, config, workers)
+				},
+			})
 		}
 		if usesDRA(config) && serverCommand.Flags().Changed("service-profiles") {
 			return errors.New("dra accelerators conflict with --service-profiles")
@@ -186,6 +228,7 @@ func command(run func(context.Context, server.Config) error) *cobra.Command {
 			cmd.Flags().StringVar(&flags.draState, "dra-state", "", "Separate private 0700 directory for experimental DRA records (requires --execution-state)")
 			cmd.Flags().DurationVar(&flags.draRetention, "dra-log-retention", 0, "Keep succeeded DRA Pods this long before API cleanup; 0 keeps them")
 			cmd.Flags().StringVar(&flags.services, "service-profiles", "", "Private service profiles file for one of --targets (requires --auth-file)")
+			cmd.Flags().StringVar(&flags.workers, "worker-profile", "", "Private CPU worker profile for exactly one of --targets (requires --auth-file and --disable-local)")
 		}
 	}
 	return root

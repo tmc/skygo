@@ -82,7 +82,12 @@ at plan time. Planning creates no job; imported resource fields are preserved.
 - The text runs as `shell -c TEXT`: no `~/.bashrc`, conda activation,
   `set -a` or `PYTHONUNBUFFERED`. The working directory is the attempt's
   private workdir root, not `~/sky_workdir`.
-- `SKYPILOT_*` variables (node rank, IPs, task ID) are not set.
+- Single-node lowering defaults `SKYPILOT_NUM_NODES` to `1` before user
+  overrides, forces `SKYPILOT_NODE_RANK` to `0`, and sets
+  `SKYPILOT_NUM_GPUS_PER_NODE` from the requested accelerator count (or `0`
+  for CPU, TPU, Inferentia and Trainium requests). These values describe the
+  request. Other predefined variables, such as node IPs and task ID, are
+  preserved when supplied by the user and are not synthesized.
 - Upstream Kubernetes defaults of 2 vCPUs and 1 GiB per vCPU are not
   injected. Absent resources mean skygo's default: no request.
 - Upstream environment substitution in `workdir` is not implemented.
@@ -122,3 +127,32 @@ cannot supply this binding or select a server endpoint. A matching selector
 sets the target only for that field; an explicit different target is refused.
 An unused binding does not change a task's target. This mapping establishes no
 GPU capability, storage semantics or provider access.
+
+## Worker lowering API
+
+The Go `tasklower.LowerWorkers` API takes a parsed document, `Options` by
+value and an explicit generated `WorkerMode`: independent or TCP rendezvous.
+One independent node returns the existing `Lower` result with a nil worker
+spec, including its single-node workspace and accelerator behavior. TCP
+rendezvous requires at least two ranks.
+
+For counts 2 through 16, the API returns a common Task and a separate
+WorkerSpec. Groups require explicit positive CPU and memory requests and
+refuse setup, workdir references, outputs, accelerators, mounts and recovery
+policies. The strict parser continues to reject non-null service, environment
+and workflow configuration outside its task profile.
+
+The common environment defaults `SKYPILOT_NUM_NODES` to the count before
+user overrides and forces `SKYPILOT_NUM_GPUS_PER_NODE` to `0`. It omits
+`SKYPILOT_NODE_RANK`, including a user-supplied value. A worker helper must
+derive and force that variable from its validated original rank immediately
+before execution; rank-environment integration remains a separate
+qualification gate. Indexed ranks may be co-located and do not establish
+placement on distinct nodes.
+
+This is a source API addition. The importer command above retains its
+single-node behavior and refuses `num_nodes` greater than one. `Marshal`
+encodes only Task and loses the separate WorkerSpec; its output alone cannot
+represent a worker submission. A caller must submit both through the generated
+worker API to a qualified endpoint and target. This lowering API establishes
+no CLI support, native worker execution, GPU support or topology parity.

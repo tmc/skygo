@@ -63,12 +63,20 @@ type WorkerBarrierBackend interface {
 
 // ErrWorkerCreateRefused reports that the target definitively refused the
 // Create of the member resource that the receipts returned alongside it do
-// not hold, so that resource was not created. A Create is refused only by a
-// response proving that the request was not applied: a 4xx status other
-// than 408 Request Timeout and 429 Too Many Requests, such as a validation,
-// admission or quota refusal or AlreadyExists. AlreadyExists creates no
-// ownership of the existing object. A lost response, a transport error, a
-// timeout, a throttled response and a 5xx are never refused.
+// not hold, so that resource was not created. A response proves refusal only
+// when the request was not applied: a 4xx status other than 408 Request
+// Timeout and 429 Too Many Requests, such as a validation, admission or quota
+// refusal or AlreadyExists. AlreadyExists creates no ownership of the
+// existing object.
+//
+// A local preflight refusal also qualifies when it positively proves that
+// this original Create issued no Service, Pod or other native request and
+// retains no call, body or reader owner. It proves only that this original
+// created nothing, never absence or ownership of an existing resource.
+//
+// A lost response, a transport error, a timeout, a throttled response and a
+// 5xx are never refused. A later refusal cannot discharge an earlier partial
+// or ambiguous request.
 var ErrWorkerCreateRefused = errors.New("worker create refused")
 
 // ErrWorkerVanished reports that a consistent read found no object with a

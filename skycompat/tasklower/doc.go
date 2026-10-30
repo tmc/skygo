@@ -16,7 +16,17 @@
 // process environment or the filesystem. Planning, capability checks and
 // submission remain with skygo.
 //
-// A lowered task runs on one node. Its environment is the source envs plus
+// [LowerWorkers] explicitly selects independent or TCP worker ranks. For a
+// group it returns one common CPU-only task and a separate worker spec. Both
+// belong in the worker submission API; Marshal does not encode the spec, and
+// ordinary task-file CLI submission does not select that API. A group needs
+// positive CPU/memory and supports no setup, workdir, output or recovery policy.
+// Its environment defaults the node count before user overrides, forces GPU
+// count zero and omits SKYPILOT_NODE_RANK. Execution requires a worker helper
+// that forces that alias from its validated original rank; lowering alone
+// does not establish rank-env parity, native support, or distinct-node placement.
+//
+// An ordinary Lower task runs on one node. Its environment is the source envs plus
 // SKYPILOT_NUM_NODES (default "1", a source value is kept), SKYPILOT_NODE_RANK
 // "0" and SKYPILOT_NUM_GPUS_PER_NODE, the requested accelerator count, or 0
 // when no accelerator is requested or its name contains tpu, inferentia or

@@ -60,7 +60,7 @@ type InfraBinding struct {
 type Status string
 
 const (
-	// Lowered means the field's value is represented in the task.
+	// Lowered means the field is represented in the task or worker spec.
 	Lowered Status = "lowered"
 	// Default means the field holds an upstream default or null and needs
 	// no representation.
@@ -134,7 +134,50 @@ var (
 // It refuses invalid Options with another error. Neither contains source
 // or option values.
 func Lower(d *taskyaml.Document, opts Options) (*skyv1.Task, []Note, error) {
-	return lower(d, opts, false)
+	return lower(d, opts, false, nil)
+}
+
+// LowerWorkers lowers a parsed task using an explicitly selected worker mode.
+// For one node in independent mode it returns exactly [Lower]'s task and notes,
+// with a nil worker spec. TCP rendezvous requires at least two ranks.
+//
+// A group has 2..16 CPU-only ranks with explicit positive CPU and memory
+// requests. Its common task and separate spec must be submitted together through
+// the worker API; [Marshal] encodes only the task. Groups support no setup,
+// workdir, outputs, accelerators, mounts or recovery policy.
+//
+// The common environment defaults SKYPILOT_NUM_NODES to the count before user
+// overrides and forces SKYPILOT_NUM_GPUS_PER_NODE to "0". It omits
+// SKYPILOT_NODE_RANK, including any user value: the worker helper must derive
+// and force that alias from its validated original rank before execution.
+// Indexed ranks do not establish placement on distinct nodes or native support.
+// Like Lower, LowerWorkers never reads the environment or filesystem and does
+// not mutate its inputs. Errors contain no source or option values.
+func LowerWorkers(d *taskyaml.Document, opts Options, mode skyv1.WorkerMode) (*skyv1.Task, *skyv1.WorkerSpec, []Note, error) {
+	if d == nil {
+		return nil, nil, nil, errors.New("tasklower: no document")
+	}
+	if mode != skyv1.WorkerMode_WORKER_MODE_INDEPENDENT && mode != skyv1.WorkerMode_WORKER_MODE_TCP_RENDEZVOUS {
+		return nil, nil, nil, errors.New("tasklower: workers require an explicit supported mode")
+	}
+	l := lowering{d: d}
+	count := d.Task.NumNodes
+	if count < 1 {
+		return nil, nil, nil, l.refuse(taskyaml.Invalid, "num_nodes", "")
+	}
+	if count == 1 {
+		if mode != skyv1.WorkerMode_WORKER_MODE_INDEPENDENT {
+			return nil, nil, nil, l.refuse(taskyaml.Unsupported, "num_nodes", "tcp workers require at least two ranks")
+		}
+		task, notes, err := Lower(d, opts)
+		return task, nil, notes, err
+	}
+	workers := &workerContext{count: count}
+	task, notes, err := lower(d, opts, false, workers)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return task, &skyv1.WorkerSpec{Count: uint32(count), Mode: mode}, notes, nil
 }
 
 // CheckWorkspace validates a task before its local workdir is uploaded. The
@@ -154,18 +197,21 @@ func CheckWorkspace(d *taskyaml.Document, opts Options) error {
 	if opts.Workdir != nil {
 		return errors.New("tasklower: workspace check requires no workdir reference")
 	}
-	_, _, err := lower(d, opts, true)
+	_, _, err := lower(d, opts, true, nil)
 	return err
 }
 
-func lower(d *taskyaml.Document, opts Options, checkWorkspace bool) (*skyv1.Task, []Note, error) {
+func lower(d *taskyaml.Document, opts Options, checkWorkspace bool, workers *workerContext) (*skyv1.Task, []Note, error) {
 	if d == nil {
 		return nil, nil, errors.New("tasklower: no document")
 	}
 	if err := opts.check(); err != nil {
 		return nil, nil, err
 	}
-	l := &lowering{d: d, opts: opts, checkWorkspace: checkWorkspace, task: &skyv1.Task{
+	if workers != nil && (opts.Workdir != nil || len(opts.Outputs) != 0) {
+		return nil, nil, errors.New("tasklower: workers do not support workdir references or outputs")
+	}
+	l := &lowering{d: d, opts: opts, checkWorkspace: checkWorkspace, workers: workers, task: &skyv1.Task{
 		Target:         opts.Target,
 		TimeoutSeconds: opts.TimeoutSeconds,
 		Outputs:        slices.Clone(opts.Outputs),
@@ -199,7 +245,21 @@ func lower(d *taskyaml.Document, opts Options, checkWorkspace bool) (*skyv1.Task
 	if d.Task.Workdir == nil && len(opts.Outputs) != 0 {
 		return nil, nil, errors.New("tasklower: outputs require a task workdir")
 	}
-	l.task.Env = runtimeEnv(l.task.Env, l.task.Accelerator, l.task.AcceleratorCount)
+	if workers == nil {
+		l.task.Env = runtimeEnv(l.task.Env, l.task.Accelerator, l.task.AcceleratorCount)
+	} else {
+		if l.task.CpuMillis <= 0 {
+			return nil, nil, l.refuse(taskyaml.Unsupported, "resources.cpus", "workers require a positive request")
+		}
+		if l.task.MemoryBytes <= 0 {
+			return nil, nil, l.refuse(taskyaml.Unsupported, "resources.memory", "workers require a positive request")
+		}
+		env := map[string]string{"SKYPILOT_NUM_NODES": strconv.Itoa(workers.count)}
+		maps.Copy(env, l.task.Env)
+		delete(env, "SKYPILOT_NODE_RANK")
+		env["SKYPILOT_NUM_GPUS_PER_NODE"] = "0"
+		l.task.Env = env
+	}
 	return l.task, l.notes, nil
 }
 
@@ -221,12 +281,19 @@ func runtimeEnv(user map[string]string, accel string, count int32) map[string]st
 	return env
 }
 
+// workerContext selects group-only constraints in the shared lowering engine.
+// A nil context preserves the ordinary one-node lowering path.
+type workerContext struct {
+	count int
+}
+
 type lowering struct {
 	d              *taskyaml.Document
 	opts           Options
 	task           *skyv1.Task
 	notes          []Note
 	checkWorkspace bool
+	workers        *workerContext
 }
 
 // set reports whether the typed document holds a non-default value at p,
@@ -309,6 +376,14 @@ func (l *lowering) field(p string) error {
 	r := t.Resources
 	if r == nil {
 		r = &taskyaml.Resources{}
+	}
+	if l.workers != nil {
+		switch p {
+		case "setup", "workdir", "resources.accelerators":
+			if l.set(p) {
+				return l.refuse(taskyaml.Unsupported, p, "unsupported for workers")
+			}
+		}
 	}
 	switch p {
 	case "name":
@@ -465,6 +540,12 @@ func (l *lowering) field(p string) error {
 		}
 		return l.note(p, Default, "on-demand")
 	case "num_nodes":
+		if l.workers != nil {
+			if l.workers.count > 16 {
+				return l.refuse(taskyaml.Limit, p, "")
+			}
+			return l.note(p, Lowered, "worker count")
+		}
 		if t.NumNodes != 0 && t.NumNodes != 1 {
 			return l.refuse(taskyaml.Unsupported, p, "")
 		}

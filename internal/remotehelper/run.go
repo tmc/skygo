@@ -12,17 +12,19 @@ import (
 	"time"
 )
 
-const usage = "usage: skygo-data stage | exec -- argv... | collect -- root...\n"
+const usage = "usage: skygo-data stage | exec -- argv... | collect -- root... | install | worker -- argv... | worker-ready\n"
 
 var errArguments = errors.New("invalid arguments")
 var errConfiguration = errors.New("invalid configuration")
 
 // A helper process executes one operation. An uncertain original Close retains
 // its resource/error frame for that process rather than allowing another run.
-var processFailure struct {
+type helperFailure struct {
 	sync.Mutex
 	err error
 }
+
+var processFailure helperFailure
 
 type closeFailure struct {
 	owner io.Closer
@@ -47,6 +49,12 @@ var productionPaths = paths{"/workspace", "/opt/skygo", "/skygo-data", "/run/sky
 // It is intended as the final command invocation in a helper process. An
 // uncertain original resource is retained and subsequent operations refuse.
 func Run(ctx context.Context, args, env []string, stdout, stderr io.Writer) int {
+	return runHelper(ctx, args, env, stdout, stderr, productionPaths, defaultWorkerPaths(), systemWorkerOps(), &processFailure)
+}
+
+// runHelper is the same dispatcher with invocation-local files and operations.
+// The public entry point supplies its fixed paths and actual process owners.
+func runHelper(ctx context.Context, args, env []string, stdout, stderr io.Writer, p paths, wp workerPaths, ops workerOps, failure *helperFailure) int {
 	if len(args) == 1 && args[0] == "--help" {
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -56,25 +64,36 @@ func Run(ctx context.Context, args, env []string, stdout, stderr io.Writer) int 
 		return 2
 	}
 	if err := grammar(args); err != nil {
-		fmt.Fprintln(stderr, "skygo-data: invalid arguments")
+		if !workerVerb(args[0]) {
+			fmt.Fprintln(stderr, "skygo-data: invalid arguments")
+		}
 		return 2
 	}
-	processFailure.Lock()
-	held := processFailure.err
-	processFailure.Unlock()
+	failure.Lock()
+	held := failure.err
+	failure.Unlock()
 	if held != nil {
-		fmt.Fprintln(stderr, "skygo-data: original resource remains held")
+		if !workerVerb(args[0]) {
+			fmt.Fprintln(stderr, "skygo-data: original resource remains held")
+		}
 		return 1
 	}
-	err := run(ctx, args, env, productionPaths)
+	err := runWithWorker(ctx, args, env, p, wp, ops)
 	if err == nil {
 		return 0
 	}
+	worker := workerVerb(args[0])
+	if worker && args[0] != "worker-ready" {
+		err = errors.Join(err, workerReport(wp, err, ops))
+	}
 	// Transport Close errors are sticky inside client; retain the entire returned
 	// original frame on any failure, with no formatting of bearer or request data.
-	processFailure.Lock()
-	processFailure.err = errors.Join(processFailure.err, err)
-	processFailure.Unlock()
+	failure.Lock()
+	failure.err = errors.Join(failure.err, err)
+	failure.Unlock()
+	if worker {
+		return workerExit(err)
+	}
 	switch {
 	case errors.Is(err, errIdentity):
 		fmt.Fprintln(stderr, "skygo-data: instance identity differs")
@@ -89,8 +108,21 @@ func Run(ctx context.Context, args, env []string, stdout, stderr io.Writer) int 
 	}
 	return 1
 }
+
+func workerVerb(verb string) bool {
+	return verb == "install" || verb == "worker" || verb == "worker-ready"
+}
+
 func grammar(args []string) error {
 	switch args[0] {
+	case "install", "worker-ready":
+		if len(args) == 1 {
+			return nil
+		}
+	case "worker":
+		if len(args) >= 3 && args[1] == "--" && args[2] != "" {
+			return nil
+		}
 	case "stage":
 		if len(args) == 1 {
 			return nil
@@ -119,10 +151,20 @@ func grammar(args []string) error {
 	return errArguments
 }
 func run(ctx context.Context, args, env []string, p paths) error {
+	return runWithWorker(ctx, args, env, p, defaultWorkerPaths(), systemWorkerOps())
+}
+
+func runWithWorker(ctx context.Context, args, env []string, p paths, wp workerPaths, ops workerOps) error {
 	if err := grammar(args); err != nil {
 		return err
 	}
 	switch args[0] {
+	case "install":
+		return workerInstall(env, p)
+	case "worker":
+		return workerBarrier(ctx, args[2:], env, wp, ops)
+	case "worker-ready":
+		return workerReady(env, wp, ops)
 	case "exec":
 		return execute(filepath.Join(p.workspace, "work"), args[2:], env)
 	case "env-put":

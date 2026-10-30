@@ -75,3 +75,38 @@ image, ABI, nonroot, fsGroup, path and cluster qualification remain separate.
 
 Linux amd64 and arm64 only, CGO disabled. Build time is one `go build` of the
 helper; the image is the size of the helper binary.
+
+## Worker verbs
+
+The worker profile uses `/skygo-data install` to verify
+`SKYGO_DATA_HELPER_SHA256` and copy the helper into
+`/opt/skygo/bin/skygo-data`. The task container runs that copy as
+`worker -- argv...`; `worker-ready` checks its prepared marker.
+These verbs do not contact the API server or use credentials.
+
+`worker` requires one each of `SKYGO_JOB_ID`, `SKYGO_ATTEMPT_ID`,
+`SKYGO_WORKER_MODE`, `RANK`, `WORLD_SIZE`, `SKYGO_POD_UID`, and
+`SKYGO_TASK_SHA256`. It writes its Pod UID to
+`/run/skygo/worker-state/prepared` and waits for
+`/run/skygo/worker/start`. The start file must be empty or the exact
+lowercase token from the current backend worker codec. Projected regular
+files may be symlinks. These fixed paths are trusted profile mounts;
+opening an arbitrary FIFO is not a bounded operation.
+
+A prepared marker proves preparation only. Readiness, token presence and a
+container exit do not certify that task argv executed. The caller must persist
+its all-prepared decision before delivering tokens. Cancellation after the
+helper's final check can race execution and requires native termination.
+Pre-execution refusals are silent on stdout and stderr; diagnostics go to the
+termination file. Original file Close failures are retained without retry.
+The command currently observes interrupt cancellation, not a dedicated SIGTERM
+handler; signal and actual kernel execution qualification remain separate.
+
+Historical helper digests built before these verbs were added cannot serve
+worker profiles. Rebuild from the intended source and retain its build receipt.
+A source or modeled-dispatch test does not qualify an image, Pod, or task exec.
+
+Immediately before task dispatch, the helper sets `SKYPILOT_NODE_RANK` from
+its validated original rank, replacing user overrides. Other variables are
+preserved, including an intentional `SKYPILOT_NUM_NODES` override. The worker
+profile is CPU-only; these compatibility variables do not imply GPU support.
