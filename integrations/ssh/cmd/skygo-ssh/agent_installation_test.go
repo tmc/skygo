@@ -219,9 +219,9 @@ func TestStartAgentReadsScopedTokenFirst(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.edit(t)
 			f := flags{host: "dgx", knownHosts: "kh", target: "dgx", port: defaultPort, installation: in, scopedToken: token}
-			s, err := startAgent(context.Background(), f, io.Discard)
-			if err == nil || s != nil || !strings.Contains(err.Error(), "scoped token") || !strings.Contains(err.Error(), tt.err) {
-				t.Fatalf("startAgent = %v, %v; want a scoped token refusal %q", s, err, tt.err)
+			cfg, err := clientConfig(context.Background(), f, io.Discard)
+			if err == nil || cfg.Address != "" || !strings.Contains(err.Error(), "scoped token") || !strings.Contains(err.Error(), tt.err) {
+				t.Fatalf("clientConfig resolved address %q: %v; want a scoped token refusal %q", cfg.Address, err, tt.err)
 			}
 		})
 	}

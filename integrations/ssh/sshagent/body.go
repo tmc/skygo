@@ -22,20 +22,49 @@ type body struct {
 	closing bool  // the first Close started
 	closed  bool  // the first Close returned
 	err     error // its result
+	active  int   // command-only actual body Read/Close frames
+	retired bool  // command-only successful Close and zero actual IO
 }
 
 func (b *body) Read(p []byte) (int, error) {
 	l := b.c.l
 	l.mu.Lock()
+	if b.c.command {
+		if b.closing || b.retired {
+			l.mu.Unlock()
+			return 0, &CallError{kind: kindRefused, stages: stageStreamClosed, owner: b.c}
+		}
+		b.active++
+	}
 	b.c.enterLocked()
 	l.mu.Unlock()
 	n, err := b.rc.Read(p)
 	l.mu.Lock()
 	if err != nil && err != io.EOF && b.readErr == nil {
 		b.readErr = err
+		if b.c.command {
+			l.faulted = true
+		}
 	}
+	if b.c.command {
+		b.active--
+	}
+	b.c.retireBodyLocked(b)
 	b.c.exitLocked()
+	cancel := b.c.cancel
+	poisoned := b.c.command && l.faulted
+	if poisoned {
+		cancel = b.c.stopCommandLocked()
+	} else {
+		cancel = nil
+	}
+	if b.c.command && err != nil && err != io.EOF {
+		err = b.c.errorLocked()
+	}
 	l.mu.Unlock()
+	if poisoned && cancel != nil {
+		cancel()
+	}
 	return n, err
 }
 
@@ -56,6 +85,9 @@ func (b *body) start() bool {
 		return false
 	}
 	b.closing = true
+	if b.c.command {
+		b.active++
+	}
 	b.c.enterLocked()
 	return true
 }
@@ -69,7 +101,21 @@ func (b *body) run() {
 	if err != nil {
 		l.faulted = true
 	}
+	if b.c.command {
+		b.active--
+	}
+	b.c.retireBodyLocked(b)
 	b.c.exitLocked()
+	cancel := b.c.cancel
+	poisoned := b.c.command && l.faulted
+	if poisoned {
+		cancel = b.c.stopCommandLocked()
+	} else {
+		cancel = nil
+	}
 	l.mu.Unlock()
+	if poisoned && cancel != nil {
+		cancel()
+	}
 	close(b.done)
 }

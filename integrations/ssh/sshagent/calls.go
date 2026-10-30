@@ -177,8 +177,14 @@ type callKey struct{}
 // guarded by l.mu, except conn, which is set before the stream is
 // returned and never changed.
 type call struct {
-	l      *ledger
-	stream bool
+	l                                *ledger
+	stream                           bool
+	command                          bool // one canonical command; typed Control calls leave false
+	reserved                         int  // command response/error record slots reserved before dispatch
+	refusals                         []*refusedRequest
+	refusalPending, refusalHighWater int
+	commandRefused                   bool // first local refusal permanently fences this command
+	cancel                           context.CancelFunc
 
 	conn       connect.StreamingClientConn // stream: Connect's original connection
 	active     int                         // entered original frames that had not returned
@@ -215,13 +221,58 @@ func (c *call) exit() {
 // faultyLocked reports whether c holds a frame that did not settle: a
 // failed body Close, a transport receipt of an unsettled connection, or a
 // frame that ran on after Connect returned the unary result.
+// commandFaultLocked keeps every original command read/transport failure.
+func (c *call) commandFaultLocked() bool {
+	if !c.command {
+		return false
+	}
+	if c.commandRefused {
+		return true
+	}
+	for _, r := range c.refusals {
+		if r.err != nil || r.readErr != nil {
+			return true
+		}
+	}
+	if len(c.roundTrips) > 0 {
+		return true
+	}
+	for _, b := range c.bodies {
+		if b.readErr != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// retireBodyLocked drops only positively closed, error-free command IO.
+// Escaped wrappers retain their answer but can never enter underlying IO again.
+func (c *call) retireBodyLocked(b *body) {
+	if !c.command || !b.closed || b.err != nil || b.readErr != nil || b.active != 0 {
+		return
+	}
+	for i, v := range c.bodies {
+		if v == b {
+			c.bodies = slices.Delete(c.bodies, i, i+1)
+			b.retired = true
+			b.rc = nil
+			return
+		}
+	}
+}
+
 func (c *call) faultyLocked() bool {
-	return c.held || c.stagesLocked()&(stageClose|stageTransport) != 0
+	return c.held || c.stagesLocked()&(stageClose|stageTransport) != 0 || c.commandFaultLocked()
 }
 
 // unfinishedLocked reports whether a frame c entered is still running or
 // a response body of c was not closed.
 func (c *call) unfinishedLocked() bool {
+	for _, r := range c.refusals {
+		if !r.closed || r.active > 0 {
+			return true
+		}
+	}
 	if c.active > 0 {
 		return true
 	}
@@ -249,6 +300,17 @@ func (c *call) releaseLocked() {
 
 func (c *call) stagesLocked() stage {
 	var s stage
+	for _, r := range c.refusals {
+		if !r.closed {
+			s |= stageCommandRefusalPending
+		}
+		if r.err != nil {
+			s |= stageRequestClose
+		}
+	}
+	if c.commandFaultLocked() {
+		s |= stageFaulted
+	}
 	if c.active > 0 {
 		s |= stageRunning
 	}
@@ -278,6 +340,14 @@ func (c *call) stagesLocked() stage {
 
 func (c *call) errsLocked() []error {
 	var errs []error
+	for _, r := range c.refusals {
+		if r.err != nil {
+			errs = append(errs, r.err)
+		}
+		if r.readErr != nil {
+			errs = append(errs, r.readErr)
+		}
+	}
 	if c.result != nil {
 		errs = append(errs, c.result)
 	}
@@ -328,14 +398,19 @@ func (c *call) settle(resp connect.AnyResponse, err error) (connect.AnyResponse,
 	l.mu.Lock()
 	c.resp, c.result = resp, err
 	bodies := slices.Clone(c.bodies)
+	requests := slices.Clone(c.refusals)
 	l.mu.Unlock()
+	for _, r := range requests {
+		if r.start() {
+			r.run()
+		}
+	}
 	for _, b := range bodies {
 		if b.start() {
 			b.run()
 		}
 	}
 	l.mu.Lock()
-	defer l.mu.Unlock()
 	c.active-- // the RPC frame
 	c.done = true
 	if c.active > 0 {
@@ -343,9 +418,16 @@ func (c *call) settle(resp connect.AnyResponse, err error) (connect.AnyResponse,
 	}
 	if c.faultyLocked() {
 		l.faulted = true
-		return nil, c.errorLocked()
+		held := c.errorLocked()
+		cancel := c.stopCommandLocked()
+		l.mu.Unlock()
+		if c.command && cancel != nil {
+			cancel()
+		}
+		return nil, held
 	}
 	c.releaseLocked()
+	l.mu.Unlock()
 	return resp, err
 }
 
@@ -366,16 +448,25 @@ var (
 func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 	c, _ := req.Context().Value(callKey{}).(*call)
 	if err := r.admit(c); err != nil {
+		if c != nil && c.l == r.l && c.command {
+			return nil, c.refuse(req, err)
+		}
 		if req.Body != nil {
 			req.Body.Close()
 		}
 		return nil, err
 	}
+
 	resp, err := r.next.RoundTrip(req)
 	r.l.mu.Lock()
-	defer r.l.mu.Unlock()
+	if c.command {
+		c.reserved -= 2
+	}
 	if err != nil {
 		c.roundTrips = append(c.roundTrips, err)
+		if c.command {
+			r.l.faulted = true
+		}
 		if agentssh.OwnershipUnsettled(err) {
 			r.l.faulted = true
 		}
@@ -386,6 +477,18 @@ func (r *recorder) RoundTrip(req *http.Request) (*http.Response, error) {
 		resp.Body = b
 	}
 	c.exitLocked()
+	if c.command && err != nil {
+		err = c.errorLocked()
+	}
+	var cancel context.CancelFunc
+	poisoned := c.command && r.l.faulted
+	if poisoned {
+		cancel = c.stopCommandLocked()
+	}
+	r.l.mu.Unlock()
+	if poisoned && cancel != nil {
+		cancel()
+	}
 	return resp, err
 }
 
@@ -406,6 +509,15 @@ func (r *recorder) admit(c *call) error {
 	}
 	if c.done || c.closing {
 		return &CallError{kind: kindRefused, stages: stageStreamClosed, owner: c}
+	}
+	if c.command {
+		if c.refusalPending > 0 {
+			return &CallError{kind: kindRefused, stages: stageCommandRefusalPending, owner: c}
+		}
+		if len(c.bodies)+len(c.roundTrips)+c.reserved+2 > commandRecordLimit {
+			return &CallError{kind: kindRefused, stages: stageCommandLimit, owner: c}
+		}
+		c.reserved += 2
 	}
 	c.enterLocked()
 	return nil
@@ -508,6 +620,9 @@ const (
 	stageFaulted                         // the session holds a request that did not settle
 	stagePendingStream                   // the session holds a pending stream
 	stageBodyOpen                        // a closed request's response body was not closed
+	stageCommandLimit                    // command retained record bound would be exceeded
+	stageCommandRefusalPending
+	stageRequestClose
 )
 
 var stageWords = []string{
@@ -522,6 +637,9 @@ var stageWords = []string{
 	"session holds a request that did not settle",
 	"closed stream still pending",
 	"response body not closed",
+	"command response record limit",
+	"refused request body close pending",
+	"close refused request body failed",
 }
 
 func (s stage) String() string {
@@ -533,3 +651,6 @@ func (s stage) String() string {
 	}
 	return strings.Join(w, ", ")
 }
+
+// Each command bounds retained body/error records and in-flight reservations.
+const commandRecordLimit = 64

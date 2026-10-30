@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -314,69 +313,7 @@ func TestAgentSigner(t *testing.T) {
 	}
 }
 
-// A modelSession is a MODEL of an agentsession.Session's Close: it counts
-// calls and returns err.
-type modelSession struct {
-	err    error
-	closes int
-}
-
-func (m *modelSession) Close() error {
-	m.closes++
-	return m.err
-}
-
-// TestCloseSession checks that a failed Close is reported with the
-// command's own error, keeps the session, runs once and shows none of the
-// Close error's text, and that a clean Close leaves the command's result
-// unchanged.
-func TestCloseSession(t *testing.T) {
-	const secret = "s3cret-0f9e"
-	cmdErr := errors.New("modeled command failure")
-	closeErr := errors.New("modeled close failure " + secret)
-	tests := []struct {
-		name     string
-		cmd      error
-		closeErr error
-	}{
-		{"command and close fail", cmdErr, closeErr},
-		{"close fails", nil, closeErr},
-		{"command fails", cmdErr, nil},
-		{"success", nil, nil},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := &modelSession{err: tt.closeErr}
-			err := closeSession(m, tt.cmd)
-			if m.closes != 1 {
-				t.Errorf("Close called %d times, want 1", m.closes)
-			}
-			if tt.closeErr == nil {
-				if err != tt.cmd {
-					t.Errorf("closeSession = %v, want the command's result %v", err, tt.cmd)
-				}
-				return
-			}
-			if !errors.Is(err, tt.closeErr) || tt.cmd != nil && !errors.Is(err, tt.cmd) {
-				t.Errorf("closeSession = %v; want both the command's and Close's errors", err)
-			}
-			var ce *closeError
-			if !errors.As(err, &ce) || ce.owner != io.Closer(m) || ce.err != tt.closeErr {
-				t.Errorf("closeSession = %v; want a *closeError keeping the session", err)
-			}
-			if strings.Contains(err.Error(), secret) || !strings.Contains(err.Error(), "ssh agent connection") {
-				t.Errorf("closeSession = %q", err)
-			}
-			if tt.cmd != nil && !strings.Contains(err.Error(), tt.cmd.Error()) {
-				t.Errorf("closeSession = %q; want the command's error shown", err)
-			}
-			if m.closes != 1 {
-				t.Errorf("Close called %d times after reporting, want 1", m.closes)
-			}
-		})
-	}
-}
-
+// Cleanup/error identity coverage moved to sshagent TestCommandCloseSession.
 func TestRunHelp(t *testing.T) {
 	var stderr bytes.Buffer
 	if err := run(t.Context(), []string{"-h"}, &stderr); err != nil {

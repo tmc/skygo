@@ -146,6 +146,13 @@ func relayForward(ctx context.Context, ln net.Listener, target *url.URL, token s
 			case !strings.HasPrefix(r.URL.Path, "/"):
 				http.Error(w, "request path must be absolute", http.StatusBadRequest)
 			default:
+				// Wrap before ReverseProxy clones r and captures Body.Close. A
+				// transport's guard must cover both its own and the proxy's Close.
+				if wrap, ok := transport.(interface {
+					WrapRequestBody(io.ReadCloser) io.ReadCloser
+				}); ok && r.Body != nil && r.Body != http.NoBody {
+					r.Body = wrap.WrapRequestBody(r.Body)
+				}
 				proxy.ServeHTTP(w, r)
 			}
 		}),

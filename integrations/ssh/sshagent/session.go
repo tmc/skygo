@@ -64,29 +64,12 @@ type Binding struct {
 // run no further command once it saw the unsettled one. It returns no
 // partial Session in either case.
 func Open(ctx context.Context, cfg Config) (*Session, error) {
-	if err := cfg.check(); err != nil {
+	o, err := prepare(ctx, cfg)
+	if err != nil {
 		return nil, err
 	}
-	o := cfg.options()
-	if !cfg.Installation.IsZero() {
-		var err error
-		if o.Bearer, err = agentidentity.ReadToken(o.TokenFile); err != nil {
-			return nil, fmt.Errorf("sshagent: scoped token: %w", err)
-		}
-	}
-	if cfg.Prebuilt != (Binary{}) {
-		var err error
-		o.Prebuilt, err = agentbinary.Prepare(ctx, cfg.CacheDir, agentbinary.Spec(cfg.Prebuilt))
-		if err != nil {
-			return nil, err
-		}
-	}
-	s, err := agentsession.Open(ctx, o)
+	s, err := openAgent(ctx, o)
 	if err != nil {
-		var u *agentsession.UnsettledError
-		if errors.As(err, &u) {
-			return nil, &OpenError{err: u}
-		}
 		return nil, err
 	}
 	b := s.Binding()
@@ -274,4 +257,38 @@ func (b bearer) WrapStreamingClient(next connect.StreamingClientFunc) connect.St
 
 func (b bearer) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return next
+}
+
+// prepare validates cfg and captures its token and prebuilt bytes before effects.
+func prepare(ctx context.Context, cfg Config) (agentsession.Options, error) {
+	if err := cfg.check(); err != nil {
+		return agentsession.Options{}, err
+	}
+	o := cfg.options()
+	if !cfg.Installation.IsZero() {
+		var err error
+		if o.Bearer, err = agentidentity.ReadToken(o.TokenFile); err != nil {
+			return agentsession.Options{}, fmt.Errorf("sshagent: scoped token: %w", err)
+		}
+	}
+	if cfg.Prebuilt != (Binary{}) {
+		var err error
+		o.Prebuilt, err = agentbinary.Prepare(ctx, cfg.CacheDir, agentbinary.Spec(cfg.Prebuilt))
+		if err != nil {
+			return agentsession.Options{}, err
+		}
+	}
+	return o, nil
+}
+
+func openAgent(ctx context.Context, o agentsession.Options) (*agentsession.Session, error) {
+	s, err := agentsession.Open(ctx, o)
+	if err != nil {
+		var u *agentsession.UnsettledError
+		if errors.As(err, &u) {
+			return nil, &OpenError{err: u}
+		}
+		return nil, err
+	}
+	return s, nil
 }

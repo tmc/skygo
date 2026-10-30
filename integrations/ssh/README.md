@@ -432,3 +432,42 @@ SKYGO_SSH ... targets list                              # refused: legacy into i
 
 Tasks are files written locally (`task.json`, `long.json`); no task
 argument is interpolated into a remote command line.
+
+The `sshagent.RunCommand` API runs the same canonical command tree as
+`skygo-ssh`. `CheckCommand` checks arguments without opening an agent;
+help also opens nothing. `Command.Host` is an optional placement label,
+not a connection or authorization selector. The connection, enrolled host
+key, target and captured bearer come from `Config` and its verified session.
+Caller Authorization headers cannot replace that bearer.
+
+Each command uses the existing request/body ledger. It retains at most 64
+response-body, transport-error and reserved response records, reserving two
+slots before each dispatch (at most 32 simultaneously pending dispatches).
+Clean bodies retire only after their first Close succeeds and every original
+Read/Close returns without a non-EOF read error. Reads after Close begins are
+refused; Close is never repeated. This bounds ledger records, not command
+output, snapshots, caller buffers or server-side logs. A failed read, transport
+or first Close fences the command and retains its original causes and owners.
+Retain an unsettled error and do not reopen the host. Typed `Session.Control`
+calls keep their existing semantics.
+
+The first local admission refusal fences and cancels that command before
+closing a refused request body. Cancellation requests a stop; it does not
+join a handler or Close. Every already accepted refused request whose
+first Close is pending or fails remains owned separately. The 64-record
+bound above excludes those refusal originals and borrowed caller buffers.
+Their count depends on handlers already accepted by the loopback relay;
+that relay has no fixed handler-count limit. Clean first Closes retire their
+own refusal bookkeeping, while every failed or pending original and cause
+stays reachable through the command error. No 64-plus-one total memory bound
+is claimed.
+
+For loopback forwarding, the command's request-body guard is installed
+before `ReverseProxy.ServeHTTP` captures cleanup. The transport and proxy
+therefore share the same original first Close and stored result, including
+when admission refuses a nonempty request. Request Reads and first Closes
+remain counted until their actual return; only clean closed guards retire.
+Their separate owner frontier includes admitted and refused forward bodies.
+The HTTP server also has its own native request-body cleanup; this wrapper
+does not replace that private standard-library owner or attest to independent
+borrowed aliases.
