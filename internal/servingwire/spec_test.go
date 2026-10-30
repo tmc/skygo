@@ -64,8 +64,8 @@ func TestSpecFromProtoRefuses(t *testing.T) {
 		{"cpu scaling", func(m *v1.ServiceSpec) {
 			m.Scaling.Cpu = &v1.ServiceCpuScaling{MinReplicas: 1, MaxReplicas: 2}
 		}, ErrUnsupported},
-		{"two replicas", func(m *v1.ServiceSpec) { m.Scaling.Replicas = 2 }, ErrUnsupported},
-		{"zero replicas", func(m *v1.ServiceSpec) { m.Scaling = nil }, ErrUnsupported},
+		{"nine replicas", func(m *v1.ServiceSpec) { m.Scaling.Replicas = 9 }, nil},
+		{"zero replicas", func(m *v1.ServiceSpec) { m.Scaling = nil }, nil},
 		{"unknown top", func(m *v1.ServiceSpec) { withUnknown(m) }, ErrUnknownFields},
 		{"unknown readiness", func(m *v1.ServiceSpec) { withUnknown(m.Readiness) }, ErrUnknownFields},
 		{"unknown env", func(m *v1.ServiceSpec) { withUnknown(m.Env[0]) }, ErrUnknownFields},
@@ -165,9 +165,9 @@ var statusMutations = []struct {
 	{"ready all zero", func(s *v1.ServiceStatus) { s.Observation = &v1.ServiceObservation{} }},
 	{"ready zero endpoints", func(s *v1.ServiceStatus) { s.Observation.ReadyEndpoints = 0 }},
 	{"ready endpoints over ready", func(s *v1.ServiceStatus) { s.Observation.ReadyEndpoints = 2 }},
-	{"ready two replicas", func(s *v1.ServiceStatus) {
+	{"ready nine replicas", func(s *v1.ServiceStatus) {
 		o := s.Observation
-		o.DesiredReplicas, o.UpdatedReplicas, o.ReadyReplicas, o.AvailableReplicas = 2, 2, 2, 2
+		o.DesiredReplicas, o.UpdatedReplicas, o.ReadyReplicas, o.AvailableReplicas = 9, 9, 9, 9
 	}},
 	{"ready not updated", func(s *v1.ServiceStatus) { s.Observation.UpdatedReplicas = 0 }},
 	{"ready not available", func(s *v1.ServiceStatus) { s.Observation.AvailableReplicas = 0 }},
@@ -283,6 +283,10 @@ func TestCheckService(t *testing.T) {
 		name   string
 		mutate func(*v1.Service)
 	}{
+		{"status ready two replicas", func(m *v1.Service) {
+			o := m.Status.Observation
+			o.DesiredReplicas, o.UpdatedReplicas, o.ReadyReplicas, o.AvailableReplicas = 2, 2, 2, 2
+		}},
 		{"bad id", func(m *v1.Service) { m.Id = "x" }},
 		{"bad name", func(m *v1.Service) { m.Name = "Web" }},
 		{"no record revision", func(m *v1.Service) { m.RecordRevision = 0 }},

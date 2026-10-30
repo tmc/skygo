@@ -299,7 +299,7 @@ func TestReadServiceSpec(t *testing.T) {
 		{"cpu empty", strings.Replace(serveSpecDoc, "replicas: 1", "replicas: 1\n  cpu: {}", 1), "unsupported service feature: cpu scaling"},
 		{"cpu null", strings.Replace(serveSpecDoc, "replicas: 1", "replicas: 1\n  cpu: null", 1), "must not contain null"},
 
-		{"replicas", strings.Replace(serveSpecDoc, "replicas: 1", "replicas: 2", 1), "replicas other than 1"},
+		{"replicas", strings.Replace(serveSpecDoc, "replicas: 1", "replicas: 9", 1), "replicas"},
 		{"tag", strings.Replace(serveSpecDoc, serveImage, "registry.example.com/web:latest", 1), "service spec"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

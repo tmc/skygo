@@ -82,7 +82,7 @@ func (o *options) servingClient() skyv1connect.ServingServiceClient {
 }
 
 func (o *options) serveCommand() *cobra.Command {
-	c := &cobra.Command{Use: "serve", Short: "Run fixed one-replica services"}
+	c := &cobra.Command{Use: "serve", Short: "Run services with one to eight fixed replicas"}
 	var name, target, id, domain string
 	up := &cobra.Command{Use: "up FILE --name NAME --target TARGET", Short: "Create a service, or replay an earlier request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		retry := cmd.Flags().Changed("request-id")

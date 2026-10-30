@@ -16,6 +16,9 @@ const (
 	maxRollouts   = 32
 	maxConditions = 16
 	maxReplicas   = 1 << 10
+	// The portable fixed policy permits 1..8 replicas. Diagnostic counts
+	// above remain bounded separately, including for held native state.
+	maxFixedReplicas = 8
 )
 
 // name is a service name and a configured target name: a DNS label.
@@ -28,8 +31,8 @@ var name = regexp.MustCompile(`^[a-z]([a-z0-9-]{0,61}[a-z0-9])?$`)
 // history that is unordered, over its bounds, or whose revisions' digests
 // are not their specs'; a status whose generations, counts or conditions
 // are inconsistent with each other or with the history; any scaling state;
-// a ready status that is not exactly one updated, ready and available
-// replica of the current generation with one ready endpoint; a deleted
+// a ready status whose updated, ready and available replica counts do not
+// match its current revision, or that has no ready endpoint; a deleted
 // status without observed absence; and a retired view that claims anything
 // beyond deletion.
 // Condition codes this client does not know are accepted and printed as
@@ -61,12 +64,23 @@ func CheckService(m *v1.Service) error {
 	if m.Status.GetDesiredGeneration() != current.Generation {
 		return errors.New("service status is not of its current rollout")
 	}
-	return checkStatus(m.Status, m.Desired, current.Generation, false)
+	if err := checkStatus(m.Status, m.Desired, current.Generation, false); err != nil {
+		return err
+	}
+	if m.Status.Phase == v1.ServicePhase_SERVICE_PHASE_READY {
+		for _, r := range revisions {
+			if r.Number == current.Revision && m.Status.Observation.DesiredReplicas != r.Spec.Scaling.GetReplicas() {
+				return errors.New("ready service replica count is not its revision's")
+			}
+		}
+	}
+	return nil
 }
 
 // CheckSummary validates a listed service as CheckService does, without
 // the history the list omits: its current rollout must be well formed and
-// be the status's, and its digest well formed.
+// be the status's, and its digest well formed. Ready counts must be mutually
+// consistent and in 1..8; a summary cannot bind them to its omitted spec.
 func CheckSummary(m *v1.ServiceSummary) error {
 	if m == nil {
 		return errors.New("missing service")
@@ -269,14 +283,15 @@ func checkStatus(s *v1.ServiceStatus, desired v1.ServiceDesired, generation uint
 	return nil
 }
 
-// readyShape reports whether o is the only observation a ready service of
-// the first vertical has: desired present, the current generation observed
-// and ready, its one replica updated, ready and available, and between one
-// endpoint and that replica's.
+// readyShape checks a ready fixed service's observation: desired present,
+// the current generation observed and ready, 1..8 replicas updated, ready
+// and available, and between one and that count's ready endpoints. A full
+// service must also bind the count to its current revision.
 func readyShape(o *v1.ServiceObservation, desired v1.ServiceDesired, generation uint64) bool {
 	return desired == v1.ServiceDesired_SERVICE_DESIRED_PRESENT && !o.Absent &&
 		o.ObservedGeneration == generation && o.ReadyGeneration == generation &&
-		o.DesiredReplicas == 1 && o.UpdatedReplicas == 1 && o.ReadyReplicas == 1 && o.AvailableReplicas == 1 &&
+		o.DesiredReplicas >= 1 && o.DesiredReplicas <= maxFixedReplicas &&
+		o.UpdatedReplicas == o.DesiredReplicas && o.ReadyReplicas == o.DesiredReplicas && o.AvailableReplicas == o.DesiredReplicas &&
 		o.ReadyEndpoints >= 1 && o.ReadyEndpoints <= o.ReadyReplicas &&
 		o.Reason == v1.ServiceReason_SERVICE_REASON_UNSPECIFIED
 }

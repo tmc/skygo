@@ -100,7 +100,7 @@ enrollment, client-key selection, and bootstrap requirements.
 ## Services
 
 `serve up`, `serve status`, `serve down` and `serve forward` manage fixed
-one-replica services on configured Kubernetes service profiles. Forwarding
+services with one to eight fixed replicas on configured Kubernetes service profiles. Forwarding
 requires a ready service and the service owner's credential. See the
 [integration README](integrations/kubernetes/README.md) for profile setup.
 Updates, rollback, data mounts and autoscaling remain unsupported.
@@ -195,3 +195,6 @@ SKYGO_S05_BINARY=... SKYGO_S05_BINARY_SHA256=... make test-fixtures
 in `proto/`; Buf generates messages and Connect clients/handlers in `gen/`.
 The integration modules use local replacements for the unpublished root module.
 See [task/API contracts](docs/contracts.md) and [testing](docs/testing.md).
+
+Service clients from the one-replica profile may reject services with more
+replicas in a response or list. Use a current client for those services.

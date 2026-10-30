@@ -183,7 +183,7 @@ func (c *Controller) Target() string { return c.target }
 // Create durably accepts spec as service name on target under requestID in
 // actor's request domain d, or returns the service already bound to that
 // request, even a retired one, without a runtime call. The spec must be one
-// this endpoint runs: one fixed replica, no mounts, workdir or setup, and
+// this endpoint runs: one to eight fixed replicas, no mounts, workdir or setup, and
 // what the runtime's Check accepts. Create causes no runtime effect; a later
 // pass applies the service. After Close has begun it is ErrClosed.
 func (c *Controller) Create(actor auth.Actor, d store.RequestDomain, requestID, name, target string, spec serving.Spec) (store.Service, error) {
@@ -248,8 +248,6 @@ func supported(s serving.Spec) error {
 		return fmt.Errorf("%w: workdir", ErrUnsupported)
 	case len(s.Setup) != 0:
 		return fmt.Errorf("%w: setup", ErrUnsupported)
-	case s.Scaling.Replicas != 1:
-		return fmt.Errorf("%w: replicas other than 1", ErrUnsupported)
 	}
 	return nil
 }

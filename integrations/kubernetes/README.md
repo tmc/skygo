@@ -149,7 +149,7 @@ qualifies a cluster.
 
 ## Fixed services
 
-`--service-profiles FILE` serves fixed one-replica services on one of the
+`--service-profiles FILE` serves services with one to eight fixed replicas on one of the
 `--targets`; it requires `--targets` and `--auth-file` and may be combined with
 `--environment-profiles`. See [the service profile example](examples/services.yaml).
 The file is strict version-1 YAML of mode 0400 or 0600. It names the target,
@@ -159,7 +159,7 @@ limits for the target binding, and the digest-pinned images each principal may
 run. At startup the server reads the namespace, service account and secrets
 and refuses any difference; it never creates, modifies or deletes them.
 
-Each service is one owned Deployment (one replica, `maxSurge: 0`) and one
+Each service is one owned Deployment (the requested replica count, `maxSurge: 0`) and one
 ClusterIP Service in the target namespace. Each create is declared in the
 service's committed record before it is sent, and is sent once, without client
 retries. An object is the service's only by its recorded UID, or by the

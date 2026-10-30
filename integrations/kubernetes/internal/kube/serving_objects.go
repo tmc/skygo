@@ -16,17 +16,17 @@ import (
 )
 
 // serviceDeployment renders the owned Deployment of service ref at revision
-// rev and rollout generation, created under declaration. It runs exactly one
-// replica and rolls out with no surge, so the admission charge of one
-// replica is never exceeded. The Pod uses the profile's borrowed service
-// account without its token, the profile's pull secrets and a restricted
-// security context. It sets every field the API server would default, so
+// rev and rollout generation, created under declaration. It runs the revision's
+// fixed replica count with no surge, so its admitted replica charge is never
+// exceeded. Each Pod uses the profile's borrowed service account without its
+// token, the profile's pull secrets and a restricted security context. It sets every field the API server would default, so
 // that the stored object's projection is the rendering's (see
 // serving_accept.go).
 func serviceDeployment(namespace string, ref serving.Ref, rev serving.Revision, generation uint64, declaration string, p serviceProfile) *appsv1.Deployment {
 	s := rev.Spec
 	labels := serviceSelector(ref)
 	one := int32(1)
+	replicas := s.Scaling.Replicas
 	zero := intstr.FromInt32(0)
 	unavailable := intstr.FromInt32(1)
 	falseValue, trueValue := false, true
@@ -84,7 +84,7 @@ func serviceDeployment(namespace string, ref serving.Ref, rev serving.Revision, 
 			},
 		},
 		Spec: appsv1.DeploymentSpec{
-			Replicas: &one,
+			Replicas: &replicas,
 			Selector: &metav1.LabelSelector{MatchLabels: labels},
 			Strategy: appsv1.DeploymentStrategy{
 				Type:          appsv1.RollingUpdateDeploymentStrategyType,

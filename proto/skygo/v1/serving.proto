@@ -22,8 +22,8 @@ option go_package = "github.com/tmc/skygo/gen/skygo/v1;skyv1";
 // native object identity, delegated authority, secret values, raw native
 // manifests or a caller-chosen network destination.
 //
-// This endpoint accepts only fixed one-replica services: a spec with mounts,
-// workdir, setup, CPU scaling or a replica count other than one is refused
+// This endpoint accepts only services with one to eight fixed replicas: a spec with mounts,
+// workdir, setup, CPU scaling or a replica count outside 1..8 is refused
 // before acceptance. Update and rollback are not served. The message field
 // numbers below are those of the retained service protocol; methods added
 // later keep them.
@@ -117,7 +117,7 @@ message ServiceRolloutPolicy {
 }
 
 // ServiceScaling is the revision's replica policy. Without cpu, replicas is
-// a fixed count; this endpoint accepts only 1. A spec with cpu is refused.
+// a fixed count from 1 to 8. A spec with cpu is refused.
 message ServiceScaling {
   int32 replicas = 1;
   ServiceCpuScaling cpu = 2;

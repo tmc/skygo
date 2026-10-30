@@ -1,0 +1,49 @@
+# Real Store/auth/controller/RPC and CLI; native observations are MODELED.
+! skygo --token-file $TOKEN_FILE serve up invalid.yaml --name bad --target kube
+stderr 'replicas outside 1..8'
+service-records 0
+
+skygo --token-file $TOKEN_FILE serve up two.yaml --name web --target kube --request-id first --request-domain $DOMAIN
+stdout 'web +kube +1 +present +creating'
+service-id ID web
+service-records 1
+skygo --token-file $TOKEN_FILE serve up two.yaml --name web --target kube --request-id first --request-domain $DOMAIN
+service-records 1
+! skygo --token-file $TOKEN_FILE serve up eight.yaml --name extra --target kube --request-id second --request-domain $DOMAIN
+stderr 'capacity'
+service-records 1
+service-step
+skygo --token-file $TOKEN_FILE --json serve status $ID
+stdout '"desired_replicas": *2'
+stdout '"ready_replicas": *2'
+stdout '"phase": *"SERVICE_PHASE_READY"'
+service-forward $ID response.txt
+cmp response.txt expected.txt
+skygo --token-file $TOKEN_FILE serve down $ID
+stdout 'absent +deleting'
+service-step
+service-records 0
+
+-- two.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web]
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+scaling: {replicas: 2}
+-- eight.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web]
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+scaling: {replicas: 8}
+-- invalid.yaml --
+image: registry.example.com/team/web@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+argv: [/bin/web]
+port: 8080
+readiness: {path: /healthz}
+resources: {cpu_millis: 250, memory_bytes: 268435456}
+scaling: {replicas: 9}
+-- expected.txt --
+replicas=2

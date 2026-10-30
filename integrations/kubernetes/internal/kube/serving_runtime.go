@@ -128,14 +128,13 @@ func newServiceRuntime(target backend.Target, config *rest.Config, cfg ServiceCo
 		withdrawn: map[string]bool{}, drained: make(chan struct{})}, nil
 }
 
-// Check refuses what this runtime does not render: more or fewer than one
-// replica, mounts, workdir, setup, and requests or limits above the
-// profile's ceilings.
+// Check refuses what this runtime does not render: fixed counts outside 1..8,
+// mounts, workdir, setup, and requests or limits above the profile's ceilings.
 func (rt *serviceRuntime) Check(s serving.Spec) error {
 	p := rt.config.profile
 	switch {
-	case s.Scaling.Replicas != 1:
-		return fmt.Errorf("%w: replicas other than 1", serving.ErrUnsupported)
+	case s.Scaling.Replicas < 1 || s.Scaling.Replicas > 8:
+		return fmt.Errorf("%w: replicas outside 1..8", serving.ErrUnsupported)
 	case len(s.Mounts) != 0 || s.Workdir != nil || len(s.Setup) != 0:
 		return fmt.Errorf("%w: service data", serving.ErrUnsupported)
 	case s.Resources.CPUMillis > p.cpuMillis || s.Resources.CPULimitMillis > p.cpuMillis:
@@ -867,10 +866,10 @@ func (rt *serviceRuntime) readiness(ctx context.Context, ref serving.Ref, n serv
 	if err != nil {
 		return serving.Observation{}, err
 	}
-	o := serving.Observation{DesiredReplicas: 1}
-	if d.Spec.Replicas != nil {
-		o.DesiredReplicas = *d.Spec.Replicas
+	if d.Spec.Replicas == nil || *d.Spec.Replicas < 1 || *d.Spec.Replicas > 8 {
+		return serving.Observation{Reason: serving.IdentityConflict}, nil
 	}
+	o := serving.Observation{DesiredReplicas: *d.Spec.Replicas}
 	rollout, err := strconv.ParseUint(d.Annotations[serviceGeneration], 10, 64)
 	if err != nil || rollout != n.Generation {
 		return serving.Observation{Reason: serving.IdentityConflict}, nil

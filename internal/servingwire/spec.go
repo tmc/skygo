@@ -36,8 +36,8 @@ func Unknown(ms ...proto.Message) error {
 
 // SpecFromProto returns the normalized portable spec of m. It refuses a nil
 // spec, unknown fields at any depth, and every feature this endpoint does
-// not run: mounts, workdir, setup, CPU scaling and a replica count other
-// than one.
+// not run: mounts, workdir, setup and CPU scaling. Fixed replica counts
+// must be in the portable range 1..8.
 func SpecFromProto(m *v1.ServiceSpec) (serving.Spec, error) {
 	if m == nil {
 		return serving.Spec{}, errors.New("missing service spec")
@@ -54,8 +54,6 @@ func SpecFromProto(m *v1.ServiceSpec) (serving.Spec, error) {
 		return serving.Spec{}, fmt.Errorf("%w: setup", ErrUnsupported)
 	case m.Scaling.GetCpu() != nil:
 		return serving.Spec{}, fmt.Errorf("%w: cpu scaling", ErrUnsupported)
-	case m.Scaling.GetReplicas() != 1:
-		return serving.Spec{}, fmt.Errorf("%w: replicas other than 1", ErrUnsupported)
 	}
 	s := serving.Spec{
 		Image: m.Image,

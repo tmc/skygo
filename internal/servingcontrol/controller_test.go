@@ -315,7 +315,7 @@ func TestRefusesUnsupported(t *testing.T) {
 		name   string
 		mutate func(*serving.Spec)
 	}{
-		{"replicas", func(s *serving.Spec) { s.Scaling.Replicas = 2 }},
+		{"replicas", func(s *serving.Spec) { s.Scaling.Replicas = 9 }},
 		{"mounts", func(s *serving.Spec) {
 			s.Mounts = []serving.Mount{{Reference: "data", Destination: "/mnt/skygo/data"}}
 		}},

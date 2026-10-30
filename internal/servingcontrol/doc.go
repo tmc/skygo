@@ -1,4 +1,4 @@
-// Package servingcontrol accepts fixed one-replica services on one
+// Package servingcontrol accepts services with one to eight fixed replicas on one
 // configured target, drives them through a serving.Runtime and admits
 // requests forwarded to them.
 //

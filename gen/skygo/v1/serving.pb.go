@@ -1100,7 +1100,7 @@ func (x *ServiceRolloutPolicy) GetTerminationGraceSeconds() int32 {
 }
 
 // ServiceScaling is the revision's replica policy. Without cpu, replicas is
-// a fixed count; this endpoint accepts only 1. A spec with cpu is refused.
+// a fixed count from 1 to 8. A spec with cpu is refused.
 type ServiceScaling struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Replicas      int32                  `protobuf:"varint,1,opt,name=replicas,proto3" json:"replicas,omitempty"`
