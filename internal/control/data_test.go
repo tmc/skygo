@@ -658,6 +658,8 @@ func (f *submissionDataFixture) prepareRevocation(t *testing.T) {
 	}
 	deadline := time.NewTimer(5 * time.Second)
 	defer deadline.Stop()
+	tick := time.NewTicker(20 * time.Millisecond)
+	defer tick.Stop()
 	for {
 		changed := f.engine.Changed()
 		if _, err = f.engine.Authenticate("Bearer " + string(bytes.TrimSpace(raw))); err == nil {
@@ -665,6 +667,7 @@ func (f *submissionDataFixture) prepareRevocation(t *testing.T) {
 		}
 		select {
 		case <-changed:
+		case <-tick.C:
 		case <-deadline.C:
 			t.Fatal("original auth refresh did not observe spare credential")
 		}

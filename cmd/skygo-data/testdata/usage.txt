@@ -7,13 +7,13 @@ env SKYGO_DATA_INPUT_SHA256=DO_NOT_PRINT_HELPER_SECRET
 env SKYGO_DATA_INPUT_SIZE=DO_NOT_PRINT_HELPER_SECRET
 
 skygo-data --help
-stdout '^usage: skygo-data stage \| exec -- argv\.\.\. \| collect -- root\.\.\.\n$'
+stdout '^usage: skygo-data stage \| exec -- argv\.\.\. \| collect -- root\.\.\. \| install \| worker -- argv\.\.\. \| worker-ready\n$'
 ! stderr .
 env SKYGO_DATA_EXIT_CODE
 stdout '^SKYGO_DATA_EXIT_CODE=0\n$'
 
 ! skygo-data
-stderr '^usage: skygo-data stage \| exec -- argv\.\.\. \| collect -- root\.\.\.\n$'
+stderr '^usage: skygo-data stage \| exec -- argv\.\.\. \| collect -- root\.\.\. \| install \| worker -- argv\.\.\. \| worker-ready\n$'
 ! stdout .
 ! stderr DO_NOT_PRINT_HELPER_SECRET
 env SKYGO_DATA_EXIT_CODE

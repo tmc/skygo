@@ -209,6 +209,8 @@ func (f *uploadGrowthResources) retire(t *testing.T) {
 
 func uploadGrowthWorkerQuantum(t *testing.T, ctx context.Context, c *Control, m *maintenanceState) physicalQuantumResult {
 	t.Helper()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
 	if err := c.dispatchPhysical(m); err != nil {
 		t.Fatal(err)
 	}
@@ -266,7 +268,7 @@ func TestUploadBusyFinalizePreservesActualYieldedWorkerCursor(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	f.cancel = cancel
 	f.maintenance = newMaintenance(ctx)
 	m := f.maintenance
